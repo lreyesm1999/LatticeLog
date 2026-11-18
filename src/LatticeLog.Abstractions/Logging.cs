@@ -100,6 +100,16 @@ public interface IRecordSink : IDisposable
     /// pooled records (<see cref="LogRecordPool"/>).
     /// </summary>
     bool RetainsRecords => true;
+
+    /// <summary>
+    /// Starts making everything written so far durable without blocking the caller and returns true; false (default)
+    /// when the sink cannot, in which case the caller uses <see cref="Flush"/>. Progress is visible in
+    /// <see cref="DurableSequence"/>.
+    /// </summary>
+    bool RequestBackgroundFsync() => false;
+
+    /// <summary>Every record with a sequence &lt;= this value is on stable storage (0 = unknown / not supported).</summary>
+    ulong DurableSequence => 0;
 }
 
 /// <summary>

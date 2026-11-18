@@ -12,6 +12,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Fault injection hooks for the durability thread (slow or failing disk) are internal and test-only. -->
+    <InternalsVisibleTo Include="LatticeLog.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\LatticeLog.Abstractions\LatticeLog.Abstractions.csproj" />
   </ItemGroup>
 

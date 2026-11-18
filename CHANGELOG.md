@@ -1,5 +1,36 @@
 # Changelog
 
+## Sin publicar — ingestión remota v1 (P16)
+
+- Protocolo v1 (`specs/ingest-protocol.md`, ADR-0009): HTTP `POST /v1/ingest`, envelope binario de 48 bytes
+  (productor, rango de secuencias locales, número de registros, codificación, compresión, CRC-32) y cuerpo
+  `latticelog.jsonl` opcionalmente con gzip.
+- `LatticeLog.Ingest`: `IngestClient` y `Forwarder`. El almacén local es el spool y hay un cursor por endpoint.
+  Reintentos con backoff exponencial, jitter y `Retry-After`; los lotes demasiado grandes se parten y los huecos se
+  resincronizan.
+- `LatticeLog.Server` + `latticelog-collector`:
+  - **deduplicación** por (productor, secuencia local), reconstruida desde los datos guardados tras una caída;
+  - **group commit** con el nivel de ACK realmente alcanzado y contexto de procedencia `ingest`;
+  - **acceso**: tokens con hash SHA-256 y rotación en caliente, cuotas por token (429), cola acotada (503);
+  - **límites** de tamaño, descompresión, ratio y línea; TLS obligatorio fuera de loopback.
+- Pruebas: red con pérdidas (petición y respuesta), caída del collector sin checkpoint, reglas de duplicado, solape y
+  hueco, seguridad y límites, rotación y cuotas. Medición: ~180–217k registros/s y ACK p50 12–15 ms por lote de 5 000
+  en loopback (`reports/ingest-v1.md`).
+
+## Sin publicar — durabilidad en segundo plano
+
+- **Causa de los bloqueos del hilo escritor encontrada**: picos de latencia del almacenamiento (fsync de hasta 5,3 s,
+  sellados de hasta 3,8 s en un SSD al 98 %) y la regla de NTFS de que una escritura espera mientras se vacía el mismo
+  archivo. Las pausas del GC quedan descartadas (≤ 6,6 ms). Instrumentación nueva:
+  `LatticeLoggerOptions.SlowWriterOperationThreshold`, `StoreWriterOptions.Diagnostics` y `latency --diag`.
+- **Durabilidad en segundo plano** (`StoreWriterOptions.BackgroundDurability`, activa por defecto): el sellado de
+  segmentos rotados y el fsync periódico de Balanced pasan a un hilo propio del almacén (FIFO, peticiones fusionadas,
+  fallo pegajoso). `StoreWriter.DurableSequence`, `RequestBackgroundFsync` y `PendingDurabilityWork` son nuevos.
+  `IRecordSink.RequestBackgroundFsync` y `IRecordSink.DurableSequence` tienen implementación por defecto.
+  `SegmentWriter` escribe con `RandomAccess`.
+- Resultado: 1 productor a 500k/s pasa de 4/12 corridas con bloqueo a 0/12. Con 4 productores siguen los bloqueos
+  cuando el disco tarda segundos en vaciar (`reports/latency-v1.md` §4).
+
 ## Sin publicar — endurecimiento del SDK (P14)
 
 - **Pruebas de caída real**: un proceso hijo (`tests/LatticeLog.CrashHarness`) se mata a mitad de escritura 3 veces

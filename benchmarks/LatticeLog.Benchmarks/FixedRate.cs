@@ -4,7 +4,9 @@
 //   - response time: from the instant the call was *scheduled* to its return. It includes the time a producer spent
 //     behind schedule because an earlier call was slow, so it does not hide stalls (coordinated omission).
 // All samples are kept and sorted: percentiles are exact, not approximated.
+using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Diagnostics.Tracing;
 using System.Globalization;
 using LatticeLog;
 using LatticeLog.Core;
@@ -26,6 +28,8 @@ public static class FixedRate
         var repeat = Arg(args, "--repeat", 1);
         FsyncBytes = (long)Arg(args, "--fsync-mib", 0) * 1024 * 1024; // 0 = library default (off)
         SegmentMiB = Arg(args, "--segment-mib", 64);
+        Diag = args.Contains("--diag");
+        Queue = Arg(args, "--queue", 65_536);
         var results = new List<Result>();
         foreach (var (sink, mode) in new[] { ("store", DurabilityMode.Balanced), ("store", DurabilityMode.Durable), ("null", DurabilityMode.Balanced) })
             foreach (var producers in new[] { 1, 4 })
@@ -57,6 +61,34 @@ public static class FixedRate
 
     private static long FsyncBytes;
     private static int SegmentMiB = 64;
+    private static bool Diag;
+    private static int Queue = 65_536;
+
+    /// <summary>GC suspensions (SuspendEE begin -> RestartEE end) from the runtime's own event source, with generation and reason.</summary>
+    private sealed class GcListener : EventListener
+    {
+        public readonly ConcurrentQueue<(DateTime Start, double Ms, string What)> Pauses = new();
+        private DateTime _suspend;
+        private string _current = "";
+        protected override void OnEventSourceCreated(EventSource source)
+        {
+            if (source.Name == "Microsoft-Windows-DotNETRuntime") EnableEvents(source, EventLevel.Informational, (EventKeywords)0x1);
+        }
+        protected override void OnEventWritten(EventWrittenEventArgs e)
+        {
+            switch (e.EventName)
+            {
+                case "GCSuspendEEBegin_V1": _suspend = e.TimeStamp; break;
+                case "GCStart_V2":
+                    _current = $"gen{e.Payload?[1]} reason={e.Payload?[2]} type={e.Payload?[3]}";
+                    break;
+                case "GCRestartEEEnd_V1":
+                    if (_suspend != default) Pauses.Enqueue((_suspend, (e.TimeStamp - _suspend).TotalMilliseconds, _current));
+                    _suspend = default;
+                    break;
+            }
+        }
+    }
 
     private static int Arg(string[] args, string name, int fallback)
     {
@@ -73,8 +105,20 @@ public static class FixedRate
     private static Result Measure(string sinkKind, DurabilityMode mode, int producers, int totalRate, int seconds, int warmupSeconds)
     {
         var dir = Path.Combine(Path.GetTempPath(), "latticelog-latency", Guid.NewGuid().ToString("N"));
-        IRecordSink sink = sinkKind == "store" ? StoreWriter.Open(dir, new StoreWriterOptions { MinFreeDiskBytes = 0, SegmentMaxBytes = SegmentMiB * 1024L * 1024 }) : new NullSink();
-        var logger = new LatticeLogger(sink, new LatticeLoggerOptions { Durability = mode, FlushOnProcessExit = false, BalancedFsyncBytes = FsyncBytes });
+        // Diagnostic timeline: everything is stamped in ms since the measured run started (Stopwatch based).
+        var clock = Stopwatch.StartNew();
+        var wallStart = DateTime.UtcNow;
+        var timeline = new ConcurrentQueue<(double AtMs, string What)>();
+        void Note(string what) => timeline.Enqueue((clock.Elapsed.TotalMilliseconds, what));
+        using var gc = Diag ? new GcListener() : null;
+        IRecordSink sink = sinkKind == "store"
+            ? StoreWriter.Open(dir, new StoreWriterOptions { MinFreeDiskBytes = 0, SegmentMaxBytes = SegmentMiB * 1024L * 1024, Diagnostics = Diag ? Note : null })
+            : new NullSink();
+        var logger = new LatticeLogger(sink, new LatticeLoggerOptions
+        {
+            Durability = mode, FlushOnProcessExit = false, BalancedFsyncBytes = FsyncBytes, QueueCapacity = Queue,
+            InternalDiagnostics = Diag ? Note : null,
+        });
         try
         {
             var perProducer = totalRate / producers;
@@ -101,6 +145,8 @@ public static class FixedRate
                     var before = Stopwatch.GetTimestamp();
                     BenchEvents.OrderPlaced(logger, i, p, "SKU-00042", 19.99);
                     var after = Stopwatch.GetTimestamp();
+                    if (Diag && after - before > Stopwatch.Frequency / 100) // producer call > 10 ms
+                        Note($"PRODUCER {p}: call took {(after - before) * nsPerTick / 1e6:F1} ms");
                     if (i >= warm)
                     {
                         s[i - warm] = (after - before) * nsPerTick;
@@ -113,6 +159,8 @@ public static class FixedRate
                 response[p] = rsp;
             }) { IsBackground = true, Priority = ThreadPriority.AboveNormal }).ToList();
             foreach (var t in threads) t.Start();
+            clock.Restart();
+            wallStart = DateTime.UtcNow;
             var g0 = GC.CollectionCount(0); var g1 = GC.CollectionCount(1); var g2 = GC.CollectionCount(2);
             start.SignalAndWait();
             foreach (var t in threads) t.Join();
@@ -123,6 +171,16 @@ public static class FixedRate
             var allResponse = response.SelectMany(x => x).ToArray();
             Array.Sort(allService);
             Array.Sort(allResponse);
+            if (Diag) Console.WriteLine($"-- peak working set {Process.GetCurrentProcess().PeakWorkingSet64 / 1048576} MiB, GC heap {GC.GetTotalMemory(false) / 1048576} MiB");
+            if (Diag && allService[^1] > 10e6)
+            {
+                // Merge the timeline with GC suspensions > 2 ms; each line: start ms, duration, what.
+                var lines = timeline.Select(x => (x.AtMs, x.What)).ToList();
+                foreach (var (start0, ms, what) in gc!.Pauses)
+                    if (ms >= 2) lines.Add(((start0 - wallStart).TotalMilliseconds + ms, $"GC pause {ms:F1} ms ({what})"));
+                Console.WriteLine($"-- timeline ({sinkKind} {mode} {producers}p {totalRate}/s): event END times in ms since start");
+                foreach (var (at, what) in lines.OrderBy(x => x.AtMs).Take(80)) Console.WriteLine($"   {at,9:F1}  {what}");
+            }
             return new Result(sinkKind, mode.ToString(), producers, totalRate, allService.Length, behind.Max(), allService, allResponse, gc0, gc1, gc2, stats);
         }
         finally

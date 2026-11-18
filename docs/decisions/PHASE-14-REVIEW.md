@@ -17,13 +17,15 @@
 | Paquetes | `dotnet pack` → 9 paquetes + snupkg; consumo desde proyecto limpio | generador incluido en `LatticeLog.Core`; eventos tipados funcionan desde el paquete |
 | Datos públicos | Loghub-2.0, `reports/loghub2-v1.md` | importación de texto byte a byte verificada en 14 conjuntos |
 
-Pruebas: 98 en Windows x64 (todas verdes, Debug y Release) + lector Python independiente sobre los golden files v0.1 y v0.2.
+Pruebas: 103 en Windows x64 (todas verdes, Debug y Release) + lector Python independiente sobre los golden files v0.1 y v0.2.
 
 ## Pendiente para PASS
 
 - CI en Linux/macOS/ARM64 y Native AOT real (job `aot-and-pack` preparado, nunca ejecutado: no hay remoto).
-- Bloqueos de 0,1–2 s del hilo escritor a 500k eventos/s en Balanced (máquina de referencia): causa sin identificar.
-  Necesita traza ETW/WPR y medición en Linux; candidato de diseño: fsync y sellado fuera del hilo escritor.
+- Bloqueos del hilo escritor: **causa identificada** (latencia del almacenamiento, fsync de hasta 5,3 s en un SSD al
+  98 %, más la espera de NTFS al escribir en el archivo que se está vaciando) y **mitigada** con durabilidad en segundo
+  plano (1 productor a 500k/s: de 4/12 a 0/12 corridas con bloqueo). Con 4 productores persisten cuando el disco tarda
+  segundos. Falta repetirlo en un disco con espacio libre y en Linux, y decidir si separar codificación y E/S.
 - Licencia (bloquea publicar paquetes), firma de paquetes, SourceLink con el repositorio remoto, SBOM en CI.
 - Compatibilidad N-1 y release candidate.
 - Pruebas de pérdida de energía / caída del SO (requieren VM o hardware de inyección de fallos).

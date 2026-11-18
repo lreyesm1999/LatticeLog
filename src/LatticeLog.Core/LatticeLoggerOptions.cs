@@ -64,6 +64,9 @@ public sealed class LatticeLoggerOptions
     /// <summary>Flush with a bounded timeout on ProcessExit / unhandled exceptions (P03-T14).</summary>
     public bool FlushOnProcessExit { get; set; } = true;
 
+    /// <summary>Writer-thread operations (write, fsync) slower than this are reported to <see cref="InternalDiagnostics"/>.</summary>
+    public TimeSpan SlowWriterOperationThreshold { get; set; } = TimeSpan.FromMilliseconds(50);
+
     /// <summary>Internal diagnostics sink. Never routed back into the logger (no recursion, P14-T07).</summary>
     public Action<string>? InternalDiagnostics { get; set; }
 

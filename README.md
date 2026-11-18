@@ -4,8 +4,9 @@ Motor de logs y eventos **local primero**: captura tipada de baja sobrecarga, fo
 reconstrucción exacta, consultas selectivas con índices y evidencias deterministas para lectores externos (humanos,
 scripts o IA externa). **LatticeLog no ejecuta IA**: solo estructura, filtra, agrupa y recupera.
 
-> Estado: **0.1.0-alpha.1** (18-nov-2026). Motor local funcional y probado en Windows x64; servidor, clúster,
-> SDK multilenguaje, consola web y SaaS **no existen todavía**. Nombre provisional (verificar marca antes de publicar).
+> Estado: **0.1.0-alpha.1** (18-nov-2026). Motor local funcional y probado en Windows x64; ingestión remota v1
+> (collector) probada en loopback; servidor de consultas, clúster, SDK multilenguaje, consola web y SaaS **no
+> existen todavía**. Nombre provisional (verificar marca antes de publicar).
 > Licencia: **pendiente de decisión** (no se ha elegido ninguna).
 
 ## En 2 minutos
@@ -42,6 +43,21 @@ latticelog export ./logs --format llog-jsonl --output logs.jsonl     # salida si
 latticelog mcp ./logs                                                 # servidor MCP de solo lectura por stdio
 ```
 
+### Enviar a un collector
+
+```bash
+latticelog-collector hash-token "<secreto>"          # el hash va en tokens.json
+latticelog-collector --store ./server-logs --tokens tokens.json --listen https://0.0.0.0:7400 --cert server.pfx
+```
+
+```csharp
+// En la aplicación: se sigue escribiendo en local; el forwarder envía lo confirmado por el servidor y reintenta.
+await using var forwarder = Forwarder.Start("./logs", new ForwarderOptions
+{
+    Endpoint = new Uri("https://collector:7400"), Token = Environment.GetEnvironmentVariable("LATTICELOG_TOKEN")!,
+});
+```
+
 ## Qué hay
 
 | componente | proyecto | estado |
@@ -56,6 +72,8 @@ latticelog mcp ./logs                                                 # servidor
 | Bridge `Microsoft.Extensions.Logging` | `src/LatticeLog.Extensions.Logging` | alpha |
 | CLI `latticelog` (también como `dotnet tool`, compatible con trimming) | `src/LatticeLog.Cli` | alpha |
 | Adaptador MCP de solo lectura | `src/LatticeLog.Mcp` | alpha |
+| Ingestión remota: protocolo, cliente y `Forwarder` (el almacén local es el spool) | `src/LatticeLog.Ingest` | alpha |
+| Collector HTTP (`latticelog-collector`): deduplicación, group commit, tokens, cuotas, límites | `src/LatticeLog.Server`, `src/LatticeLog.Collector` | alpha |
 | Lector independiente en Python (verificación del formato) | `tools/pyllog` | referencia |
 | Laboratorio y benchmarks | `research/`, `benchmarks/`, `reports/` | — |
 
@@ -72,8 +90,8 @@ latticelog mcp ./logs                                                 # servidor
 - Ejemplo de app: 80 k eventos tipados en 0,63 s (modo Balanced, fsync confirmado, ~96 B/evento).
 - Ruta caliente: evento tipado habilitado 56 ns y 5 B asignados por evento; deshabilitado 1,1 ns y 0 B.
 - Durabilidad con caídas reales: proceso matado a mitad de escritura en los tres modos, ningún registro confirmado
-  perdido. Bajo carga sostenida en Balanced a 500k eventos/s se observaron bloqueos del hilo escritor de 0,1–2 s
-  (abierto, ver `reports/latency-v1.md`).
+  perdido. El sellado y el fsync periódico corren en un hilo propio. Los bloqueos que quedan bajo carga sostenida
+  vienen del disco (fsync de hasta 5,3 s en la máquina de referencia, ver `reports/latency-v1.md` §4).
 - Lattice-P (predictivo) descartado por el estudio previo (ahorro optimista ≤ 0,6 %).
 
 ## Desarrollo

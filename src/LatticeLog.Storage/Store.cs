@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -136,6 +137,15 @@ public sealed record StoreWriterOptions
     public long MaxStoreBytes { get; init; }
     /// <summary>Minimum free disk space to keep. Writes fail explicitly below this threshold.</summary>
     public long MinFreeDiskBytes { get; init; } = 64L * 1024 * 1024;
+    /// <summary>Operations slower than this (append, fsync, seal, segment creation, manifest) are reported to <see cref="Diagnostics"/>.</summary>
+    public TimeSpan SlowOperationThreshold { get; init; } = TimeSpan.FromMilliseconds(50);
+    /// <summary>Optional sink for slow-operation reports (writer or durability thread; must not block or throw).</summary>
+    public Action<string>? Diagnostics { get; init; }
+    /// <summary>
+    /// Seal rotated segments and run requested fsyncs on a background thread instead of the writer thread (default).
+    /// Synchronous <see cref="StoreWriter.Flush"/> still waits for both. False = everything inline, as before P14.
+    /// </summary>
+    public bool BackgroundDurability { get; init; } = true;
 }
 
 public sealed record RecoveryResult(ulong SegmentId, long TruncatedBytes, string? TailCopy, IReadOnlyList<ScanIssue> Issues);
@@ -155,6 +165,7 @@ public sealed class StoreWriter : IRecordSink
     private long _sealedBytes;
     private long _currentOpenedAt;
     private bool _disposed;
+    private DurabilityWorker? _durability;
 
     public string Root => _root;
     public StoreInfo Info { get; }
@@ -163,8 +174,33 @@ public sealed class StoreWriter : IRecordSink
     /// <summary>Records are encoded during <see cref="WriteBatch"/> and never referenced afterwards.</summary>
     public bool RetainsRecords => false;
     public IReadOnlyList<RecoveryResult> Recovery { get; }
-    public long TotalBytes => _sealedBytes + (_current?.Length ?? 0);
+    public long TotalBytes => Interlocked.Read(ref _sealedBytes) + (_current?.Length ?? 0);
+    /// <summary>Segments closed for writing (rotated or sealed). With background durability, sealing may still be in progress.</summary>
     public int SegmentsSealed { get; private set; }
+
+    /// <summary>Every record with a sequence &lt;= this value is on stable storage.</summary>
+    public ulong DurableSequence => Math.Max(_durability?.DurableSequence ?? 0, Volatile.Read(ref _syncDurable));
+    private ulong _syncDurable;
+
+    /// <summary>Test-only: fault injection on the durability thread (see <see cref="DurabilityWorker.BeforeWork"/>).</summary>
+    internal Action<string>? DurabilityFaultInjection
+    {
+        set { if (_durability is not null) _durability.BeforeWork = value; }
+    }
+
+    /// <summary>Background durability work still queued or running (seals, fsyncs).</summary>
+    public int PendingDurabilityWork => _durability?.Pending ?? 0;
+
+    /// <summary>
+    /// Starts an fsync of everything written so far on the durability thread and returns at once (true). Returns false
+    /// when background durability is disabled; the caller must then use <see cref="Flush"/>.
+    /// </summary>
+    public bool RequestBackgroundFsync()
+    {
+        if (_durability is null) return false;
+        if (_current is not null && _lastSequence > 0) _durability.EnqueueFsync(_current, _lastSequence);
+        return true;
+    }
 
     private StoreWriter(string root, StoreWriterOptions options, FileStream lockStream, StoreInfo info)
     {
@@ -175,6 +211,8 @@ public sealed class StoreWriter : IRecordSink
         var recovery = new List<RecoveryResult>();
         Recover(recovery);
         Recovery = recovery;
+        _syncDurable = _lastSequence; // everything recovered is sealed (fsynced)
+        if (options.BackgroundDurability) _durability = new DurabilityWorker(_lastSequence, Slow);
     }
 
     /// <summary>Creates the store if needed and opens it for writing.</summary>
@@ -353,7 +391,14 @@ public sealed class StoreWriter : IRecordSink
         if (batch.Count == 0) return 0;
         CheckSpace();
         RotateIfNeeded();
-        var seg = _current ??= OpenNewSegment();
+        SegmentWriter seg;
+        if (_current is null)
+        {
+            var t0 = Stopwatch.GetTimestamp();
+            seg = _current = OpenNewSegment();
+            Slow("open segment", t0);
+        }
+        else seg = _current;
         var firstSeq = _lastSequence + 1;
         for (var i = 0; i < batch.Count; i++)
         {
@@ -363,7 +408,9 @@ public sealed class StoreWriter : IRecordSink
         }
         try
         {
+            var tAppend = Stopwatch.GetTimestamp();
             var written = seg.Append(batch, 0, batch.Count);
+            Slow($"append {batch.Count} records ({written} bytes)", tAppend);
             _lastSequence = firstSeq + (ulong)batch.Count - 1;
             return written;
         }
@@ -413,11 +460,21 @@ public sealed class StoreWriter : IRecordSink
         }
     }
 
+    /// <summary>Reports an operation that started at <paramref name="startTimestamp"/> if it exceeded the threshold.</summary>
+    private void Slow(string operation, long startTimestamp)
+    {
+        var d = _options.Diagnostics;
+        if (d is null) return;
+        var elapsed = Stopwatch.GetElapsedTime(startTimestamp);
+        if (elapsed < _options.SlowOperationThreshold) return;
+        try { d($"store: {operation} took {elapsed.TotalMilliseconds:F1} ms"); } catch { /* diagnostics never break writes */ }
+    }
+
     private void RotateIfNeeded()
     {
         if (_current is null) return;
         var age = UnixTime.NowUnixNanos() - _currentOpenedAt;
-        if (_current.Length >= _options.SegmentMaxBytes || age >= _options.SegmentMaxAge.Ticks * 100) SealCurrent();
+        if (_current.Length >= _options.SegmentMaxBytes || age >= _options.SegmentMaxAge.Ticks * 100) CloseCurrent(wait: false);
     }
 
     private SegmentWriter OpenNewSegment()
@@ -429,22 +486,49 @@ public sealed class StoreWriter : IRecordSink
         return w;
     }
 
-    /// <summary>Seals the active segment (footer + fsync). Next write opens a new segment.</summary>
-    public void SealCurrent()
+    /// <summary>Seals the active segment (footer + fsync) and waits for it. Next write opens a new segment.</summary>
+    public void SealCurrent() => CloseCurrent(wait: true);
+
+    /// <summary>
+    /// Closes the active segment for writing. With background durability the seal runs on the durability thread and
+    /// this returns at once unless <paramref name="wait"/> is set; the next write opens a new segment either way.
+    /// </summary>
+    private void CloseCurrent(bool wait)
     {
-        if (_current is null) return;
+        if (_current is null)
+        {
+            if (wait) _durability?.WaitIdle();
+            return;
+        }
         var seg = _current;
         _current = null;
         if (seg.RecordCount == 0)
         {
+            _durability?.WaitIdle(); // no queued fsync may still reference this handle
             seg.Dispose();
             File.Delete(seg.Path);
             return;
         }
+        SegmentsSealed++;
+        if (_durability is not null)
+        {
+            _durability.EnqueueSeal(seg, seg.CurrentIndex.LastSequence, OnSealed);
+            if (wait) _durability.WaitIdle();
+            return;
+        }
+        var t0 = Stopwatch.GetTimestamp();
         var index = seg.Seal();
         seg.Dispose();
-        _sealedBytes += seg.Length;
-        SegmentsSealed++;
+        Slow($"seal segment {seg.SegmentId} (footer + fsync + close)", t0);
+        OnSealed(seg, index);
+        Volatile.Write(ref _syncDurable, Math.Max(_syncDurable, index.LastSequence));
+    }
+
+    /// <summary>Bookkeeping after a segment was sealed (writer thread or durability thread).</summary>
+    private void OnSealed(SegmentWriter seg, SegmentIndex index)
+    {
+        Interlocked.Add(ref _sealedBytes, seg.Length);
+        var t0 = Stopwatch.GetTimestamp();
         Manifest.Append(_root, new JsonObject
         {
             ["op"] = "segment_sealed",
@@ -455,6 +539,7 @@ public sealed class StoreWriter : IRecordSink
             ["last_seq"] = index.LastSequence,
             ["codec"] = _options.Segment.Codec.ToString(),
         });
+        Slow("manifest append (fsync)", t0);
     }
 
     private void AbandonCurrent()
@@ -462,6 +547,7 @@ public sealed class StoreWriter : IRecordSink
         var seg = _current;
         _current = null;
         if (seg is null) return;
+        _durability?.WaitIdle(); // a queued fsync must not race with closing and recovering this file
         try
         {
             seg.Dispose();
@@ -476,12 +562,23 @@ public sealed class StoreWriter : IRecordSink
 
     public AckLevel Flush(AckLevel level)
     {
-        if (_current is null) return level >= AckLevel.FsyncConfirmed ? AckLevel.FsyncConfirmed : AckLevel.WrittenToOs;
+        if (_current is null)
+        {
+            if (level < AckLevel.FsyncConfirmed) return AckLevel.WrittenToOs;
+            _durability?.WaitIdle();
+            if (_durability?.Failure is { } failure) throw new IOException("background durability failed: " + failure);
+            return AckLevel.FsyncConfirmed;
+        }
         try
         {
             if (level >= AckLevel.FsyncConfirmed)
             {
+                var t0 = Stopwatch.GetTimestamp();
+                _durability?.WaitIdle(); // rotated segments must be sealed before claiming durability
+                if (_durability?.Failure is { } failure) throw new IOException("background durability failed: " + failure);
                 _current.Fsync();
+                Volatile.Write(ref _syncDurable, _lastSequence);
+                Slow("fsync", t0);
                 return AckLevel.FsyncConfirmed;
             }
             _current.FlushToOs();
@@ -498,8 +595,16 @@ public sealed class StoreWriter : IRecordSink
     {
         if (_disposed) return;
         _disposed = true;
-        try { SealCurrent(); }
-        finally { _lock.Dispose(); }
+        try
+        {
+            SealCurrent();
+            _durability?.WaitIdle();
+        }
+        finally
+        {
+            _durability?.Dispose();
+            _lock.Dispose();
+        }
     }
 }
 

@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Description>LatticeLog remote ingestion protocol v1 (specs/ingest-protocol.md): batch envelope, HTTP client and a forwarder that ships a local store to a collector with idempotent retries.</Description>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\LatticeLog.Storage\LatticeLog.Storage.csproj" />
+  </ItemGroup>
+
+</Project>

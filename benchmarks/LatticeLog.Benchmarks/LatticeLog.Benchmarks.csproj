@@ -1,8 +1,9 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\LatticeLog.Core\LatticeLog.Core.csproj" />
     <ProjectReference Include="..\..\src\LatticeLog.Extensions.Logging\LatticeLog.Extensions.Logging.csproj" />
+    <ProjectReference Include="..\..\src\LatticeLog.Server\LatticeLog.Server.csproj" />
   </ItemGroup>
 
   <ItemGroup>

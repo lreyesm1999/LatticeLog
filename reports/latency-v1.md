@@ -17,7 +17,7 @@ números no se generalizan.
 - Resolución del reloj (`Stopwatch`) en Windows: 100 ns; los valores de 100–300 ns están en el límite de medida.
 - Política de saturación por defecto (`Block`, cola de 65 536 huecos).
 
-## 1. Resultados (corrida completa)
+## 1. Resultados (corrida completa, antes de la corrección de §4)
 
 Valores en µs. Servicio = duración de la llamada; respuesta = desde el instante programado. `research/results/latency-20261118-104821.csv`.
 
@@ -88,3 +88,77 @@ Conclusiones:
 Próximos pasos: traza ETW/WPR de una corrida con bloqueo; la misma medición en Linux (CI) y con el antivirus
 excluyendo el directorio; diseño de fsync y sellado fuera del hilo escritor (los datos de un segmento ya escritos no
 dependen del sellado para ser legibles), y evaluar si `Block` debe seguir siendo la política por defecto.
+
+## 4. Causa encontrada y corrección (18-nov-2026, segunda investigación)
+
+**Instrumentación.** Cada operación lenta del hilo escritor y del almacén (escritura, fsync, sellado, creación de
+segmento, manifiesto) se informa con su duración (`SlowWriterOperationThreshold`, `StoreWriterOptions.Diagnostics`).
+Cada pausa del GC se lee del propio runtime (`EventListener`, de SuspendEE a RestartEE). Todo se cruza en una línea de
+tiempo con los bloqueos de los productores (`latency --diag`).
+
+**Lo que mostraron ~60 corridas instrumentadas** (store, 500k/s, 1 y 4 productores):
+
+| observación | valores medidos |
+|---|---|
+| pausas del GC | 2–6,6 ms en todas las corridas: **descartado** como causa |
+| fsync del segmento activo | 50–330 ms habitual; picos de **1,8 s** y **5,3 s** |
+| sellado de segmento (pie + fsync + cierre) | 171 ms, 462 ms, **3,8 s** |
+| escritura de 32 KB en el segmento activo | tarda **exactamente lo mismo** que el fsync en curso del mismo archivo (p. ej. 298,6 ms frente a 299,9 ms; 1 834,6 ms frente a 1 836,3 ms) |
+| escritura sin fsync en curso | un caso de 755 ms |
+
+Conclusión: la causa son **picos de latencia del dispositivo de almacenamiento**. Además, en Windows/NTFS una
+escritura en un archivo espera mientras se vacía ese mismo archivo. El SSD de la máquina (NVMe, unidad C:) estaba al
+**98 % de ocupación** (≈ 11 GB libres de 476 GB). Es la hipótesis más probable para latencias de segundos, porque un SSD
+casi lleno tiene mucha más amplificación de escritura, pero **no está verificada**: no hay otro SSD en la máquina con el
+que comparar (D: es un HDD).
+
+**Corrección aplicada: durabilidad en segundo plano.** El sellado de segmentos rotados y el fsync periódico de
+`Balanced` corren ahora en un hilo propio del almacén (`DurabilityWorker`, FIFO, peticiones de fsync fusionadas,
+fallo pegajoso). Los segmentos se escriben con `RandomAccess` sobre un handle del SO, para que el fsync pueda correr
+en paralelo. Los `FlushAsync(FsyncConfirmed)` explícitos y el modo `Durable` siguen esperando el fsync, como dice su
+contrato. Pruebas: `BackgroundDurabilityTests` (disco lento o con fallos simulado).
+
+| configuración (Balanced, 500k/s) | antes: corridas con bloqueo > 10 ms | después |
+|---|---:|---:|
+| 1 productor | 4 de 12 (peor 123 ms) | **0 de 12** (peor 2,5 ms) |
+| 4 productores | 2 de 6 | 1 de 6 en una tanda; 6 de 8 en otra, con vaciados del disco de hasta 5,3 s |
+
+Lectura honesta:
+- Los sellados ya no bloquean al escritor. El fsync periódico tampoco, **salvo** por la regla de NTFS: mientras se
+  vacía el archivo activo, escribir en él espera. Con un disco que tarda segundos en vaciar, el escritor sigue
+  parándose ese tiempo y, con la cola llena, también los productores (hasta `BlockTimeout`; en la corrida oficial
+  de abajo, 5 s y 4 registros descartados y **contados**).
+- **Probado y descartado**: fsync por volumen (cada 4 u 8 MiB) en segundo plano. Empeora, porque cada vaciado cuesta
+  50–230 ms con independencia del tamaño y cada uno abre otra ventana de bloqueo. Una cola 4× mayor (262 144 huecos)
+  no dio una mejora demostrable con 5–8 corridas.
+- Pendiente:
+  - repetir en otra máquina o disco con espacio libre, y en Linux, donde el page cache no bloquea así las escrituras
+    durante un `fsync`;
+  - valorar separar codificación y E/S, para que el escritor acumule los lotes ya codificados (~32 B por registro en
+    lugar de ~300 B por objeto) mientras el disco está bloqueado;
+  - documentar el dimensionado de la cola frente a `BlockTimeout` y `DropNewest`.
+
+**Corrida oficial completa después de la corrección** (`research/results/latency-20261118-112854.csv`, µs):
+
+| sink | modo | prod. | eventos/s | servicio p50 | p99 | p99.9 | máx | respuesta p99 | p99.9 | máx | GC 0/1/2 | descartes |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|
+| store | Balanced | 1 | 10 000 | 0.1 | 0.9 | 1.8 | 33 | 8.5 | 118 | 280 | 0/0/0 | 0 |
+| store | Balanced | 1 | 100 000 | 0.1 | 0.3 | 3.2 | 52 | 3.5 | 44 | 217 | 1/1/1 | 0 |
+| store | Balanced | 1 | 500 000 | 0.1 | 0.2 | 2.0 | 448 | 3.0 | 52 | 448 | 1/1/1 | 0 |
+| store | Balanced | 4 | 10 000 | 0.3 | 0.9 | 1.6 | 25 | 1.5 | 27 | 169 | 0/0/0 | 0 |
+| store | Balanced | 4 | 100 000 | 0.2 | 0.5 | 3.0 | 106 | 1.0 | 30 | 509 | 0/0/0 | 0 |
+| store | Balanced | 4 | 500 000 | 0.3 | 0.9 | 161 | 5 000 003 | 5 392 415 | 5 431 773 | 5 435 489 | 4/3/1 | 4 |
+| store | Durable | 1 | 10 000 | 0.1 | 0.9 | 1.4 | 40 | 3.8 | 92 | 395 | 0/0/0 | 0 |
+| store | Durable | 1 | 100 000 | 0.1 | 0.6 | 1.3 | 1 513 | 7.5 | 136 | 1 513 | 4/4/0 | 0 |
+| store | Durable | 1 | 500 000 | 0.1 | 0.1 | 16 | 120 022 | 2 616 377 | 2 624 910 | 2 627 545 | 1/1/0 | 0 |
+| store | Durable | 4 | 10 000 | 0.3 | 1.4 | 5.1 | 20 | 5.1 | 68 | 1 726 | 1/1/0 | 0 |
+| store | Durable | 4 | 100 000 | 0.2 | 0.5 | 1.1 | 75 | 1.3 | 28 | 148 | 0/0/0 | 0 |
+| store | Durable | 4 | 500 000 | 0.2 | 0.4 | 1.0 | 1 342 | 2.3 | 57 | 1 342 | 1/0/0 | 0 |
+| null | Balanced | 1 | 10 000 | 0.1 | 1.1 | 2.5 | 64 | 2.4 | 52 | 1 116 | 0/0/0 | 0 |
+| null | Balanced | 1 | 100 000 | 0.1 | 0.3 | 3.2 | 85 | 2.3 | 39 | 212 | 0/0/0 | 0 |
+| null | Balanced | 1 | 500 000 | 0.1 | 0.2 | 1.9 | 94 | 3.3 | 36 | 169 | 0/0/0 | 0 |
+| null | Balanced | 4 | 10 000 | 0.3 | 0.9 | 1.9 | 52 | 1.8 | 39 | 138 | 0/0/0 | 0 |
+| null | Balanced | 4 | 100 000 | 0.2 | 0.6 | 3.3 | 146 | 1.5 | 38 | 218 | 0/0/0 | 0 |
+| null | Balanced | 4 | 500 000 | 0.2 | 0.4 | 2.6 | 417 | 2.8 | 84 | 2 164 | 0/0/0 | 0 |
+
+Con el sink nulo, sin disco, no hay bloqueos en ninguna configuración: el logger por sí mismo no los produce.

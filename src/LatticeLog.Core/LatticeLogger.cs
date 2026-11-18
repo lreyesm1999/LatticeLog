@@ -47,6 +47,7 @@ public sealed class LatticeLogger : ILatticeLogger, IDisposable, IAsyncDisposabl
     private long _ackedOs, _ackedFsync; // tickets watermark per level (writer thread only, read with Volatile)
     private long _lastFsyncTimestamp;
     private long _bytesAtLastFsync; // writer thread only
+    private bool _backgroundFsync;  // writer thread only: the sink accepted background fsync requests
 
     public LatticeLogger(IRecordSink sink, LatticeLoggerOptions? options = null)
     {
@@ -278,11 +279,13 @@ public sealed class LatticeLogger : ILatticeLogger, IDisposable, IAsyncDisposabl
         {
             foreach (var r in batch) RedactForPersistence(r, redaction);
         }
+        var t0 = Stopwatch.GetTimestamp();
         try
         {
             var bytes = _sink.WriteBatch(batch);
             Interlocked.Add(ref _bytes, bytes);
             Interlocked.Add(ref _written, batch.Count);
+            SlowOperation($"write batch of {batch.Count} records", t0);
         }
         catch (Exception ex)
         {
@@ -314,21 +317,35 @@ public sealed class LatticeLogger : ILatticeLogger, IDisposable, IAsyncDisposabl
 
     private AckLevel AckAfterBatch(bool wroteSomething, long watermark)
     {
-        var needFsync = false;
-        if (_options.Durability == DurabilityMode.Durable && wroteSomething) needFsync = true;
-        if (_options.Durability == DurabilityMode.Balanced && wroteSomething
-            && (Stopwatch.GetElapsedTime(_lastFsyncTimestamp) >= _options.BalancedFsyncInterval
-                || (_options.BalancedFsyncBytes > 0 && Interlocked.Read(ref _bytes) - _bytesAtLastFsync >= _options.BalancedFsyncBytes))) needFsync = true;
+        // Synchronous fsync: Durable mode (its contract) and explicit FlushAsync(FsyncConfirmed) requests.
+        var needFsync = _options.Durability == DurabilityMode.Durable && wroteSomething;
         foreach (var req in _flushRequests)
         {
             if (req.Level >= AckLevel.FsyncConfirmed && req.Ticket <= watermark && Volatile.Read(ref _ackedFsync) < req.Ticket) needFsync = true;
         }
+        // Balanced periodic fsync: handed to the sink's durability thread when it has one, so a slow disk does not stall
+        // the writer thread (and, once the queue fills, the producers). Measured in reports/latency-v1.md.
+        if (!needFsync && _options.Durability == DurabilityMode.Balanced && wroteSomething
+            && (Stopwatch.GetElapsedTime(_lastFsyncTimestamp) >= _options.BalancedFsyncInterval
+                || (_options.BalancedFsyncBytes > 0 && Interlocked.Read(ref _bytes) - _bytesAtLastFsync >= _options.BalancedFsyncBytes)))
+        {
+            if (_sink.RequestBackgroundFsync())
+            {
+                _backgroundFsync = true;
+                _lastFsyncTimestamp = Stopwatch.GetTimestamp();
+                _bytesAtLastFsync = Interlocked.Read(ref _bytes);
+            }
+            else needFsync = true;
+        }
+        if (_backgroundFsync) UpdateFsyncedFromSink();
         var achieved = AckLevel.WrittenToOs; // the store sink writes unbuffered: a returned WriteBatch means the OS has the bytes
         if (needFsync)
         {
             try
             {
+                var tf = Stopwatch.GetTimestamp();
                 achieved = _sink.Flush(AckLevel.FsyncConfirmed);
+                SlowOperation("fsync", tf);
                 if (achieved >= AckLevel.FsyncConfirmed)
                 {
                     Volatile.Write(ref _ackedFsync, watermark);
@@ -352,6 +369,15 @@ public sealed class LatticeLogger : ILatticeLogger, IDisposable, IAsyncDisposabl
         return achieved;
     }
 
+    /// <summary>Stats only: records of this logger known durable = written minus those above the sink's durable sequence.</summary>
+    private void UpdateFsyncedFromSink()
+    {
+        var last = _sink.LastSequence;
+        var durable = Math.Min(_sink.DurableSequence, last);
+        var fsynced = Math.Max(0, Interlocked.Read(ref _written) - (long)(last - durable));
+        if (fsynced > Interlocked.Read(ref _fsynced)) Interlocked.Exchange(ref _fsynced, fsynced);
+    }
+
     private void CompleteFlushRequests(long watermark, AckLevel achieved, bool final = false)
     {
         var count = _flushRequests.Count;
@@ -368,6 +394,14 @@ public sealed class LatticeLogger : ILatticeLogger, IDisposable, IAsyncDisposabl
             }
             else _flushRequests.Enqueue(req);
         }
+    }
+
+    /// <summary>Writer-thread operations slower than the threshold are reported: they are what stalls producers once the queue fills.</summary>
+    private void SlowOperation(string what, long startTimestamp)
+    {
+        if (_options.InternalDiagnostics is null) return;
+        var elapsed = Stopwatch.GetElapsedTime(startTimestamp);
+        if (elapsed >= _options.SlowWriterOperationThreshold) Diagnose($"writer: {what} took {elapsed.TotalMilliseconds:F1} ms (queue {_ring.Count}/{_ring.Capacity})");
     }
 
     private void Diagnose(string message)

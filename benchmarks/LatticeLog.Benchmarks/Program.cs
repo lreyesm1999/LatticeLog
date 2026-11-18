@@ -1,4 +1,4 @@
-﻿// Producer hot-path micro-benchmarks (P03-T06, P03-T15, P14-T03).
+// Producer hot-path micro-benchmarks (P03-T06, P03-T15, P14-T03).
 // Run: dotnet run -c Release --project benchmarks/LatticeLog.Benchmarks -- --filter '*'
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Configs;
@@ -12,6 +12,8 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 // Fixed-rate latency mode (not BenchmarkDotNet): dotnet run -c Release --project benchmarks/LatticeLog.Benchmarks -- latency
 if (args.Length > 0 && args[0] == "latency") return FixedRate.Run(args[1..]);
+// End-to-end remote ingestion (P16-T14): dotnet run -c Release --project benchmarks/LatticeLog.Benchmarks -- ingest
+if (args.Length > 0 && args[0] == "ingest") return await IngestBench.Run(args[1..]);
 
 // In-process toolchain: no separate build of a generated project (also avoids depending on the system `dotnet` on PATH).
 var config = DefaultConfig.Instance.AddJob(Job.Default.WithToolchain(InProcessEmitToolchain.Instance).WithWarmupCount(5).WithIterationCount(15));

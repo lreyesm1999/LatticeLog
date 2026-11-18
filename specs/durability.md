@@ -34,11 +34,17 @@ Rules implemented and tested (`tests/LatticeLog.Tests/LoggerTests.cs`, `Durabili
 Known limitations (open issues):
 - On Linux the directory entry of a newly created segment is not fsync'ed (no portable .NET API); a power loss right
   after rotation could lose the new file entry. Planned mitigation: `fsync(dirfd)` via P/Invoke on Unix.
-- Writer-thread stalls: fsync and segment sealing run on the writer thread. On the reference Windows machine, stalls of
-  0.1–2 s were observed at 500k events/s in `Balanced` (not reproducible on every run, cause not identified; they also
-  occur without rotation and without the byte-based fsync). With the default `Block` policy a stall longer than
-  `QueueCapacity / rate` (131 ms for 65,536 slots at 500k/s) blocks producers; with `DropNewest` it becomes counted
-  drops. See `reports/latency-v1.md`. Planned: ETW/WPR trace, Linux measurements, fsync/seal off the writer thread.
+- Background durability (default, `StoreWriterOptions.BackgroundDurability`): sealing rotated segments and the
+  periodic `Balanced` fsync run on the store's durability thread, in FIFO order. `DurableSequence` only grows when an
+  fsync or seal has returned, and stops growing after a failure (sticky); the next synchronous flush then throws
+  instead of claiming durability. Explicit `FlushAsync(FsyncConfirmed)` and `Durable` mode still wait for the fsync
+  (and for pending seals).
+- Storage stalls (measured, `reports/latency-v1.md` §4): on the reference machine, fsync/seal took up to 1.8–5.3 s
+  (SSD 98 % full; device-level, GC excluded), and on Windows/NTFS an append waits while the same file is being
+  flushed. A stall longer than `QueueCapacity / rate` (131 ms for 65,536 slots at 500k/s) then blocks producers under
+  `Block` (up to `BlockTimeout`, then counted drops) or becomes counted drops under `DropNewest`. Moving fsync/seal off
+  the writer thread removed the seal stalls and most fsync stalls with one producer; it cannot remove the NTFS
+  same-file wait.
 - Records waiting in the in-memory queue are not redacted yet (redaction happens on the writer thread, before
   persistence); a memory dump of the process can contain them.
 - The `Remote` mode (server ACK) belongs to P16 and is not implemented.

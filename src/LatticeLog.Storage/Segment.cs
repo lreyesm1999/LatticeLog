@@ -1,4 +1,5 @@
 using System.Buffers;
+using Microsoft.Win32.SafeHandles;
 using System.IO.Compression;
 using LatticeLog.Storage.Codecs;
 using LatticeLog.Storage.Format;
@@ -15,10 +16,14 @@ public sealed record SegmentWriterOptions
     public long? CreatedUnixNanos { get; init; }
 }
 
-/// <summary>Append-only writer of one segment file. Not thread-safe; owned by the store writer thread.</summary>
+/// <summary>
+/// Append-only writer of one segment file. Not thread-safe, except <see cref="Fsync"/>, which may run on another thread
+/// concurrently with <see cref="Append"/>: writes are positional (<see cref="RandomAccess"/>) on a raw OS handle, so a
+/// background fsync never shares stream state with the writer (P14: fsync off the writer thread).
+/// </summary>
 public sealed class SegmentWriter : IDisposable
 {
-    private readonly FileStream _fs;
+    private readonly SafeFileHandle _handle;
     private readonly SegmentTables _tables = new();
     private readonly SegmentIndexBuilder _index = new();
     private readonly ByteWriter _payload = new(64 * 1024);
@@ -32,6 +37,9 @@ public sealed class SegmentWriter : IDisposable
     public long RecordCount => _index.Current.RecordCount;
     public long CreatedUnixNanos { get; }
     public SegmentIndex CurrentIndex => _index.Current;
+    /// <summary>True once the footer was written and the file closed.</summary>
+    public bool IsSealed => Volatile.Read(ref _sealedFlag) != 0;
+    private int _sealedFlag;
     /// <summary>True after an I/O error; the segment must be sealed (best effort) and replaced.</summary>
     public bool Faulted { get; private set; }
 
@@ -41,10 +49,10 @@ public sealed class SegmentWriter : IDisposable
         Path = path;
         SegmentId = segmentId;
         CreatedUnixNanos = _options.CreatedUnixNanos ?? UnixTime.NowUnixNanos();
-        _fs = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read, bufferSize: 0, FileOptions.None);
+        _handle = File.OpenHandle(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read, FileOptions.None);
         Span<byte> h = stackalloc byte[Llog.FileHeaderSize];
         new FileHeader(Llog.FormatMajor, Llog.FormatMinor, 0, Llog.OptionalFooterCatalog, segmentId, CreatedUnixNanos).Write(h);
-        _fs.Write(h);
+        RandomAccess.Write(_handle, h, 0);
         Length = Llog.FileHeaderSize;
     }
 
@@ -112,13 +120,13 @@ public sealed class SegmentWriter : IDisposable
         var offset = Length;
         try
         {
-            _fs.Write(_frame.WrittenSpan);
+            RandomAccess.Write(_handle, _frame.WrittenSpan, offset);
         }
         catch
         {
             // Never leave a partial frame followed by later frames: cut back to the last good block.
             Faulted = true;
-            try { _fs.SetLength(offset); _fs.Position = offset; } catch (IOException) { }
+            try { RandomAccess.SetLength(_handle, offset); } catch (IOException) { }
             throw;
         }
         Length += _frame.Length;
@@ -142,9 +150,15 @@ public sealed class SegmentWriter : IDisposable
         return _frame.Length;
     }
 
-    public void FlushToOs() => _fs.Flush(flushToDisk: false);
+    /// <summary>Writes are unbuffered positional writes: once <see cref="Append"/> returns, the OS has the bytes.</summary>
+    public void FlushToOs() { }
 
-    public void Fsync() => _fs.Flush(flushToDisk: true);
+    /// <summary>
+    /// Makes everything written so far durable. Safe to call from another thread while <see cref="Append"/> runs (the
+    /// fsync then covers at least the bytes written before it started). Throws <see cref="ObjectDisposedException"/>
+    /// if the segment was closed meanwhile.
+    /// </summary>
+    public void Fsync() => RandomAccess.FlushToDisk(_handle);
 
     /// <summary>Writes footer index + trailer, fsyncs and closes. The segment becomes immutable.</summary>
     public SegmentIndex Seal()
@@ -162,17 +176,18 @@ public sealed class SegmentWriter : IDisposable
         _frame.WriteBytes(_payload.WrittenSpan);
         new Trailer((ulong)footerOffset, 0).Write(_frame.GetSpan(Llog.TrailerSize));
         _frame.Advance(Llog.TrailerSize);
-        _fs.Write(_frame.WrittenSpan);
+        RandomAccess.Write(_handle, _frame.WrittenSpan, footerOffset);
         Length += _frame.Length;
-        _fs.Flush(flushToDisk: true);
+        RandomAccess.FlushToDisk(_handle);
         _sealed = true;
-        _fs.Dispose();
+        Volatile.Write(ref _sealedFlag, 1);
+        _handle.Dispose();
         return index;
     }
 
     public void Dispose()
     {
-        if (!_sealed) _fs.Dispose();
+        if (!_sealed) _handle.Dispose();
         _payload.Release();
         _frame.Release();
     }

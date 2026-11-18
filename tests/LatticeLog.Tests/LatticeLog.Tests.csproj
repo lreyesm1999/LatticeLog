@@ -31,6 +31,8 @@
     <ProjectReference Include="..\..\src\LatticeLog.Mcp\LatticeLog.Mcp.csproj" />
     <ProjectReference Include="..\..\src\LatticeLog.Cli\LatticeLog.Cli.csproj" />
     <ProjectReference Include="..\..\src\LatticeLog.Extensions.Logging\LatticeLog.Extensions.Logging.csproj" />
+    <ProjectReference Include="..\..\src\LatticeLog.Ingest\LatticeLog.Ingest.csproj" />
+    <ProjectReference Include="..\..\src\LatticeLog.Server\LatticeLog.Server.csproj" />
     <!-- Built first so CrashTests can launch it as a separate process; not referenced as an assembly. -->
     <ProjectReference Include="..\LatticeLog.CrashHarness\LatticeLog.CrashHarness.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
