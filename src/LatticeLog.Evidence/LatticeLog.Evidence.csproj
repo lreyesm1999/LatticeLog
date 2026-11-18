@@ -1,0 +1,15 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\LatticeLog.Query\LatticeLog.Query.csproj" />
+    <ProjectReference Include="..\LatticeLog.Storage\LatticeLog.Storage.csproj" />
+    <ProjectReference Include="..\LatticeLog.Abstractions\LatticeLog.Abstractions.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

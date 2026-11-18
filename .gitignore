@@ -1,0 +1,14 @@
+bin/
+obj/
+*.user
+*.suo
+.vs/
+.vscode/
+TestResults/
+BenchmarkDotNet.Artifacts/
+research/datasets/generated/
+research/results/tmp/
+*.llog.tmp
+__pycache__/
+*.pyc
+/artifacts/

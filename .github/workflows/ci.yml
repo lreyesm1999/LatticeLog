@@ -1,0 +1,49 @@
+# Fast CI + Correctness CI + basic supply-chain checks (plan §5). Not executed yet: no remote repository exists.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: dotnet build LatticeLog.sln -c Release
+      - run: dotnet test LatticeLog.sln -c Release --no-build
+      - name: Independent reader on golden files (gate G4)
+        run: python -I tools/pyllog/llog.py verify-golden tests/GoldenFiles/v0.1
+      - name: Lab smoke (round trips must verify)
+        run: dotnet run -c Release --no-build --project research/LatticeLog.Lab -- baseline --events 5000 --reps 1 --out lab-smoke
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Vulnerable packages
+        run: dotnet list LatticeLog.sln package --vulnerable --include-transitive
+      - name: SBOM (CycloneDX)
+        run: |
+          dotnet tool install --global CycloneDX
+          dotnet-CycloneDX LatticeLog.sln -o sbom
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom

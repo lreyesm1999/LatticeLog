@@ -1,0 +1,20 @@
+<Project>
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Deterministic>true</Deterministic>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591;CS1573;CA1716;CA1720;CA1711;CA1028;CA1062;CA1303;CA2201;CA1031;CA1819;CA1815;CA1305;CA1307;CA1310;CA1309;CA1848;CA2254;CA1822;CA1859;CA1002;CA1051;CA1034;CA1724;CA1032;CA1064;CA5394;CA1050;CA1849;CA2000;CA1835;CA1838;CA1003;CA1805;CA1812;CA1825;CA1806;CA1851;CA1860;CA1865;CA1866;CA1847;CA1854;CA1869;CA2263;CA1308;CA1304;CA1311;CA1000;CA1823;CA1063;CA1816;CA2007;CA1001;CA1010;CA1036;CA1707;CA1515;CA1852;CA1861;CA2016</NoWarn>
+    <Version>0.1.0-alpha.1</Version>
+    <Authors>LatticeLog contributors</Authors>
+    <Product>LatticeLog</Product>
+    <Copyright>LatticeLog contributors</Copyright>
+    <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0'">
+    <IsAotCompatible Condition="'$(IsTestProject)' != 'true' and '$(MSBuildProjectName)' != 'LatticeLog.Lab' and '$(MSBuildProjectName)' != 'LatticeLog.Benchmarks'">true</IsAotCompatible>
+  </PropertyGroup>
+</Project>

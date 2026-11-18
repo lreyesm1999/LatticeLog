@@ -1,0 +1,21 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\LatticeLog.Core\LatticeLog.Core.csproj" />
+    <ProjectReference Include="..\LatticeLog.Query\LatticeLog.Query.csproj" />
+    <ProjectReference Include="..\LatticeLog.Evidence\LatticeLog.Evidence.csproj" />
+    <ProjectReference Include="..\LatticeLog.OpenTelemetry\LatticeLog.OpenTelemetry.csproj" />
+    <ProjectReference Include="..\LatticeLog.Mcp\LatticeLog.Mcp.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>latticelog</AssemblyName>
+    <RootNamespace>LatticeLog.Cli</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,30 @@
+# Dataset manifest (P02-T06). No raw sensitive data is committed to this repository.
+version: 1
+synthetic:
+  generator: research/LatticeLog.Lab/Workloads.cs
+  license: same as repository (pending decision)
+  deterministic: true          # identical records for (workload, events, seed)
+  workloads:
+    - {name: http-api,           seed: 1, ground_truth: "traces with HTTP 500 + NullReferenceException"}
+    - {name: inventory,          seed: 1, ground_truth: "inventory.stock.timeout traces (1/2000)"}
+    - {name: batch,              seed: 1, ground_truth: none}
+    - {name: iot,                seed: 1, ground_truth: none}
+    - {name: queue,              seed: 1, ground_truth: "retry chains (5% of messages)"}
+    - {name: microservices,      seed: 1, ground_truth: "DEADLINE_EXCEEDED at hop 2 (1/500 requests)"}
+    - {name: high-cardinality,   seed: 1, ground_truth: none, purpose: anti-case}
+    - {name: adversarial-random, seed: 1, ground_truth: none, purpose: anti-case}
+  canonical_sha256_100k:         # sha256 of canonical latticelog.jsonl, 100000 events, seed 1 (prefix)
+    http-api: 615B2F12D8069ED3
+    inventory: 4CD1DB25AD8C7C62
+    batch: 25B356F2ABDC2126
+    iot: 98EDDB50D7E853CA
+    queue: F960812A9D20E818
+    microservices: E21E5DDCAD91D81F
+    high-cardinality: DE395AE5634C6297
+    adversarial-random: 8D4DD9A867EC090F
+public:
+  - name: Loghub-2.0
+    status: pending            # download requires explicit approval and license review (P02-T01, R14)
+    import: "latticelog import <store> <file.log> --format text"   # byte-exact raw import
+real:
+  status: pending              # requires authorization and anonymization (P02-T02)
