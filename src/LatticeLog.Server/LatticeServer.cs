@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net;
 using System.Text.Json.Nodes;
@@ -6,46 +7,79 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace LatticeLog.Server;
 
-public sealed record CollectorOptions
+/// <summary>Read-side limits (P17-T06/T08): queries never share threads or limits with ingestion.</summary>
+public sealed record QueryLimits
 {
-    public required IngestServiceOptions Ingest { get; init; }
+    /// <summary>Queries running at once on the whole server; others wait up to <see cref="QueueWait"/>, then 503.</summary>
+    public int MaxConcurrentQueries { get; init; } = Math.Max(2, Environment.ProcessorCount / 2);
+    public TimeSpan QueueWait { get; init; } = TimeSpan.FromSeconds(2);
+    /// <summary>Queries running at once per token; beyond this, 429.</summary>
+    public int PerTokenConcurrentQueries { get; init; } = 4;
+    public TimeSpan DefaultTimeout { get; init; } = TimeSpan.FromSeconds(10);
+    public TimeSpan MaxTimeout { get; init; } = TimeSpan.FromSeconds(60);
+    /// <summary>Records a single request may decode; beyond it the answer is marked partial.</summary>
+    public long MaxScannedRecords { get; init; } = 20_000_000;
+    public int MaxPageSize { get; init; } = 1_000;
+    public long MaxExportRecords { get; init; } = 1_000_000;
+    public TimeSpan CursorTtl { get; init; } = TimeSpan.FromHours(1);
+}
+
+public sealed record ServerOptions
+{
+    /// <summary>Root directory: <c>ns/&lt;namespace&gt;</c> stores and <c>server.key</c>.</summary>
+    public required string DataDirectory { get; init; }
     public required TokenStore Tokens { get; init; }
+    /// <summary>Per-namespace ingestion settings (StoreDirectory is filled in per namespace).</summary>
+    public IngestServiceOptions IngestTemplate { get; init; } = new() { StoreDirectory = "" };
     public IngestLimits Limits { get; init; } = new();
+    public QueryLimits Query { get; init; } = new();
     /// <summary>For example <c>https://0.0.0.0:7400</c> or <c>http://127.0.0.1:0</c> (0 = any free port).</summary>
     public string Url { get; init; } = "http://127.0.0.1:7400";
     public string? CertificatePath { get; init; }
     public string? CertificatePassword { get; init; }
     /// <summary>Plain HTTP on a non-loopback address. Off by default: credentials and logs would travel in clear text.</summary>
     public bool AllowInsecureHttp { get; init; }
+    /// <summary>Server-level diagnostics (unexpected errors). Must not block or throw.</summary>
+    public Action<string>? Diagnostics { get; init; }
 }
 
-/// <summary>HTTP collector (ADR-0009): <c>POST /v1/ingest</c> and <c>GET /v1/health</c>.</summary>
-public sealed class Collector : IAsyncDisposable
+/// <summary>
+/// LatticeLog server v1 (P16 + P17): ingestion (<c>POST /v1/ingest</c>) and a read API per namespace, behind bearer
+/// tokens with scopes. See specs/ingest-protocol.md and specs/server-api.md.
+/// </summary>
+public sealed partial class LatticeServer : IAsyncDisposable
 {
     private readonly WebApplication _app;
-    private readonly IngestService _service;
-    private readonly CollectorOptions _options;
+    private readonly ServerOptions _options;
+    private readonly NamespaceRegistry _namespaces;
+    private readonly CursorSigner _cursors;
     private readonly QuotaLimiter _quota = new();
+    private readonly SemaphoreSlim _querySlots;
+    private readonly ConcurrentDictionary<string, int> _queriesPerToken = new(StringComparer.Ordinal);
 
-    private Collector(WebApplication app, IngestService service, CollectorOptions options)
+    private LatticeServer(WebApplication app, ServerOptions options)
     {
         _app = app;
-        _service = service;
         _options = options;
+        _namespaces = new NamespaceRegistry(options.DataDirectory, options.IngestTemplate);
+        _cursors = CursorSigner.FromDataDirectory(options.DataDirectory, options.Query.CursorTtl);
+        _querySlots = new SemaphoreSlim(options.Query.MaxConcurrentQueries);
     }
-
-    public IngestService Service => _service;
 
     /// <summary>Address actually bound (useful with port 0).</summary>
     public Uri BaseAddress { get; private set; } = null!;
 
-    public static async Task<Collector> StartAsync(CollectorOptions options)
+    public NamespaceRegistry Namespaces => _namespaces;
+
+    /// <summary>The ingestion service of a namespace (opened on demand).</summary>
+    public IngestService Ingest(string ns = NamespaceNames.Default) => _namespaces.Ingest(ns);
+
+    public static async Task<LatticeServer> StartAsync(ServerOptions options)
     {
         var url = new Uri(options.Url);
         var https = url.Scheme == Uri.UriSchemeHttps;
@@ -71,15 +105,22 @@ public sealed class Collector : IAsyncDisposable
             });
         });
         var app = builder.Build();
-        var service = new IngestService(options.Ingest);
-        var collector = new Collector(app, service, options);
-        app.MapPost(IngestProtocol.Path, (RequestDelegate)collector.HandleIngestAsync);
-        app.MapGet("/v1/health", (RequestDelegate)collector.HandleHealthAsync);
+        var server = new LatticeServer(app, options);
+        app.MapPost(IngestProtocol.Path, (RequestDelegate)server.HandleIngestAsync);
+        app.MapGet("/v1/health", (RequestDelegate)server.HandleHealthAsync);
+        server.MapReadApi(app);
         await app.StartAsync().ConfigureAwait(false);
         var bound = app.Urls.First();
-        collector.BaseAddress = new Uri(bound.Replace("[::]", "127.0.0.1", StringComparison.Ordinal).Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal));
-        return collector;
+        server.BaseAddress = new Uri(bound.Replace("[::]", "127.0.0.1", StringComparison.Ordinal).Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal));
+        return server;
     }
+
+    private void Diagnose(string message)
+    {
+        try { _options.Diagnostics?.Invoke("[LatticeLog.Server] " + message); } catch { /* never break a request */ }
+    }
+
+    // ------------------------------------------------------------------ shared helpers
 
     private static Task WriteJsonAsync(HttpContext ctx, int status, JsonObject body, TimeSpan? retryAfter = null)
     {
@@ -97,16 +138,47 @@ public sealed class Collector : IAsyncDisposable
         return WriteJsonAsync(ctx, status, body, retryAfter);
     }
 
-    private async Task HandleIngestAsync(HttpContext ctx)
+    private TokenInfo? Authenticate(HttpContext ctx)
     {
         var auth = ctx.Request.Headers.Authorization.ToString();
-        var token = _options.Tokens.Authenticate(auth.StartsWith("Bearer ", StringComparison.Ordinal) ? auth[7..].Trim() : null);
+        return _options.Tokens.Authenticate(auth.StartsWith("Bearer ", StringComparison.Ordinal) ? auth[7..].Trim() : null);
+    }
+
+    /// <summary>Authenticates and checks scope + namespace. Writes the error and returns null when refused.</summary>
+    private async Task<(TokenInfo Token, string Namespace)?> AuthorizeAsync(HttpContext ctx, TokenScopes scope, string? requestedNamespace)
+    {
+        var token = Authenticate(ctx);
         if (token is null)
         {
             ctx.Response.Headers.WWWAuthenticate = "Bearer";
             await ErrorAsync(ctx, 401, "unauthorized", "missing or unknown bearer token").ConfigureAwait(false);
-            return;
+            return null;
         }
+        if (!token.Has(scope))
+        {
+            await ErrorAsync(ctx, 403, "forbidden_scope", $"token '{token.Id}' lacks the '{scope.ToString().ToLowerInvariant()}' scope").ConfigureAwait(false);
+            return null;
+        }
+        var ns = string.IsNullOrEmpty(requestedNamespace) ? token.DefaultNamespace : requestedNamespace;
+        if (!NamespaceNames.IsValid(ns))
+        {
+            await ErrorAsync(ctx, 400, "invalid_namespace", "namespace must look like tenant[/project[/environment]] (a-z, 0-9, . _ -)").ConfigureAwait(false);
+            return null;
+        }
+        if (!token.AllowsNamespace(ns))
+        {
+            await ErrorAsync(ctx, 403, "forbidden_namespace", $"token '{token.Id}' may not access namespace '{ns}'").ConfigureAwait(false);
+            return null;
+        }
+        return (token, ns);
+    }
+
+    // ------------------------------------------------------------------ ingestion
+
+    private async Task HandleIngestAsync(HttpContext ctx)
+    {
+        var auth = await AuthorizeAsync(ctx, TokenScopes.Ingest, ctx.Request.Headers["LatticeLog-Namespace"].ToString()).ConfigureAwait(false);
+        if (auth is not var (token, ns)) return;
         if (ctx.Request.ContentLength is > 0 and var len && len > _options.Limits.MaxRequestBytes)
         {
             await ErrorAsync(ctx, 413, "too_large", $"request larger than {_options.Limits.MaxRequestBytes} bytes").ConfigureAwait(false);
@@ -154,7 +226,14 @@ public sealed class Collector : IAsyncDisposable
             return;
         }
         var ack = ctx.Request.Headers[IngestProtocol.AckHeader].ToString() == "os" ? AckLevel.WrittenToOs : AckLevel.FsyncConfirmed;
-        var result = await _service.SubmitAsync(batch, ack).ConfigureAwait(false);
+        IngestService service;
+        try { service = _namespaces.Ingest(ns); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            await ErrorAsync(ctx, 503, "persist_failed", "cannot open namespace store: " + ex.Message, TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+            return;
+        }
+        var result = await service.SubmitAsync(batch, ack).ConfigureAwait(false);
         switch (result.Status)
         {
             case SubmitStatus.Acknowledged:
@@ -174,24 +253,45 @@ public sealed class Collector : IAsyncDisposable
         }
     }
 
-    private Task HandleHealthAsync(HttpContext ctx) => WriteJsonAsync(ctx, _service.Failure is null ? 200 : 503, new JsonObject
+    /// <summary>Unauthenticated liveness: only "ok"/"failed" and counts. Details per namespace need an admin token.</summary>
+    private async Task HandleHealthAsync(HttpContext ctx)
     {
-        ["status"] = _service.Failure is null ? "ok" : "failed",
-        ["failure"] = _service.Failure,
-        ["store_id"] = _service.StoreId,
-        ["last_sequence"] = _service.LastSequence.ToString(CultureInfo.InvariantCulture),
-        ["producers"] = _service.ProducerCount,
-    });
+        var services = _namespaces.OpenServices();
+        var failed = services.Where(s => s.Service.Failure is not null).ToList();
+        var body = new JsonObject { ["status"] = failed.Count == 0 ? "ok" : "failed", ["open_namespaces"] = services.Count };
+        if (Authenticate(ctx) is { } t && t.Has(TokenScopes.Admin))
+        {
+            var detail = new JsonObject();
+            foreach (var (ns, svc) in services)
+            {
+                var st = svc.GetStats();
+                detail[ns] = new JsonObject
+                {
+                    ["failure"] = svc.Failure,
+                    ["store_id"] = svc.StoreId,
+                    ["last_sequence"] = svc.LastSequence.ToString(CultureInfo.InvariantCulture),
+                    ["producers"] = svc.ProducerCount,
+                    ["batches_stored"] = st.BatchesStored,
+                    ["flushes"] = st.Flushes,
+                    ["queue_depth"] = st.QueueDepth,
+                };
+            }
+            body["namespaces"] = detail;
+        }
+        await WriteJsonAsync(ctx, failed.Count == 0 ? 200 : 503, body).ConfigureAwait(false);
+    }
+
+    // ------------------------------------------------------------------ lifecycle
 
     private int _disposed;
 
-    /// <summary>Test-only: stop as after a crash (no final checkpoint).</summary>
+    /// <summary>Test-only: stop as after a crash (no final checkpoints).</summary>
     public async Task AbortAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         await _app.StopAsync().ConfigureAwait(false);
         await _app.DisposeAsync().ConfigureAwait(false);
-        _service.Abort();
+        _namespaces.Abort();
     }
 
     public async ValueTask DisposeAsync()
@@ -199,6 +299,7 @@ public sealed class Collector : IAsyncDisposable
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         await _app.StopAsync().ConfigureAwait(false);
         await _app.DisposeAsync().ConfigureAwait(false);
-        _service.Dispose();
+        _namespaces.Dispose();
+        _querySlots.Dispose();
     }
 }

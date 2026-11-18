@@ -9,6 +9,9 @@ namespace LatticeLog.Server;
 
 public enum SubmitStatus { Acknowledged, SequenceGap, Overloaded, PersistFailed }
 
+/// <summary>Writer counters: batches per flush shows how much group commit amortizes fsync.</summary>
+public sealed record IngestStats(long Groups, long BatchesStored, long BatchesDuplicate, long RecordsStored, long Flushes, int QueueDepth);
+
 public sealed record SubmitResult(SubmitStatus Status, IngestAck? Ack = null, ulong CommittedThrough = 0, string? Error = null);
 
 public sealed record IngestServiceOptions
@@ -57,7 +60,7 @@ public sealed class IngestService : IDisposable
         _store = StoreWriter.Open(options.StoreDirectory, options.Store);
         RebuildCursors();
         _queue = new BlockingCollection<Pending>(options.QueueCapacity);
-        _writer = new Thread(WriterLoop) { IsBackground = true, Name = "LatticeLog.Collector.Writer" };
+        _writer = new Thread(WriterLoop) { IsBackground = true, Name = "LatticeLog.Ingest.Writer" };
         _writer.Start();
     }
 
@@ -71,6 +74,11 @@ public sealed class IngestService : IDisposable
     }
 
     public int ProducerCount { get { lock (_cursorLock) return _cursors.Count; } }
+
+    private long _groups, _batchesStored, _batchesDuplicate, _recordsStored, _flushes;
+
+    public IngestStats GetStats() => new(Interlocked.Read(ref _groups), Interlocked.Read(ref _batchesStored), Interlocked.Read(ref _batchesDuplicate),
+        Interlocked.Read(ref _recordsStored), Interlocked.Read(ref _flushes), _queue.Count);
 
     public Task<SubmitResult> SubmitAsync(DecodedBatch batch, AckLevel ack)
     {
@@ -191,6 +199,7 @@ public sealed class IngestService : IDisposable
 
     private void ProcessGroup(List<Pending> group)
     {
+        Interlocked.Increment(ref _groups);
         if (_failure is { } failed)
         {
             foreach (var p in group) p.Done.TrySetResult(new SubmitResult(SubmitStatus.PersistFailed, Error: failed));
@@ -211,6 +220,7 @@ public sealed class IngestService : IDisposable
                 // written so far to this request's level before answering.
                 if (p.Ack > level) level = p.Ack;
                 needFlush = true;
+                Interlocked.Increment(ref _batchesDuplicate);
                 p.Provisional = new IngestAck("duplicate", b.ProducerId, committed, 0, b.Records.Count, AckLevel.None, 0, 0, 0);
                 continue;
             }
@@ -239,6 +249,8 @@ public sealed class IngestService : IDisposable
                 break;
             }
             wrote = true;
+            Interlocked.Increment(ref _batchesStored);
+            Interlocked.Add(ref _recordsStored, toStore.Count);
             if (p.Ack > level) level = p.Ack;
             tentative[b.ProducerId] = b.LastLocalSeq;
             p.Provisional = new IngestAck(skip == 0 ? "stored" : "partial_duplicate", b.ProducerId, b.LastLocalSeq, toStore.Count, skip,
@@ -248,7 +260,7 @@ public sealed class IngestService : IDisposable
         var achieved = AckLevel.WrittenToOs;
         if (_failure is null && (wrote || needFlush))
         {
-            try { achieved = _store.Flush(level); }
+            try { achieved = _store.Flush(level); Interlocked.Increment(ref _flushes); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 Fail($"flush failed: {ex.Message}");
@@ -275,6 +287,11 @@ public sealed class IngestService : IDisposable
 
     private static void WrapProvenance(List<LogRecord> records, string producer, ulong firstStored)
     {
+        // Arrival time (P17-T11): observed_time = when the collector received the record, unless the producer already
+        // set it. "time" stays the event time chosen by the producer.
+        var arrival = UnixTime.NowUnixNanos();
+        foreach (var r in records)
+            if (r.ObservedUnixNanos == 0) r.ObservedUnixNanos = arrival;
         var wrappers = new Dictionary<ContextSnapshot, ContextSnapshot>(ReferenceEqualityComparer.Instance);
         ContextSnapshot? rootWrapper = null;
         LogAttribute[] attrs = [new(IngestProtocol.AttrProducer, producer), new(IngestProtocol.AttrFirstLocalSeq, (long)firstStored)];
@@ -301,7 +318,7 @@ public sealed class IngestService : IDisposable
 
     private void Diagnose(string message)
     {
-        try { _options.Diagnostics?.Invoke("[LatticeLog.Collector] " + message); } catch { }
+        try { _options.Diagnostics?.Invoke("[LatticeLog.Ingest] " + message); } catch { }
     }
 
     /// <summary>Test-only crash simulation: stop without writing a checkpoint (the next start rebuilds from data).</summary>

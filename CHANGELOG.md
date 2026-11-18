@@ -1,5 +1,25 @@
 # Changelog
 
+## Sin publicar — servidor de consultas v1 (P17) y carga multi-productor
+
+- `latticelog-server` (sustituye a `latticelog-collector`):
+  - **namespaces** `tenant/proyecto/entorno`, con un almacén aislado por namespace;
+  - **tokens** con scopes `ingest`/`read`/`admin` y namespaces permitidos.
+- API de lectura (`specs/server-api.md`):
+  - búsqueda con cobertura y cursores **firmados con HMAC y con caducidad**;
+  - evento, relacionados, traza, estadísticas, overview, grupos de error, context pack y esquema;
+  - exportación sin pérdida paginada;
+  - catálogo de segmentos y salud con detalle para admin.
+- Separación lectura/ingestión: semáforo de consultas, concurrencia por token, timeout y registros escaneados con
+  resultado parcial explícito.
+- Hora de llegada (`observed_time`) en el servidor y en el JSON de salida.
+- `deploy/Dockerfile` (chiseled, no root; no construido) y `docs/deploy/single-node.md`.
+- Medición con 1–64 productores: group commit de hasta 27 lotes por fsync y pico de ~600k registros/s con 4
+  productores. Con productores y lectores a la vez, compiten por CPU (`reports/ingest-v1.md` §3–§4).
+- **Hallazgo de plataforma**: el equipo de referencia (i9-14900KF, microcódigo 0x11D) corrompe memoria bajo carga en
+  muchos núcleos, también sin LatticeLog (`tools/platform-stress`). Las mediciones con concurrencia se hacen con CPUs
+  limitadas.
+
 ## Sin publicar — ingestión remota v1 (P16)
 
 - Protocolo v1 (`specs/ingest-protocol.md`, ADR-0009): HTTP `POST /v1/ingest`, envelope binario de 48 bytes

@@ -22,7 +22,7 @@ Estados: PASS · CONDITIONAL (gate cumplido con pendientes explícitos) · NOT P
 | P14 | SDK .NET listo para producción (Local v1.0) | NOT PASSED |
 | P15 | CLI y herramientas locales | CONDITIONAL |
 | P16 | Protocolo de ingestión remota y collector | CONDITIONAL (loopback con fallos inyectados; falta red real/TLS/multi-productor) |
-| P17 | Servidor de consultas y multiusuario | NOT STARTED |
+| P17 | Servidor de consultas y multiusuario | CONDITIONAL (namespaces, roles, API de lectura; falta admin en línea/retención/imagen construida) |
 | P18 | Seguridad, privacidad y auditabilidad | NOT STARTED (controles locales parciales) |
 | P19 | Escalabilidad horizontal y replicación | NOT STARTED |
 | P20 | Almacenamiento por niveles y object storage | NOT STARTED |
@@ -44,7 +44,8 @@ Estados: PASS · CONDITIONAL (gate cumplido con pendientes explícitos) · NOT P
 - ~~Mitigar P04-R1~~ hecho en el formato 0.2 (copia comprimida de catálogos en el footer).
 
 ## Next
-- P17 servidor de consultas single-node (sobre el collector de P16). P16 hecho en v1: `docs/decisions/PHASE-16-REVIEW.md`.
+- Pendientes de P16–P17: red real y TLS probados, imagen Docker construida, administración en línea y retención (`docs/decisions/PHASE-17-REVIEW.md`).
+- **Plataforma**: el equipo de referencia corrompe memoria bajo carga multinúcleo (BIOS/microcódigo antiguos); repetir las mediciones en hardware estable.
 - Evaluación externa AI-friendly (P12-T17..T19) con modelo externo y revisión humana.
 - Datasets reales propios en el laboratorio (Loghub-2.0 ya medido: `reports/loghub2-v1.md`).
 

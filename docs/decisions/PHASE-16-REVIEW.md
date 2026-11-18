@@ -1,11 +1,11 @@
 # PHASE-16-REVIEW — Protocolo de ingestión remota y collector
 
 - Estado: **CONDITIONAL** (protocolo, cliente y collector funcionan y están probados en loopback con fallos
-  inyectados; faltan red real, TLS probado y carga multi-productor)
+  inyectados; carga multi-productor medida en `reports/ingest-v1.md` §3; faltan red real y TLS probado)
 - Fecha: 2026-11-18
 - Decisiones: `docs/decisions/ADR-0009.md` · Especificación: `specs/ingest-protocol.md`
 - Entregables: `src/LatticeLog.Ingest` (envelope, cliente, forwarder), `src/LatticeLog.Server` (collector),
-  `src/LatticeLog.Collector` (ejecutable `latticelog-collector`), `tests/LatticeLog.Tests/IngestTests.cs`,
+  `src/LatticeLog.Collector` (ejecutable `latticelog-collector`, desde P17 `src/LatticeLog.ServerHost` → `latticelog-server`), `tests/LatticeLog.Tests/IngestTests.cs`,
   `reports/ingest-v1.md`
 
 | tarea | estado | evidencia |

@@ -4,9 +4,9 @@ Motor de logs y eventos **local primero**: captura tipada de baja sobrecarga, fo
 reconstrucción exacta, consultas selectivas con índices y evidencias deterministas para lectores externos (humanos,
 scripts o IA externa). **LatticeLog no ejecuta IA**: solo estructura, filtra, agrupa y recupera.
 
-> Estado: **0.1.0-alpha.1** (18-nov-2026). Motor local funcional y probado en Windows x64; ingestión remota v1
-> (collector) probada en loopback; servidor de consultas, clúster, SDK multilenguaje, consola web y SaaS **no
-> existen todavía**. Nombre provisional (verificar marca antes de publicar).
+> Estado: **0.1.0-alpha.1** (18-nov-2026). Motor local funcional y probado en Windows x64; servidor de un nodo
+> (`latticelog-server`: ingestión + API de lectura por namespace) probado en loopback; clúster, SDK multilenguaje,
+> consola web y SaaS **no existen todavía**. Nombre provisional (verificar marca antes de publicar).
 > Licencia: **pendiente de decisión** (no se ha elegido ninguna).
 
 ## En 2 minutos
@@ -43,12 +43,15 @@ latticelog export ./logs --format llog-jsonl --output logs.jsonl     # salida si
 latticelog mcp ./logs                                                 # servidor MCP de solo lectura por stdio
 ```
 
-### Enviar a un collector
+### Servidor: enviar y consultar
 
 ```bash
-latticelog-collector hash-token "<secreto>"          # el hash va en tokens.json
-latticelog-collector --store ./server-logs --tokens tokens.json --listen https://0.0.0.0:7400 --cert server.pfx
+latticelog-server hash-token "<secreto>"             # el hash va en tokens.json (scopes ingest/read/admin, namespaces)
+latticelog-server --data ./server-data --tokens tokens.json --listen https://0.0.0.0:7400 --cert server.pfx
+curl -H "Authorization: Bearer $TOKEN" "https://host:7400/v1/search?ns=acme/prod&where=level%20%3E%3D%20ERROR&since=1h"
 ```
+
+API completa en `specs/server-api.md`; despliegue en una máquina en `docs/deploy/single-node.md`.
 
 ```csharp
 // En la aplicación: se sigue escribiendo en local; el forwarder envía lo confirmado por el servidor y reintenta.
@@ -73,7 +76,7 @@ await using var forwarder = Forwarder.Start("./logs", new ForwarderOptions
 | CLI `latticelog` (también como `dotnet tool`, compatible con trimming) | `src/LatticeLog.Cli` | alpha |
 | Adaptador MCP de solo lectura | `src/LatticeLog.Mcp` | alpha |
 | Ingestión remota: protocolo, cliente y `Forwarder` (el almacén local es el spool) | `src/LatticeLog.Ingest` | alpha |
-| Collector HTTP (`latticelog-collector`): deduplicación, group commit, tokens, cuotas, límites | `src/LatticeLog.Server`, `src/LatticeLog.Collector` | alpha |
+| Servidor (`latticelog-server`): ingestión con deduplicación y group commit, API de lectura (búsqueda, eventos, trazas, stats, context packs, export, catálogo), namespaces, tokens con roles, cursores firmados, límites | `src/LatticeLog.Server`, `src/LatticeLog.ServerHost` | alpha |
 | Lector independiente en Python (verificación del formato) | `tools/pyllog` | referencia |
 | Laboratorio y benchmarks | `research/`, `benchmarks/`, `reports/` | — |
 

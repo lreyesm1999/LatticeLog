@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Control program with no LatticeLog code: gzip inflate + JSON lines + RFC 3339 dates on N threads, every result
+       checked. Run with: dotnet run -c Release (project tools/platform-stress) then the arguments: threads seconds.
+       A crash or a wrong result here points at the machine (see reports/ingest-v1.md §3), not at LatticeLog. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+</Project>

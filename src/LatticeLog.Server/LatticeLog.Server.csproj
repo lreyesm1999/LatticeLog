@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
-    <Description>LatticeLog collector (P16): HTTP ingestion endpoint with idempotent deduplication, group commit, token authentication, quotas and limits over a local LatticeLog store.</Description>
+    <Description>LatticeLog server (P16-P17): HTTP ingestion with idempotent deduplication and group commit, plus a read API (search, events, traces, stats, context packs, export, catalog) per namespace, with scoped tokens, quotas and limits.</Description>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
@@ -13,6 +13,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\LatticeLog.Ingest\LatticeLog.Ingest.csproj" />
+    <ProjectReference Include="..\LatticeLog.Query\LatticeLog.Query.csproj" />
+    <ProjectReference Include="..\LatticeLog.Evidence\LatticeLog.Evidence.csproj" />
   </ItemGroup>
 
   <ItemGroup>

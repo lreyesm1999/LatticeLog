@@ -4,15 +4,33 @@ using System.Text.Json.Nodes;
 
 namespace LatticeLog.Server;
 
-public sealed record TokenInfo(string Id, byte[] Sha256, IReadOnlySet<string> Producers, double RecordsPerSecond)
+/// <summary>What a token may do (P17-T05).</summary>
+[Flags]
+public enum TokenScopes
+{
+    None = 0,
+    /// <summary>Send batches (<c>POST /v1/ingest</c>).</summary>
+    Ingest = 1,
+    /// <summary>Search, read events/traces, aggregations, context packs, export, catalog.</summary>
+    Read = 2,
+    /// <summary>Server-wide views (all namespaces in health and listings).</summary>
+    Admin = 4,
+}
+
+/// <summary>A bearer token: only its SHA-256 is kept. <see cref="Namespaces"/>[0] is where it ingests by default.</summary>
+public sealed record TokenInfo(string Id, byte[] Sha256, IReadOnlySet<string> Producers, double RecordsPerSecond, TokenScopes Scopes, IReadOnlyList<string> Namespaces)
 {
     public bool AllowsProducer(string producer) => Producers.Contains("*") || Producers.Contains(producer);
+    public bool AllowsNamespace(string ns) => Namespaces.Contains("*") || Namespaces.Contains(ns);
+    public bool Has(TokenScopes scope) => (Scopes & scope) == scope;
+    public string DefaultNamespace => Namespaces.Count == 0 || Namespaces[0] == "*" ? NamespaceNames.Default : Namespaces[0];
 }
 
 /// <summary>
 /// Bearer tokens from a JSON file (only SHA-256 hashes are stored). The file is re-read when it changes, so tokens can
 /// be rotated without a restart: add the new token, move clients, remove the old one (P16-T10).
-/// <code>{"tokens":[{"id":"orders-api","sha256":"…hex…","producers":["*"],"records_per_second":0}]}</code>
+/// <code>{"tokens":[{"id":"orders-api","sha256":"…hex…","scopes":["ingest"],"namespaces":["acme/prod"],"producers":["*"],"records_per_second":0}]}</code>
+/// Defaults: scopes ["ingest"], namespaces ["default"], producers ["*"], no rate limit.
 /// </summary>
 public sealed class TokenStore
 {
@@ -35,8 +53,17 @@ public sealed class TokenStore
 
     public static string HashHex(string token) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token))).ToLowerInvariant();
 
+    /// <summary>Ingest + read token for the default namespace (tests, single-tenant setups).</summary>
     public static TokenInfo Token(string id, string secret, double recordsPerSecond = 0, params string[] producers)
-        => new(id, SHA256.HashData(Encoding.UTF8.GetBytes(secret)), new HashSet<string>(producers.Length == 0 ? ["*"] : producers, StringComparer.OrdinalIgnoreCase), recordsPerSecond);
+        => Create(id, secret, TokenScopes.Ingest | TokenScopes.Read, [NamespaceNames.Default], recordsPerSecond, producers);
+
+    public static TokenInfo Create(string id, string secret, TokenScopes scopes, string[] namespaces, double recordsPerSecond = 0, params string[] producers)
+    {
+        foreach (var ns in namespaces)
+            if (ns != "*" && !NamespaceNames.IsValid(ns)) throw new ArgumentException($"invalid namespace '{ns}'", nameof(namespaces));
+        return new(id, SHA256.HashData(Encoding.UTF8.GetBytes(secret)),
+            new HashSet<string>(producers.Length == 0 ? ["*"] : producers, StringComparer.OrdinalIgnoreCase), recordsPerSecond, scopes, namespaces);
+    }
 
     private void Reload()
     {
@@ -45,10 +72,23 @@ public sealed class TokenStore
         var list = new List<TokenInfo>();
         foreach (var t in root["tokens"]!.AsArray())
         {
-            var producers = t!["producers"]?.AsArray().Select(p => (string)p!).ToHashSet(StringComparer.OrdinalIgnoreCase) ?? ["*"];
+            var id = (string)t!["id"]!;
+            var producers = t["producers"]?.AsArray().Select(p => (string)p!).ToHashSet(StringComparer.OrdinalIgnoreCase) ?? ["*"];
             var hash = Convert.FromHexString((string)t["sha256"]!);
-            if (hash.Length != 32) throw new InvalidDataException($"token {(string?)t["id"]}: sha256 must be 64 hex characters");
-            list.Add(new TokenInfo((string)t["id"]!, hash, producers, (double?)t["records_per_second"] ?? 0));
+            if (hash.Length != 32) throw new InvalidDataException($"token {id}: sha256 must be 64 hex characters");
+            var scopes = TokenScopes.None;
+            foreach (var s in t["scopes"]?.AsArray().Select(x => (string)x!) ?? ["ingest"])
+                scopes |= s switch
+                {
+                    "ingest" => TokenScopes.Ingest,
+                    "read" => TokenScopes.Read,
+                    "admin" => TokenScopes.Admin,
+                    _ => throw new InvalidDataException($"token {id}: unknown scope '{s}'"),
+                };
+            var namespaces = t["namespaces"]?.AsArray().Select(x => (string)x!).ToArray() ?? [NamespaceNames.Default];
+            foreach (var ns in namespaces)
+                if (ns != "*" && !NamespaceNames.IsValid(ns)) throw new InvalidDataException($"token {id}: invalid namespace '{ns}'");
+            list.Add(new TokenInfo(id, hash, producers, (double?)t["records_per_second"] ?? 0, scopes, namespaces));
         }
         _tokens = list;
         _loadedWriteTime = info.LastWriteTimeUtc;
@@ -69,7 +109,7 @@ public sealed class TokenStore
                     {
                         if (File.GetLastWriteTimeUtc(_path) != _loadedWriteTime) Reload();
                     }
-                    catch (Exception ex) when (ex is IOException or InvalidDataException or FormatException or System.Text.Json.JsonException or NullReferenceException)
+                    catch (Exception ex) when (ex is IOException or InvalidDataException or FormatException or System.Text.Json.JsonException or NullReferenceException or InvalidOperationException)
                     {
                         // Keep the previous set: a half-written file must not lock everybody out or let anybody in.
                     }
@@ -112,5 +152,59 @@ public sealed class QuotaLimiter
             retryAfter = TimeSpan.FromSeconds(Math.Ceiling(Math.Max(1, (records - b.Tokens) / token.RecordsPerSecond)));
             return false;
         }
+    }
+}
+
+/// <summary>
+/// Pagination cursors handed to clients are wrapped with an HMAC-SHA256 over (namespace, token id, expiry, engine
+/// cursor) and an expiry (P17-T07): a tampered, expired or borrowed cursor is rejected instead of being interpreted.
+/// The key lives in the data directory (<c>server.key</c>, created on first start).
+/// </summary>
+public sealed class CursorSigner(byte[] key, TimeSpan ttl)
+{
+    public static CursorSigner FromDataDirectory(string dataDirectory, TimeSpan ttl)
+    {
+        var path = Path.Combine(dataDirectory, "server.key");
+        if (!File.Exists(path))
+        {
+            Directory.CreateDirectory(dataDirectory);
+            var fresh = RandomNumberGenerator.GetBytes(32);
+            try
+            {
+                using var fs = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                fs.Write(fresh);
+                fs.Flush(flushToDisk: true);
+            }
+            catch (IOException) when (File.Exists(path)) { /* another instance created it first */ }
+        }
+        var key = File.ReadAllBytes(path);
+        if (key.Length != 32) throw new InvalidDataException($"{path} must contain 32 bytes");
+        return new CursorSigner(key, ttl);
+    }
+
+    public string Sign(string ns, string tokenId, string engineCursor)
+    {
+        var expires = DateTimeOffset.UtcNow.Add(ttl).ToUnixTimeSeconds();
+        var mac = Mac(ns, tokenId, expires, engineCursor);
+        return $"c1.{expires}.{engineCursor}.{mac}";
+    }
+
+    /// <summary>Returns the engine cursor, or throws <see cref="ArgumentException"/> with the reason.</summary>
+    public string Verify(string ns, string tokenId, string signed)
+    {
+        var parts = signed.Split('.');
+        if (parts.Length != 4 || parts[0] != "c1" || !long.TryParse(parts[1], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var expires))
+            throw new ArgumentException("malformed cursor");
+        var expected = Encoding.ASCII.GetBytes(Mac(ns, tokenId, expires, parts[2]));
+        if (!CryptographicOperations.FixedTimeEquals(expected, Encoding.ASCII.GetBytes(parts[3])))
+            throw new ArgumentException("cursor signature does not match (tampered, or issued for another namespace or token)");
+        if (DateTimeOffset.UtcNow.ToUnixTimeSeconds() > expires) throw new ArgumentException("cursor expired");
+        return parts[2];
+    }
+
+    private string Mac(string ns, string tokenId, long expires, string cursor)
+    {
+        var data = Encoding.UTF8.GetBytes($"{ns}\n{tokenId}\n{expires}\n{cursor}");
+        return Convert.ToBase64String(HMACSHA256.HashData(key, data)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
     }
 }

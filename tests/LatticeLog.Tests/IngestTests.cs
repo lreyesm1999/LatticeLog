@@ -37,10 +37,11 @@ public class IngestTests
         }
     }
 
-    private static async Task<Collector> StartCollector(string root, TokenStore? tokens = null, IngestLimits? limits = null)
-        => await Collector.StartAsync(new CollectorOptions
+    private static async Task<LatticeServer> StartCollector(string root, TokenStore? tokens = null, IngestLimits? limits = null)
+        => await LatticeServer.StartAsync(new ServerOptions
         {
-            Ingest = new IngestServiceOptions { StoreDirectory = root, Store = new StoreWriterOptions { MinFreeDiskBytes = 0 } },
+            DataDirectory = root,
+            IngestTemplate = new IngestServiceOptions { StoreDirectory = "", Store = new StoreWriterOptions { MinFreeDiskBytes = 0 } },
             Tokens = tokens ?? TokenStore.FromTokens(TokenStore.Token("t", Secret)),
             Limits = limits ?? new IngestLimits(),
             Url = "http://127.0.0.1:0",
@@ -59,10 +60,13 @@ public class IngestTests
         return (root, StoreWriter.ReadStoreFile(root).StoreId, (ulong)n);
     }
 
+    /// <summary>Records of the server's default namespace store (data/ns/default).</summary>
+    private static string DefaultStore(string dataRoot) => Path.Combine(dataRoot, "ns", NamespaceNames.Default);
+
     private static List<LogRecord> ServerRecords(string root)
     {
         var rep = new ScanReport();
-        var all = StoreReader.Open(root).ReadAll(rep).ToList();
+        var all = StoreReader.Open(DefaultStore(root)).ReadAll(rep).ToList();
         Assert.True(rep.IsClean, string.Join("\n", rep.Issues));
         return all;
     }
@@ -112,11 +116,11 @@ public class IngestTests
         await using (var fwd = Forwarder.Start(local, new ForwarderOptions { Endpoint = collector.BaseAddress, Token = Secret, MaxBatchRecords = 500, PollInterval = TimeSpan.FromMilliseconds(10) }))
             Assert.True(await fwd.WaitForAsync(3_000, TimeSpan.FromSeconds(30)));
         await collector.AbortAsync(); // "crash": no checkpoint
-        Assert.False(File.Exists(Path.Combine(serverRoot, IngestService.CheckpointFile)));
+        Assert.False(File.Exists(Path.Combine(DefaultStore(serverRoot), IngestService.CheckpointFile)));
         foreach (var f in Directory.GetFiles(local, "FORWARD-*.json")) File.Delete(f); // client forgot its cursor too
 
         await using var restarted = await StartCollector(serverRoot);
-        Assert.True(restarted.Service.CommittedThrough(producer) >= 3_000);
+        Assert.True(restarted.Ingest().CommittedThrough(producer) >= 3_000);
         await using (var fwd = Forwarder.Start(local, new ForwarderOptions { Endpoint = restarted.BaseAddress, Token = Secret, MaxBatchRecords = 500, PollInterval = TimeSpan.FromMilliseconds(10) }))
             Assert.True(await fwd.WaitForAsync(last, TimeSpan.FromSeconds(30)), fwd.LastError);
         await restarted.DisposeAsync();
@@ -259,9 +263,9 @@ public class IngestTests
     [Fact]
     public async Task Plain_http_on_a_public_address_is_refused()
     {
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => Collector.StartAsync(new CollectorOptions
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => LatticeServer.StartAsync(new ServerOptions
         {
-            Ingest = new IngestServiceOptions { StoreDirectory = TestData.TempDir() },
+            DataDirectory = TestData.TempDir(),
             Tokens = TokenStore.FromTokens(TokenStore.Token("t", Secret)),
             Url = "http://0.0.0.0:0",
         }));

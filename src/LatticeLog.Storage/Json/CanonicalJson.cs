@@ -239,6 +239,8 @@ public static class CanonicalJson
         w.WriteStartObject();
         w.WriteString("ref", ReferenceFor(storeId, r.Sequence));
         w.WriteString("time", UnixTime.FormatRfc3339(r.TimestampUnixNanos));
+        // Arrival/collection time when known (importers, collector): event time and arrival time are different facts.
+        if (r.ObservedUnixNanos != 0) w.WriteString("observed_time", UnixTime.FormatRfc3339(r.ObservedUnixNanos));
         w.WriteString("severity", r.Severity.ToText());
         if (r.EffectiveEventName is { } en) w.WriteString("event", en);
         if (r.EffectiveEventId != 0) w.WriteNumber("event_id", r.EffectiveEventId);

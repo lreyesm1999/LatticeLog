@@ -10,6 +10,16 @@ using LatticeLog.Core;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
+// --affinity <hex mask>: pin the process to some logical CPUs. Used on the reference machine, whose CPU crashes under
+// all-core load (reports/ingest-v1.md §3), to get trustworthy numbers.
+var affinityArg = Array.IndexOf(args, "--affinity");
+if (affinityArg >= 0)
+{
+    if (OperatingSystem.IsWindows() || OperatingSystem.IsLinux())
+        System.Diagnostics.Process.GetCurrentProcess().ProcessorAffinity = (nint)Convert.ToInt64(args[affinityArg + 1], 16);
+    args = args.Where((_, i) => i != affinityArg && i != affinityArg + 1).ToArray();
+}
+
 // Fixed-rate latency mode (not BenchmarkDotNet): dotnet run -c Release --project benchmarks/LatticeLog.Benchmarks -- latency
 if (args.Length > 0 && args[0] == "latency") return FixedRate.Run(args[1..]);
 // End-to-end remote ingestion (P16-T14): dotnet run -c Release --project benchmarks/LatticeLog.Benchmarks -- ingest
