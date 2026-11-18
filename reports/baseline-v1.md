@@ -1,5 +1,8 @@
 # Baseline v1 — storage, codecs, selective queries and P09 pre-study
 
+> **Actualización 18-nov-2026**: las secciones 1–5 miden el formato 0.1. La sección 6 repite la medición con el
+> formato 0.2 (copia de catálogos en el footer + catálogos comprimidos).
+
 Fecha: 18-nov-2026 · Generado con `research/LatticeLog.Lab` (`baseline --events 100000 --reps 3`) · Datos crudos:
 `research/results/baseline-20261118-072257.{csv,md}` y `queries-20261118-072257.csv`.
 
@@ -100,3 +103,29 @@ dotnet run -c Release --project research/LatticeLog.Lab -- baseline --events 100
 ```
 o `scripts/reproduce.ps1` / `scripts/reproduce.sh`. Las cargas son deterministas; los tamaños deben coincidir
 byte a byte en otra máquina con el mismo runtime (DEFLATE/zstd pueden variar entre versiones de biblioteca).
+
+## 6. Formato 0.2 (P04-R1) — repetición completa
+
+Misma máquina, mismas cargas y parámetros (`research/results/baseline-20261118-080231.{csv,md}`, `queries-…080231.csv`).
+Todas las filas `roundtrip ok`, todas las consultas consistentes.
+
+| carga | S+deflate 0.1 | S+deflate 0.2 | cambio | C+deflate 0.2 | JSONL+zstd-3 | S+deflate 0.2 vs zstd-3 |
+|---|---:|---:|---:|---:|---:|---:|
+| http-api | 4 694 813 | 4 694 966 | +0,00 % | 4 696 575 | 5 682 667 | **−17,4 %** |
+| inventory | 5 704 198 | 3 972 773 | **−30,4 %** | 3 870 048 | 4 997 270 | **−20,5 %** (antes +14 %) |
+| batch | 1 792 125 | 1 784 222 | −0,4 % | 1 783 004 | 2 009 527 | −11,2 % |
+| iot | 916 584 | 916 719 | +0,01 % | 914 616 | 972 913 | −5,8 % |
+| queue | 2 074 290 | 2 074 367 | +0,00 % | 2 011 999 | 2 707 950 | −23,4 % (C: −25,7 %) |
+| microservices | 3 499 350 | 3 499 176 | −0,00 % | 3 491 659 | 3 873 242 | −9,7 % |
+| high-cardinality | 11 116 228 | 11 116 306 | +0,00 % | 11 110 319 | 11 274 842 | −1,4 % |
+| adversarial-random | 23 669 579 | 23 669 584 | +0,00 % | 23 869 534 | 21 676 199 | **+9,2 % (peor)** |
+
+- Coste de la copia de catálogos: ≤ +1,1 % en variantes sin compresión (máximo `inventory/llog-contextual`), ≈ 0 %
+  con compresión.
+- La ganancia de `inventory` no viene de la copia sino de comprimir los bloques de catálogo (antes nunca se comprimían
+  y ese almacén tiene un contexto por operación).
+- **Resultado agregado**: Lattice-S+deflate es más pequeño que JSONL+zstd-3 en **7 de 8** cargas (−1,4 % a −23,4 %;
+  Lattice-C+deflate hasta −25,7 %). Sigue sin alcanzarse el objetivo aspiracional de −30 % y zstd-19 sigue siendo más
+  pequeño en todas las cargas.
+- Robustez: un bit invertido en un bloque de esquemas pasa de perder 27/27 registros (0.1) a 0/27 (0.2), verificado
+  por los dos lectores sobre los golden files.

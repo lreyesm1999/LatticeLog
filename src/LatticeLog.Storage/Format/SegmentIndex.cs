@@ -77,6 +77,8 @@ public sealed class SegmentIndex
     public List<string> Services { get; } = [];
     public List<BlockIndexEntry> Blocks { get; } = [];
     public BloomFilter? Keys { get; set; }
+    /// <summary>Format 0.2: complete schema/context catalog of the segment (see SegmentTables.EncodeCatalogCopy). Null in 0.1 files.</summary>
+    public byte[]? CatalogCopy { get; set; }
 
     public bool HasRecords => RecordCount > 0;
 
@@ -119,6 +121,18 @@ public sealed class SegmentIndex
             w.WriteByte((byte)Keys.HashCount);
             w.WriteBytes(Keys.Bits);
         }
+        // Format 0.2 extension (always written by 0.2 writers): catalog section, length 0 = absent.
+        // section := u8 compression (0 none, 1 raw DEFLATE) + varint decoded_length + payload
+        if (CatalogCopy is not { Length: > 0 } copy) { w.WriteVarUInt(0); return; }
+        var deflated = CatalogCompression.Deflate(copy);
+        var useDeflate = deflated.Length < copy.Length;
+        var payload = useDeflate ? deflated : copy;
+        var section = new ByteWriter(payload.Length + 16);
+        section.WriteByte(useDeflate ? (byte)Compression.Deflate : (byte)Compression.None);
+        section.WriteVarUInt((ulong)copy.Length);
+        section.WriteBytes(payload);
+        w.WriteLengthPrefixed(section.WrittenSpan);
+        section.Release();
     }
 
     public static SegmentIndex Decode(ReadOnlySpan<byte> payload)
@@ -165,6 +179,25 @@ public sealed class SegmentIndex
             var k = r.ReadByte();
             x.Keys = BloomFilter.FromBits((int)bits, k, r.ReadBytes((int)bits / 8).ToArray());
         }
+        if (!r.End)
+        {
+            // Format 0.2 extension: catalog copy. Absent in 0.1 footers.
+            var n = r.ReadCount(1);
+            if (n > 0)
+            {
+                var section = new ByteReader(r.ReadBytes(n));
+                var comp = (Compression)section.ReadByte();
+                var decoded = section.ReadVarUInt();
+                if (decoded > Llog.MaxDecodedBytes) throw new LlogFormatException("Footer catalog too large.");
+                var body = section.ReadBytes(section.Remaining);
+                x.CatalogCopy = comp switch
+                {
+                    Compression.None when decoded == (ulong)body.Length => body.ToArray(),
+                    Compression.Deflate when decoded <= (ulong)body.Length * Llog.MaxExpansionRatio + 64 => CatalogCompression.Inflate(body, (int)decoded),
+                    _ => throw new LlogFormatException("Invalid footer catalog section."),
+                };
+            }
+        }
         if (!r.End) throw new LlogFormatException("Trailing bytes in footer.");
         return x;
     }
@@ -174,6 +207,33 @@ public sealed class SegmentIndex
         var sb = new StringBuilder();
         sb.Append($"records={RecordCount} seq=[{FirstSequence},{LastSequence}] blocks={Blocks.Count} events={Events.Count}");
         return sb.ToString();
+    }
+}
+
+/// <summary>Raw DEFLATE helpers for the footer catalog section.</summary>
+public static class CatalogCompression
+{
+    public static byte[] Deflate(ReadOnlySpan<byte> data)
+    {
+        using var ms = new MemoryStream();
+        using (var ds = new System.IO.Compression.DeflateStream(ms, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true)) ds.Write(data);
+        return ms.ToArray();
+    }
+
+    public static byte[] Inflate(ReadOnlySpan<byte> data, int decodedLength)
+    {
+        var output = new byte[decodedLength];
+        using var ds = new System.IO.Compression.DeflateStream(new MemoryStream(data.ToArray()), System.IO.Compression.CompressionMode.Decompress);
+        var total = 0;
+        while (total < output.Length)
+        {
+            var k = ds.Read(output, total, output.Length - total);
+            if (k == 0) break;
+            total += k;
+        }
+        Span<byte> one = stackalloc byte[1];
+        if (total != output.Length || ds.Read(one) != 0) throw new LlogFormatException("Footer catalog decompressed size mismatch.");
+        return output;
     }
 }
 

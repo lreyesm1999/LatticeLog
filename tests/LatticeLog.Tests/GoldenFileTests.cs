@@ -6,20 +6,22 @@ using LatticeLog.Storage.Json;
 namespace LatticeLog.Tests;
 
 /// <summary>
-/// Frozen compatibility vectors (P04-T14/T16, P06-T10). Regenerate only for a new format version:
-/// set LATTICELOG_REGENERATE_GOLDEN=1 and run this test class. Committed files must keep decoding forever.
+/// Frozen compatibility vectors (P04-T14/T16, P06-T10, P14-T11). Each format version has its own folder; older folders
+/// are never regenerated and must keep decoding forever. Regenerate only the current version:
+/// set LATTICELOG_REGENERATE_GOLDEN=1 and run this test class.
 /// </summary>
 public class GoldenFileTests
 {
-    public static string GoldenDir
+    public const string CurrentVersion = "v0.2";
+
+    public static string Dir(string version)
     {
-        get
-        {
-            var d = new DirectoryInfo(AppContext.BaseDirectory);
-            while (d is not null && !File.Exists(Path.Combine(d.FullName, "LatticeLog.sln"))) d = d.Parent;
-            return Path.Combine(d!.FullName, "tests", "GoldenFiles", "v0.1");
-        }
+        var d = new DirectoryInfo(AppContext.BaseDirectory);
+        while (d is not null && !File.Exists(Path.Combine(d.FullName, "LatticeLog.sln"))) d = d.Parent;
+        return Path.Combine(d!.FullName, "tests", "GoldenFiles", version);
     }
+
+    public static string GoldenDir => Dir(CurrentVersion);
 
     public static readonly (string Name, CodecId Codec, Compression Compression)[] Variants =
     [
@@ -124,30 +126,39 @@ public class GoldenFileTests
         w.Seal();
     }
 
-    [Fact]
-    public void Golden_files_decode_to_expected_records()
+    private static void Regenerate(string dir, List<LogRecord> expectedRecords)
     {
-        var dir = GoldenDir;
-        var expectedRecords = GoldenRecords();
-        if (Environment.GetEnvironmentVariable("LATTICELOG_REGENERATE_GOLDEN") == "1")
+        Directory.CreateDirectory(dir);
+        foreach (var (name, codec, comp) in Variants)
         {
-            Directory.CreateDirectory(dir);
-            foreach (var (name, codec, comp) in Variants)
-            {
-                var target = Path.Combine(dir, name + ".llog");
-                File.Delete(target); // regeneration only: explicit golden file path
-                WriteGolden(target, codec, comp, expectedRecords);
-            }
-            using (var fs = File.Create(Path.Combine(dir, "expected.llog.jsonl")))
-            using (var jw = new JsonlExchangeWriter(fs, null)) foreach (var r in expectedRecords) jw.Write(r);
-            var bytes = File.ReadAllBytes(Path.Combine(dir, "structural.llog"));
-            long footerOffset;
-            using (var sr = SegmentReader.Open(Path.Combine(dir, "structural.llog"))) footerOffset = sr.FooterOffset;
-            File.WriteAllBytes(Path.Combine(dir, "corrupt-truncated.llog"), bytes[..(int)(footerOffset - 10)]); // torn last records block
-            var flipped = (byte[])bytes.Clone();
-            flipped[300] ^= 0x40;
-            File.WriteAllBytes(Path.Combine(dir, "corrupt-bitflip.llog"), flipped);
+            var target = Path.Combine(dir, name + ".llog");
+            File.Delete(target); // regeneration of the current version only: explicit golden file path
+            WriteGolden(target, codec, comp, expectedRecords);
         }
+        using (var fs = File.Create(Path.Combine(dir, "expected.llog.jsonl")))
+        using (var jw = new JsonlExchangeWriter(fs, null)) foreach (var r in expectedRecords) jw.Write(r);
+        var bytes = File.ReadAllBytes(Path.Combine(dir, "structural.llog"));
+        long footerOffset;
+        long schemaPayload;
+        using (var sr = SegmentReader.Open(Path.Combine(dir, "structural.llog")))
+        {
+            footerOffset = sr.FooterOffset;
+            schemaPayload = sr.Index!.Blocks.First(b => b.Type == BlockType.Schema).Offset + Llog.FrameHeaderSize;
+        }
+        File.WriteAllBytes(Path.Combine(dir, "corrupt-truncated.llog"), bytes[..(int)(footerOffset - 10)]); // torn last records block
+        var flipped = (byte[])bytes.Clone();
+        flipped[schemaPayload + 5] ^= 0x40; // payload of the first schema block
+        File.WriteAllBytes(Path.Combine(dir, "corrupt-bitflip.llog"), flipped);
+    }
+
+    [Theory]
+    [InlineData("v0.1")]
+    [InlineData("v0.2")]
+    public void Golden_files_decode_to_expected_records(string version)
+    {
+        var dir = Dir(version);
+        var expectedRecords = GoldenRecords();
+        if (version == CurrentVersion && Environment.GetEnvironmentVariable("LATTICELOG_REGENERATE_GOLDEN") == "1") Regenerate(dir, expectedRecords);
         Assert.True(File.Exists(Path.Combine(dir, "expected.llog.jsonl")), "golden files missing: run with LATTICELOG_REGENERATE_GOLDEN=1");
         var expected = new JsonlExchangeReader().Read(new StreamReader(Path.Combine(dir, "expected.llog.jsonl"))).ToList();
         Assert.Equal(expectedRecords.Count, expected.Count);
@@ -156,12 +167,16 @@ public class GoldenFileTests
         {
             using var reader = SegmentReader.Open(Path.Combine(dir, name + ".llog"));
             Assert.True(reader.IsSealed, name);
+            Assert.Equal(version == "v0.1", reader.FooterCatalog is null);
             var report = new ScanReport();
             var got = reader.ReadBlocks(report).SelectMany(b => b.Records).ToList();
             Assert.True(report.IsClean, name + ": " + string.Join("; ", report.Issues));
             Assert.Equal(expected.Count, got.Count);
             for (var i = 0; i < got.Count; i++) Assert.True(expected[i].Equals(got[i]), $"{name} record {i}: {TestData.Describe(expected[i], got[i])}");
-            if (comp == Compression.None)
+            // Random access must agree with sequential decoding.
+            var last = reader.Index!.Blocks.Last(b => b.Type == BlockType.Records);
+            Assert.Equal(expected[^1], reader.ReadBlockAt(last).Records[^1]);
+            if (version == CurrentVersion && comp == Compression.None)
             {
                 // The encoder is deterministic for uncompressed variants (DEFLATE output may differ across zlib versions).
                 var tmp = Path.Combine(TestData.TempDir(), name + ".llog");
@@ -171,24 +186,38 @@ public class GoldenFileTests
         }
     }
 
-    [Fact]
-    public void Corrupt_golden_files_are_reported_never_silent()
+    [Theory]
+    [InlineData("v0.1")]
+    [InlineData("v0.2")]
+    public void Corrupt_golden_files_are_reported_never_silent(string version)
     {
-        var dir = GoldenDir;
+        var dir = Dir(version);
+        var total = GoldenRecords().Count;
         using (var r = SegmentReader.Open(Path.Combine(dir, "corrupt-truncated.llog")))
         {
             Assert.False(r.IsSealed);
             var rep = new ScanReport();
             var n = r.ReadBlocks(rep).Sum(b => b.Records.Count);
             Assert.Contains(rep.Issues, i => i.Kind == IssueKind.TruncatedTail);
-            Assert.True(n < GoldenRecords().Count);
+            Assert.True(n < total);
         }
         using (var r = SegmentReader.Open(Path.Combine(dir, "corrupt-bitflip.llog")))
         {
             var rep = new ScanReport();
-            var n = r.ReadBlocks(rep).Sum(b => b.Records.Count);
-            Assert.False(rep.IsClean);
-            Assert.True(n < GoldenRecords().Count);
+            var got = r.ReadBlocks(rep).SelectMany(b => b.Records).ToList();
+            Assert.Contains(rep.Issues, i => i.Kind == IssueKind.CorruptPayload);
+            if (version == "v0.1")
+            {
+                Assert.True(got.Count < total); // 0.1: a corrupt catalog block makes dependent records undecodable (P04-R1)
+            }
+            else
+            {
+                // 0.2: the footer catalog copy keeps every record decodable; the corrupt block is still reported.
+                Assert.Equal(total, got.Count);
+                var expected = GoldenRecords();
+                for (var i = 0; i < total; i++) Assert.True(expected[i].Equals(got[i]), $"record {i}");
+                Assert.DoesNotContain(rep.Issues, i => i.LostRecords is > 0);
+            }
         }
     }
 }

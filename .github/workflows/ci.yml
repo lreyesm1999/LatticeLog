@@ -26,7 +26,7 @@ jobs:
       - run: dotnet build LatticeLog.sln -c Release
       - run: dotnet test LatticeLog.sln -c Release --no-build
       - name: Independent reader on golden files (gate G4)
-        run: python -I tools/pyllog/llog.py verify-golden tests/GoldenFiles/v0.1
+        run: python -I tools/pyllog/llog.py verify-golden tests/GoldenFiles/v0.1 tests/GoldenFiles/v0.2
       - name: Lab smoke (round trips must verify)
         run: dotnet run -c Release --no-build --project research/LatticeLog.Lab -- baseline --events 5000 --reps 1 --out lab-smoke
 

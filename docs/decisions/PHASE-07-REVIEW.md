@@ -5,7 +5,7 @@
 - PRs e issues cerrados: ninguno (no existe repositorio remoto ni tracker; IDs de tarea según docs/PLAN-MAESTRO.md)
 - Entregables verificados: CodecId.Structural (diccionario por bloque, deltas, atributos con forma de esquema)
 - Evidencia de tests: propiedades + golden
-- Evidencia de benchmarks: S vs raw: −40 % a −64 % en cargas repetitivas; ≈0 en alta cardinalidad; S+deflate vs zstd-3: −1 % a −23 % en 6/8, peor en 2/8
+- Evidencia de benchmarks: S vs raw: −40 % a −64 % en cargas repetitivas; ≈0 en alta cardinalidad; S+deflate vs zstd-3: formato 0.1 −1 % a −23 % en 6/8, peor en 2/8; formato 0.2 (catálogos comprimidos) −1,4 % a −23,4 % en 7/8, peor solo en la adversarial (+9,2 %)
 - Seguridad/compatibilidad: n/a
 - Hipótesis aceptadas/refutadas: G7: reversible, reproducible y con claridad de cuándo gana y cuándo no
 - Limitaciones abiertas: T06 layout columnar/híbrido no evaluado

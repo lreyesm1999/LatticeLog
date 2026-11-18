@@ -38,7 +38,7 @@ Estados: PASS · CONDITIONAL (gate cumplido con pendientes explícitos) · NOT P
 ## Current
 - Cerrar pendientes de M1/M3 para Local v1.0 (P14): Linux/macOS/ARM64 en CI, pruebas de crash con proceso real,
   pool de asignaciones en la ruta habilitada, AOT/trimming, empaquetado NuGet.
-- Mitigar P04-R1 (copia de catálogos en el footer) antes de congelar el formato 1.0.
+- ~~Mitigar P04-R1~~ hecho en el formato 0.2 (copia comprimida de catálogos en el footer).
 
 ## Next
 - P16 protocolo de ingestión remota (ADR-0009) y P17 servidor single-node.

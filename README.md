@@ -61,8 +61,9 @@ latticelog mcp ./logs                                                 # servidor
 
 ## Resultados medidos (una máquina, ver `reports/`)
 
-- Lattice-S+DEFLATE ocupa entre −1 % y −23 % menos que JSONL+zstd-3 en 6 de 8 cargas sintéticas y +9 %/+14 % más en 2;
-  zstd-19 (offline, ~100× más lento) es más pequeño en todas. No se alcanza el objetivo aspiracional de −30 %.
+- Formato 0.2: Lattice-S+DEFLATE ocupa entre −1 % y −23 % menos que JSONL+zstd-3 en 7 de 8 cargas sintéticas y +9 %
+  más en la adversarial; zstd-19 (offline, ~100× más lento) es más pequeño en todas. No se alcanza el objetivo
+  aspiracional de −30 %. Un bloque de catálogo corrupto ya no hace perder registros.
 - Consultas por ventana de tiempo/severidad 20–40× más rápidas que un escaneo completo; escaneo completo de `.llog`
   4–9× más rápido que descomprimir y parsear JSONL+zstd.
 - Ejemplo de app: 80 k eventos tipados en 0,63 s (modo Balanced, fsync confirmado, ~96 B/evento).
@@ -74,7 +75,7 @@ Requiere .NET SDK 10.0.404 (`global.json`) y Python 3.10+ para el lector de refe
 
 ```bash
 dotnet test LatticeLog.sln
-python -I tools/pyllog/llog.py verify-golden tests/GoldenFiles/v0.1
+python -I tools/pyllog/llog.py verify-golden tests/GoldenFiles/v0.1 tests/GoldenFiles/v0.2
 dotnet run -c Release --project examples/dotnet-console -- ./demo-logs 20000
 ```
 

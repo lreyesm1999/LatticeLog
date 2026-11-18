@@ -43,7 +43,7 @@ public sealed class SegmentWriter : IDisposable
         CreatedUnixNanos = _options.CreatedUnixNanos ?? UnixTime.NowUnixNanos();
         _fs = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read, bufferSize: 0, FileOptions.None);
         Span<byte> h = stackalloc byte[Llog.FileHeaderSize];
-        new FileHeader(Llog.FormatMajor, Llog.FormatMinor, 0, 0, segmentId, CreatedUnixNanos).Write(h);
+        new FileHeader(Llog.FormatMajor, Llog.FormatMinor, 0, Llog.OptionalFooterCatalog, segmentId, CreatedUnixNanos).Write(h);
         _fs.Write(h);
         Length = Llog.FileHeaderSize;
     }
@@ -86,7 +86,7 @@ public sealed class SegmentWriter : IDisposable
         byte[]? rented = null;
         try
         {
-            if (_options.Compression == Compression.Deflate && type == BlockType.Records && decodedLength > 64)
+            if (_options.Compression == Compression.Deflate && type != BlockType.Footer && decodedLength > 64) // catalog blocks too (format-compatible with 0.1 readers)
             {
                 rented = ArrayPool<byte>.Shared.Rent(decodedLength + 1024);
                 using var ms = new MemoryStream(rented, 0, rented.Length, writable: true);
@@ -151,6 +151,7 @@ public sealed class SegmentWriter : IDisposable
     {
         if (_sealed) return _index.Current;
         var index = _index.Build();
+        index.CatalogCopy = _tables.EncodeCatalogCopy(); // P04-R1: catalogs survive corruption of a catalog block
         _payload.Clear();
         index.Encode(_payload);
         var footerOffset = Length;
@@ -228,10 +229,18 @@ public sealed class SegmentReader : IDisposable
     public SegmentIndex? Index { get; }
     public long FooterOffset { get; }
     public string? FooterError { get; }
+    /// <summary>Complete catalog from the footer (format 0.2). When present, records decode even if a catalog block is corrupt.</summary>
+    public SegmentTables? FooterCatalog { get; }
+    public string? FooterCatalogError { get; }
 
     private SegmentReader(string path, FileStream fs, FileHeader header, long length, SegmentIndex? index, long footerOffset, string? footerError)
     {
         Path = path; _fs = fs; Header = header; Length = length; Index = index; FooterOffset = footerOffset; IsSealed = index is not null; FooterError = footerError;
+        if (index?.CatalogCopy is { Length: > 0 } copy)
+        {
+            try { FooterCatalog = SegmentTables.DecodeCatalogCopy(copy); }
+            catch (LlogFormatException ex) { FooterCatalogError = ex.Message; }
+        }
     }
 
     public static SegmentReader Open(string path)
@@ -407,7 +416,12 @@ public sealed class SegmentReader : IDisposable
     /// <summary>Decodes all record blocks in file order. Corrupt blocks are reported (with lost record counts) and skipped.</summary>
     public IEnumerable<DecodedBlock> ReadBlocks(ScanReport report, Func<BlockIndexEntry, bool>? blockFilter = null)
     {
-        var tables = new SegmentTables();
+        if (FooterCatalogError is not null)
+            report.Add(new ScanIssue(IssueKind.CorruptFooter, Path, FooterOffset, 0, "Footer catalog unreadable, using catalog blocks: " + FooterCatalogError));
+        // In-file catalog blocks are always decoded: they are the catalog of unsealed segments and, for sealed ones,
+        // they are cross-checked against the footer copy. Records use the footer copy when it exists.
+        var scanned = new SegmentTables();
+        var tables = FooterCatalog ?? scanned;
         var segId = Header.SegmentId;
         ulong lastSeq = 0;
         foreach (var f in ScanFrames(report))
@@ -420,8 +434,10 @@ public sealed class SegmentReader : IDisposable
                     {
                         try
                         {
-                            if (f.Header.Type == BlockType.Schema) tables.DecodeSchemaBlock(f.Payload);
-                            else tables.DecodeContextBlock(f.Payload);
+                            if (f.Header.Type == BlockType.Schema) scanned.DecodeSchemaBlock(f.Payload);
+                            else scanned.DecodeContextBlock(f.Payload);
+                            if (FooterCatalog is not null && !FooterCatalog.IsConsistentWith(scanned))
+                                report.Add(new ScanIssue(IssueKind.FooterMismatch, Path, f.Offset, f.Header.TotalLength, $"{f.Header.Type} block differs from the footer catalog copy."));
                         }
                         catch (LlogFormatException ex)
                         {
@@ -476,6 +492,14 @@ public sealed class SegmentReader : IDisposable
     public DecodedBlock ReadBlockAt(BlockIndexEntry entry)
     {
         if (Index is null) throw new InvalidOperationException("Random access requires a sealed segment.");
+        if (FooterCatalog is not null)
+        {
+            var (fh, fdata) = ReadFrameAt(_fs, entry.Offset, Length);
+            if (fh.Type != BlockType.Records) throw new LlogFormatException("Index entry does not point to a records block.");
+            var flist = new List<LogRecord>((int)fh.RecordCount);
+            RecordCodec.Decode(fh.Codec, fdata, (int)fh.RecordCount, FooterCatalog, flist);
+            return new DecodedBlock(entry, flist, Header.SegmentId);
+        }
         if (_tables is null || entry.Offset < _tablesLoadedUpTo)
         {
             _tables = new SegmentTables();
@@ -502,6 +526,7 @@ public sealed class SegmentReader : IDisposable
     /// <summary>Schema and context catalogs of this segment (event contracts, P12-T13).</summary>
     public SegmentTables ReadCatalog(ScanReport report)
     {
+        if (FooterCatalog is not null) return FooterCatalog;
         var tables = new SegmentTables();
         if (Index is not null)
         {
@@ -574,7 +599,9 @@ public sealed class SegmentReader : IDisposable
                 report.Add(new ScanIssue(IssueKind.UndecodableBlock, Path, f.Offset, f.Header.TotalLength, ex.Message, f.Header.Type == BlockType.Records ? f.Header.RecordCount : null));
             }
         }
-        return b.Build();
+        var rebuilt = b.Build();
+        rebuilt.CatalogCopy = tables.EncodeCatalogCopy();
+        return rebuilt;
     }
 
     public void Dispose() => _fs.Dispose();

@@ -1,5 +1,17 @@
 # Changelog
 
+## Sin publicar — formato `.llog` 0.2
+
+- **P04-R1 mitigado**: el footer de cada segmento sellado guarda una copia comprimida de los catálogos de esquemas y
+  contextos; un bloque de catálogo corrupto ya no hace perder registros (sigue reportándose). Los lectores contrastan
+  los bloques de catálogo con la copia.
+- Los bloques de catálogo se comprimen con DEFLATE cuando el segmento usa compresión (en la carga `inventory`, con un
+  contexto por operación, el tamaño total baja un 30 %).
+- El acceso aleatorio a un bloque ya no necesita leer los bloques de catálogo anteriores.
+- Compatibilidad: los archivos 0.1 se siguen leyendo (golden files `v0.1` congelados); un lector 0.1 trata un
+  segmento 0.2 como no sellado y lo recorre secuencialmente.
+- Lector Python independiente actualizado; `verify-golden` acepta varias carpetas.
+
 ## 0.1.0-alpha.1 — 2026-11-18 (sin publicar)
 
 Primera versión del motor local.

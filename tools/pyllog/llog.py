@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent reference reader for the .llog v0.1 format (gate G4).
+"""Independent reference reader for the .llog v0.1/v0.2 format (gate G4).
 
 Written only from specs/llog-format-v0.md, using the Python standard library (zlib for CRC-32 and DEFLATE).
 It shares no code with the .NET implementation.
@@ -194,6 +194,12 @@ def read_exception(r, d, depth=0):
 
 def decode_schemas(payload, schemas):
     r = Reader(payload)
+    read_schema_entries(r, schemas)
+    if not r.end:
+        raise FormatError("trailing bytes in schema block")
+
+
+def read_schema_entries(r, schemas):
     for _ in range(r.count(5)):
         eid = r.varint()
         name = r.string()
@@ -210,12 +216,16 @@ def decode_schemas(payload, schemas):
             has = r.u8()
             fields.append((fname, kind, sens, r.string() if has == 1 else None))
         schemas.append((eid, name, version, sev, tmpl, tuple(fields), desc))
-    if not r.end:
-        raise FormatError("trailing bytes in schema block")
 
 
 def decode_contexts(payload, contexts):
     r = Reader(payload)
+    read_context_entries(r, contexts)
+    if not r.end:
+        raise FormatError("trailing bytes in context block")
+
+
+def read_context_entries(r, contexts):
     for _ in range(r.count(4)):
         parent = r.varint()
         if parent > len(contexts):
@@ -228,8 +238,6 @@ def decode_contexts(payload, contexts):
             attrs.append((k, read_value(r, None)))
         parent_chain = contexts[parent - 1] if parent else ()
         contexts.append(((kind, name, tuple(attrs)),) + parent_chain)
-    if not r.end:
-        raise FormatError("trailing bytes in context block")
 
 
 # ---------------------------------------------------------------- records (spec §6)
@@ -344,7 +352,11 @@ def read_segment(data):
         if f and f[0] == 15 and foff + 24 + f[3] == len(data) - 20 and crc32(data[foff + 24:foff + 24 + f[3]]) == f[6]:
             footer = decode_footer(data[foff + 24:foff + 24 + f[3]])
             end = foff
-    schemas, contexts, records, issues = [], [], [], []
+    scanned_schemas, scanned_contexts, records, issues = [], [], [], []
+    if footer and "catalog" in footer:
+        schemas, contexts = footer["catalog"]  # spec §3 rule 6: records of sealed 0.2 segments use the footer catalog
+    else:
+        schemas, contexts = scanned_schemas, scanned_contexts
     off = 40
     while off < end:
         f = parse_frame(data, off)
@@ -364,10 +376,13 @@ def read_segment(data):
                 continue
         try:
             if btype == 1:
-                decode_schemas(payload, schemas)
+                decode_schemas(payload, scanned_schemas)
             elif btype == 2:
-                decode_contexts(payload, contexts)
-            elif btype == 3:
+                decode_contexts(payload, scanned_contexts)
+            if btype in (1, 2) and schemas is not scanned_schemas:
+                if schemas[:len(scanned_schemas)] != scanned_schemas or contexts[:len(scanned_contexts)] != scanned_contexts:
+                    issues.append(("catalog_mismatch", off))
+            if btype == 3:
                 records.extend(decode_records(codec, payload, count, schemas, contexts))
         except (FormatError, IndexError) as e:  # unknown references are errors (spec §2, §5): skip the whole block
             issues.append(("undecodable_block", off, str(e)))
@@ -385,6 +400,25 @@ def decode_footer(payload):
     if bits:
         k = r.u8()
         f["bloom"] = (bits, k, r.raw(bits // 8))
+    if not r.end:  # format 0.2: catalog copy (length-prefixed; 0 = absent)
+        n = r.count(1)
+        if n:
+            sec = Reader(r.raw(n))
+            comp, decoded = sec.u8(), sec.varint()
+            body = sec.raw(len(sec.d) - sec.p)
+            if comp == 1:
+                body = zlib.decompress(body, wbits=-15)
+            elif comp != 0:
+                raise FormatError("unknown footer catalog compression")
+            if len(body) != decoded:
+                raise FormatError("footer catalog length mismatch")
+            c = Reader(body)
+            schemas, contexts = [], []
+            read_schema_entries(c, schemas)
+            read_context_entries(c, contexts)
+            if not c.end:
+                raise FormatError("trailing bytes in footer catalog")
+            f["catalog"] = (schemas, contexts)
     if not r.end:
         raise FormatError("trailing bytes in footer")
     return f
@@ -517,8 +551,10 @@ def verify_golden(directory):
                     break
         print("%-20s %s (%d records, %d issues)" % (name, "OK" if good else "FAIL", len(recs), len(issues)))
     for name in ["corrupt-truncated", "corrupt-bitflip"]:
-        recs, issues, _ = read_segment(open(os.path.join(directory, name + ".llog"), "rb").read())
+        recs, issues, footer = read_segment(open(os.path.join(directory, name + ".llog"), "rb").read())
         detected = len(issues) > 0 and all(r in expected for r in recs)
+        if name == "corrupt-bitflip" and footer and "catalog" in footer:
+            detected = detected and recs == expected  # 0.2: footer catalog keeps every record decodable
         ok &= detected
         print("%-20s %s (%d valid records returned, issues: %s)" % (name, "DETECTED" if detected else "NOT DETECTED", len(recs), issues))
     return ok
@@ -526,7 +562,11 @@ def verify_golden(directory):
 
 if __name__ == "__main__":
     if len(sys.argv) >= 3 and sys.argv[1] == "verify-golden":
-        sys.exit(0 if verify_golden(sys.argv[2]) else 1)
+        results = []
+        for d in sys.argv[2:]:
+            print("==", d)
+            results.append(verify_golden(d))
+        sys.exit(0 if all(results) else 1)
     if len(sys.argv) >= 3 and sys.argv[1] == "dump":
         recs, issues, footer = read_segment(open(sys.argv[2], "rb").read())
         for r in recs:

@@ -5,7 +5,7 @@ Set-Location (Join-Path $PSScriptRoot '..')
 dotnet --version
 dotnet test LatticeLog.sln -c Release
 if ($LASTEXITCODE -ne 0) { throw 'tests failed' }
-python -I tools/pyllog/llog.py verify-golden tests/GoldenFiles/v0.1
+python -I tools/pyllog/llog.py verify-golden tests/GoldenFiles/v0.1 tests/GoldenFiles/v0.2
 if ($LASTEXITCODE -ne 0) { throw 'independent reader failed' }
 dotnet run -c Release --project research/LatticeLog.Lab -- baseline --events $Events --reps $Reps --out research/results
 Write-Host 'Results written to research/results/. Compare with reports/baseline-v1.md (hardware differs!).'

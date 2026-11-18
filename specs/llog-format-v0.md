@@ -1,6 +1,6 @@
-# `.llog` binary format — version 0.1 (draft, normative)
+# `.llog` binary format — version 0.2 (draft, normative)
 
-Status: **draft v0.1**. Breaking changes are allowed until 1.0 but every change must bump `format_minor` (compatible)
+Status: **draft v0.2** (0.1 files remain readable; see §12 for the changes). Breaking changes are allowed until 1.0 but every change must bump `format_minor` (compatible)
 or `format_major` (incompatible) and ship new golden files (`tests/GoldenFiles/`). This document is sufficient to
 write an independent reader; `tools/pyllog/llog.py` is such a reader written only from this text (gate G4).
 
@@ -33,9 +33,9 @@ Schema/Context block of the same file.
 |---:|---:|---|---|
 | 0 | 8 | magic | `4C 4C 4F 47 0D 0A 1A 0A` ("LLOG\r\n\x1a\n") |
 | 8 | 2 | format_major | 0 |
-| 10 | 2 | format_minor | 1 |
+| 10 | 2 | format_minor | 2 (writers of this version); readers accept 1 and 2 |
 | 12 | 4 | required_features | 0 in v0.1. A reader MUST refuse a file with unknown required bits. |
-| 16 | 4 | optional_features | ignored when unknown |
+| 16 | 4 | optional_features | bit 0 = footer carries a catalog copy (§7.3); unknown bits are ignored |
 | 20 | 8 | segment_id | u64 |
 | 28 | 8 | created_unix_nanos | i64 |
 | 36 | 4 | header_crc | crc32 of bytes 0..35 |
@@ -48,6 +48,8 @@ A reader MUST refuse an unknown `format_major`. A newer `format_minor` is readab
 |---:|---:|---|
 | 0 | 1 | block_type: 1 Schema, 2 Context, 3 Records, 15 Footer |
 | 1 | 1 | codec: 0 Raw, 1 Structural (Lattice-S), 2 Contextual (Lattice-C). Schema/Context/Footer blocks use 0. |
+
+Compression (byte 2) may be used on Records, Schema and Context blocks; Footer blocks are never compressed.
 | 2 | 1 | compression: 0 none, 1 raw DEFLATE (RFC 1951, no zlib header) |
 | 3 | 1 | reserved, MUST be 0 |
 | 4 | 4 | payload_length (stored bytes) |
@@ -80,6 +82,11 @@ The Footer frame MUST end exactly where the trailer starts. A file whose trailer
 3. A frame extending past the end of file (unsealed segment) is a **torn tail**: never decode it; report it.
 4. Records decoded from a block are only returned if the whole block decodes without error ("no partial blocks").
 5. CRC protects against accidental corruption only; it is not authentication.
+6. **Catalog source.** For a sealed segment whose footer contains a catalog copy (§7.3), records MUST be decoded
+   with that copy. Catalog blocks are still decoded and compared with the copy (every entry of a block must equal
+   the copy entry with the same reference); a difference is reported. A corrupt catalog block is reported but no
+   record is lost. Without a copy (format 0.1, unsealed segments, or an unreadable footer) the catalog is built from
+   the Schema/Context blocks in file order, and a corrupt catalog block makes dependent records undecodable.
 
 ## 4. Values
 
@@ -203,18 +210,28 @@ varint n_services; n × string                       ; values of service.name in
 varint n_blocks; n × (varint offset; varint total_length; u8 block_type; varint record_count;
                       svarint min_time; svarint max_time; varint first_seq; varint last_seq)
 varint bloom_bits (0 = absent); [u8 hash_count; bloom_bits/8 bytes]
+varint catalog_section_length (0 = absent)              ; format 0.2, see §7.3; absent in 0.1 footers
+[catalog_section]
 ```
 
 ### 7.1 Block directory and random access
 
-The directory lists every block (including Schema/Context). To decode records block *k* in isolation a reader decodes
-the Schema/Context blocks with smaller offsets first (bounded state = checkpoint of the segment catalogs).
+The directory lists every block (including Schema/Context). To decode records block *k* in isolation a reader uses the
+footer catalog copy (0.2) or decodes the Schema/Context blocks with smaller offsets first (0.1).
 
 ### 7.2 Bloom filter
 
 Keys: `"t:" + lowercase hex trace_id`, `"o:" + operation_id`, `"c:" + correlation_id` (UTF-8).
 `h = FNV-1a-64(key)` (offset 0xcbf29ce484222325, prime 0x100000001b3); `h1 = low 32 bits`, `h2 = (high 32 bits) | 1`;
 bit *i* (0 ≤ i < hash_count) = `(h1 + i·h2) mod 2^32 mod bloom_bits`; bit *b* is `byte[b >> 3] & (1 << (b & 7))`.
+
+### 7.3 Catalog copy (format 0.2)
+
+`catalog_section := u8 compression (0 none, 1 raw DEFLATE); varint decoded_length; payload` where the decoded
+payload is the **complete catalog of the segment**: a schema entry list (§5, `varint n` + entries) followed by a
+context entry list (§5), with the same 1-based numbering as the Schema/Context blocks. Limits of §2.2 apply
+(`decoded_length ≤ 64 MiB`, expansion ratio ≤ 1100). A 0.1 reader sees trailing bytes in the footer, treats the
+segment as unsealed and still decodes every record by scanning (compatible degradation).
 
 ## 8. Logical model mapping
 
@@ -247,21 +264,30 @@ Readers order live segments by `first_seq` (unsealed segments last).
 
 ## 11. Hexadecimal example
 
-File header of `tests/GoldenFiles/v0.1/structural.llog` (segment 1, created_unix_nanos 0):
+File header of `tests/GoldenFiles/v0.2/structural.llog` (segment 1, created_unix_nanos 0):
 
 ```
-offset 0   4C 4C 4F 47 0D 0A 1A 0A   magic "LLOG
+offset 0   4C 4C 4F 47 0D 0A 1A 0A   magic "LLOG
+
 
 "
 offset 8   00 00                     format_major = 0
-offset 10  01 00                     format_minor = 1
+offset 10  02 00                     format_minor = 2
 offset 12  00 00 00 00               required_features = 0
-offset 16  00 00 00 00               optional_features = 0
+offset 16  01 00 00 00               optional_features = 1 (footer catalog copy)
 offset 20  01 00 00 00 00 00 00 00   segment_id = 1
 offset 28  00 00 00 00 00 00 00 00   created_unix_nanos = 0
-offset 36  39 8D 88 68               crc32(bytes 0..35) = 0x68888D39
+offset 36  87 5B B8 FF               crc32(bytes 0..35) = 0xFFB85B87
 ```
 
-Complete vectors: `tests/GoldenFiles/v0.1/*.llog` (one per codec × compression), `expected.llog.jsonl` (the decoded
-records in the lossless exchange format), and two corrupt files that readers must report. The independent reader
-`tools/pyllog/llog.py verify-golden tests/GoldenFiles/v0.1` checks all of them.
+Complete vectors: `tests/GoldenFiles/v0.1/` (frozen) and `tests/GoldenFiles/v0.2/` (current): one file per codec ×
+compression, `expected.llog.jsonl` (decoded records in the lossless exchange format) and two corrupt files that readers
+must report. `tools/pyllog/llog.py verify-golden tests/GoldenFiles/v0.1 tests/GoldenFiles/v0.2` checks all of them.
+
+## 12. Changes from 0.1 to 0.2
+
+- Footer catalog copy (§7.3, optional feature bit 0) — fixes risk P04-R1: in 0.1 a single corrupt Schema/Context
+  block made every records block that referenced it undecodable.
+- Schema/Context blocks may be DEFLATE-compressed when the segment uses compression (allowed by the 0.1 frame
+  format already, not used by 0.1 writers).
+- Reading rule §3.6. No change to values, records, codecs or the trailer.

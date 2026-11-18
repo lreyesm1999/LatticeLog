@@ -72,6 +72,12 @@ public sealed class SegmentTables
 
     public void EncodeSchemaBlock(IReadOnlyList<EventDescriptor> schemas, ByteWriter w)
     {
+        WriteSchemaEntries(schemas, w);
+        foreach (var s in schemas) RegisterSchema(s);
+    }
+
+    private static void WriteSchemaEntries(IReadOnlyList<EventDescriptor> schemas, ByteWriter w)
+    {
         w.WriteVarUInt((ulong)schemas.Count);
         foreach (var s in schemas)
         {
@@ -94,13 +100,18 @@ public sealed class SegmentTables
                 w.WriteByte(f.Description is null ? (byte)0 : (byte)1);
                 if (f.Description is not null) w.WriteString(ValueCodec.SanitizeKey(f.Description));
             }
-            RegisterSchema(s);
         }
     }
 
     public void DecodeSchemaBlock(ReadOnlySpan<byte> payload)
     {
         var r = new ByteReader(payload);
+        ReadSchemaEntries(ref r);
+        if (!r.End) throw new LlogFormatException("Trailing bytes in schema block.");
+    }
+
+    private void ReadSchemaEntries(ref ByteReader r)
+    {
         var n = r.ReadCount(5);
         for (var i = 0; i < n; i++)
         {
@@ -132,7 +143,6 @@ public sealed class SegmentTables
             Schemas.Add(d);
             _schemaIndex.TryAdd(d, Schemas.Count);
         }
-        if (!r.End) throw new LlogFormatException("Trailing bytes in schema block.");
     }
 
     // ---- Context block ------------------------------------------------------------------
@@ -142,23 +152,35 @@ public sealed class SegmentTables
         w.WriteVarUInt((ulong)contexts.Count);
         foreach (var c in contexts)
         {
-            w.WriteVarUInt(c.Parent is null ? 0UL : (ulong)ContextRef(c.Parent));
-            w.WriteByte((byte)c.Kind);
-            w.WriteByte(c.Name is null ? (byte)0 : (byte)1);
-            if (c.Name is not null) w.WriteString(ValueCodec.SanitizeKey(c.Name));
-            w.WriteVarUInt((ulong)c.Attributes.Count);
-            foreach (var a in c.Attributes)
-            {
-                w.WriteString(ValueCodec.SanitizeKey(a.Key));
-                ValueCodec.Write(w, a.Value);
-            }
+            WriteContextEntry(c, w);
             RegisterContext(c);
+        }
+    }
+
+    /// <summary>Writes one context entry; its parent must already be registered.</summary>
+    private void WriteContextEntry(ContextSnapshot c, ByteWriter w)
+    {
+        w.WriteVarUInt(c.Parent is null ? 0UL : (ulong)ContextRef(c.Parent));
+        w.WriteByte((byte)c.Kind);
+        w.WriteByte(c.Name is null ? (byte)0 : (byte)1);
+        if (c.Name is not null) w.WriteString(ValueCodec.SanitizeKey(c.Name));
+        w.WriteVarUInt((ulong)c.Attributes.Count);
+        foreach (var a in c.Attributes)
+        {
+            w.WriteString(ValueCodec.SanitizeKey(a.Key));
+            ValueCodec.Write(w, a.Value);
         }
     }
 
     public void DecodeContextBlock(ReadOnlySpan<byte> payload)
     {
         var r = new ByteReader(payload);
+        ReadContextEntries(ref r);
+        if (!r.End) throw new LlogFormatException("Trailing bytes in context block.");
+    }
+
+    private void ReadContextEntries(ref ByteReader r)
+    {
         var n = r.ReadCount(4);
         for (var i = 0; i < n; i++)
         {
@@ -186,6 +208,41 @@ public sealed class SegmentTables
             Contexts.Add(c);
             _contextIndex[c] = Contexts.Count;
         }
-        if (!r.End) throw new LlogFormatException("Trailing bytes in context block.");
+    }
+
+    // ---- Footer catalog copy (format 0.2, P04-R1) -----------------------------------------
+
+    /// <summary>
+    /// Complete catalog of the segment (schema entries then context entries, same encoding as the blocks, same
+    /// 1-based numbering). Stored in the footer so that a corrupt catalog block does not make records undecodable.
+    /// </summary>
+    public byte[] EncodeCatalogCopy()
+    {
+        var w = new ByteWriter(1024);
+        WriteSchemaEntries(Schemas, w);
+        w.WriteVarUInt((ulong)Contexts.Count);
+        foreach (var c in Contexts) WriteContextEntry(c, w);
+        var bytes = w.ToArray();
+        w.Release();
+        return bytes;
+    }
+
+    public static SegmentTables DecodeCatalogCopy(ReadOnlySpan<byte> data)
+    {
+        var t = new SegmentTables();
+        var r = new ByteReader(data);
+        t.ReadSchemaEntries(ref r);
+        t.ReadContextEntries(ref r);
+        if (!r.End) throw new LlogFormatException("Trailing bytes in footer catalog.");
+        return t;
+    }
+
+    /// <summary>True when every entry of <paramref name="prefix"/> equals the entry with the same reference here.</summary>
+    public bool IsConsistentWith(SegmentTables prefix)
+    {
+        if (prefix.Schemas.Count > Schemas.Count || prefix.Contexts.Count > Contexts.Count) return false;
+        for (var i = 0; i < prefix.Schemas.Count; i++) if (!prefix.Schemas[i].Equals(Schemas[i])) return false;
+        for (var i = 0; i < prefix.Contexts.Count; i++) if (!prefix.Contexts[i].ChainEquals(Contexts[i])) return false;
+        return true;
     }
 }
