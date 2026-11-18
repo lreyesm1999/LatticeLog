@@ -54,7 +54,7 @@ latticelog mcp ./logs                                                 # servidor
 | Evidencias y Context Packs | `src/LatticeLog.Evidence` | alpha |
 | OTLP/JSON, importadores JSONL/texto | `src/LatticeLog.OpenTelemetry` | alpha |
 | Bridge `Microsoft.Extensions.Logging` | `src/LatticeLog.Extensions.Logging` | alpha |
-| CLI `latticelog` | `src/LatticeLog.Cli` | alpha |
+| CLI `latticelog` (también como `dotnet tool`, compatible con trimming) | `src/LatticeLog.Cli` | alpha |
 | Adaptador MCP de solo lectura | `src/LatticeLog.Mcp` | alpha |
 | Lector independiente en Python (verificación del formato) | `tools/pyllog` | referencia |
 | Laboratorio y benchmarks | `research/`, `benchmarks/`, `reports/` | — |
@@ -64,9 +64,16 @@ latticelog mcp ./logs                                                 # servidor
 - Formato 0.2: Lattice-S+DEFLATE ocupa entre −1 % y −23 % menos que JSONL+zstd-3 en 7 de 8 cargas sintéticas y +9 %
   más en la adversarial; zstd-19 (offline, ~100× más lento) es más pequeño en todas. No se alcanza el objetivo
   aspiracional de −30 %. Un bloque de catálogo corrupto ya no hace perder registros.
+- Datos públicos (Loghub-2.0, 14 conjuntos): eventos tipados −25 % frente al mismo contenido en CSV+zstd-3 (mejor en
+  los 14, +17 % frente a zstd-19); la importación de texto crudo byte a byte ocupa 1,5–2,7× más que el texto con
+  zstd-3 (sirve para conservar y consultar, no para ahorrar espacio).
 - Consultas por ventana de tiempo/severidad 20–40× más rápidas que un escaneo completo; escaneo completo de `.llog`
   4–9× más rápido que descomprimir y parsear JSONL+zstd.
 - Ejemplo de app: 80 k eventos tipados en 0,63 s (modo Balanced, fsync confirmado, ~96 B/evento).
+- Ruta caliente: evento tipado habilitado 56 ns y 5 B asignados por evento; deshabilitado 1,1 ns y 0 B.
+- Durabilidad con caídas reales: proceso matado a mitad de escritura en los tres modos, ningún registro confirmado
+  perdido. Bajo carga sostenida en Balanced a 500k eventos/s se observaron bloqueos del hilo escritor de 0,1–2 s
+  (abierto, ver `reports/latency-v1.md`).
 - Lattice-P (predictivo) descartado por el estudio previo (ahorro optimista ≤ 0,6 %).
 
 ## Desarrollo

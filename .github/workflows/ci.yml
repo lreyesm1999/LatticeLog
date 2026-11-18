@@ -30,6 +30,29 @@ jobs:
       - name: Lab smoke (round trips must verify)
         run: dotnet run -c Release --no-build --project research/LatticeLog.Lab -- baseline --events 5000 --reps 1 --out lab-smoke
 
+  aot-and-pack:
+    # Native AOT needs a native toolchain (clang on the Linux runner); it could not be verified on the Windows dev box.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Native AOT publish of the CLI (warnings are errors for src/ via Directory.Build.targets)
+        run: dotnet publish src/LatticeLog.Cli -c Release -r linux-x64 -p:PublishAot=true -o aot
+      - name: AOT binary smoke test
+        run: |
+          dotnet run -c Release --project examples/dotnet-console -- demo-store 2000
+          ./aot/latticelog verify demo-store --format json
+          ./aot/latticelog query demo-store --where "level >= ERROR" --limit 3 --format jsonl
+          ./aot/latticelog stats demo-store --by event --format json
+      - name: Pack (local verification only; no license chosen, never published)
+        run: dotnet pack LatticeLog.sln -c Release -o packages
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: packages
+
   security:
     runs-on: ubuntu-latest
     steps:

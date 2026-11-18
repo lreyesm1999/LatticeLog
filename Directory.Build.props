@@ -13,8 +13,17 @@
     <Product>LatticeLog</Product>
     <Copyright>LatticeLog contributors</Copyright>
     <RepositoryType>git</RepositoryType>
+    <PackageTags>logging;structured-logging;events;binary-format;observability;opentelemetry</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <!-- No license has been chosen yet: packages are built locally for verification only and must not be published. -->
   </PropertyGroup>
-  <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0'">
-    <IsAotCompatible Condition="'$(IsTestProject)' != 'true' and '$(MSBuildProjectName)' != 'LatticeLog.Lab' and '$(MSBuildProjectName)' != 'LatticeLog.Benchmarks'">true</IsAotCompatible>
+  <!-- Only libraries and tools under src/ produce packages. -->
+  <PropertyGroup Condition="'$(IsPackable)' == '' and !$(MSBuildProjectFullPath.Replace('\', '/').Contains('/src/'))">
+    <IsPackable>false</IsPackable>
   </PropertyGroup>
+  <ItemGroup Condition="'$(IsPackable)' != 'false'">
+    <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" Visible="false" />
+  </ItemGroup>
 </Project>

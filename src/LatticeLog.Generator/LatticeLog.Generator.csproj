@@ -1,4 +1,6 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<!-- Publish settings of an app (trimming/AOT/RID) flow to referenced projects as global properties; they make no
+     sense for a netstandard2.0 Roslyn component, so this project ignores them. -->
+<Project Sdk="Microsoft.NET.Sdk" TreatAsLocalProperty="PublishTrimmed;PublishAot;SelfContained;RuntimeIdentifier">
 
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
@@ -6,6 +8,12 @@
     <IsRoslynComponent>true</IsRoslynComponent>
     <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
     <IncludeBuildOutput>false</IncludeBuildOutput>
+    <!-- Shipped inside the LatticeLog.Core package. -->
+    <IsPackable>false</IsPackable>
+    <PublishTrimmed>false</PublishTrimmed>
+    <PublishAot>false</PublishAot>
+    <SelfContained>false</SelfContained>
+    <RuntimeIdentifier></RuntimeIdentifier>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);RS2008;RS1036;NU5128</NoWarn>
   </PropertyGroup>

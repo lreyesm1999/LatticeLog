@@ -11,13 +11,11 @@ public static class LoggerExtensions
     public static bool Log(this ILatticeLogger logger, Severity severity, string? eventName, string? message, Exception? exception = null, params LogAttribute[] attributes)
     {
         if (!logger.IsEnabled(severity)) return false;
-        var r = new LogRecord
-        {
-            Severity = severity,
-            EventName = eventName,
-            Attributes = attributes.Length == 0 ? LogRecord.NoAttributes : attributes,
-            Exception = exception is null ? null : ExceptionInfo.FromException(exception),
-        };
+        var r = LogRecordPool.Rent(0); // pooled record; the caller's attribute array is referenced, never cleared or reused
+        r.Severity = severity;
+        r.EventName = eventName;
+        r.Attributes = attributes.Length == 0 ? LogRecord.NoAttributes : attributes;
+        r.Exception = exception is null ? null : ExceptionInfo.FromException(exception);
         if (message is not null) r.SetBody(Value.From(message));
         return logger.Write(r);
     }
@@ -35,15 +33,13 @@ public static class LoggerExtensions
     {
         if (!logger.IsEnabled(descriptor.Severity)) return false;
         if (values.Length != descriptor.Fields.Count) throw new ArgumentException($"Event {descriptor.Name} expects {descriptor.Fields.Count} values, got {values.Length}.");
-        var attrs = new LogAttribute[values.Length];
+        var r = LogRecordPool.Rent(values.Length);
+        var attrs = r.Attributes;
         for (var i = 0; i < values.Length; i++) attrs[i] = new LogAttribute(descriptor.Fields[i].Name, values[i]);
-        return logger.Write(new LogRecord
-        {
-            Severity = descriptor.Severity,
-            Event = descriptor,
-            Attributes = attrs,
-            Exception = exception is null ? null : ExceptionInfo.FromException(exception),
-        });
+        r.Severity = descriptor.Severity;
+        r.Event = descriptor;
+        r.Exception = exception is null ? null : ExceptionInfo.FromException(exception);
+        return logger.Write(r);
     }
 }
 

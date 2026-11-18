@@ -1,6 +1,7 @@
-﻿// LatticeLog reproducible lab (P02). Usage:
+// LatticeLog reproducible lab (P02). Usage:
 //   dotnet run -c Release --project research/LatticeLog.Lab -- baseline [--events 200000] [--reps 5] [--workloads a,b] [--out research/results]
 //   dotnet run -c Release --project research/LatticeLog.Lab -- generate --workload http-api --events 100000 --out file.llog.jsonl
+//   dotnet run -c Release --project research/LatticeLog.Lab -- loghub [--lines 200000] [--zips research/data/loghub-2.0/zip]
 using System.Diagnostics;
 using System.Globalization;
 using System.IO.Compression;
@@ -29,6 +30,15 @@ if (cmd == "generate")
     foreach (var r in ds.Records) w.Write(r);
     Console.WriteLine($"{ds.Records.Count} records written; ground truth: {string.Join(",", ds.GroundTruth)}");
     return 0;
+}
+
+if (cmd == "loghub")
+{
+    // Public dataset experiment; requires the Loghub-2.0 zips downloaded locally (see research/dataset-manifest.yaml).
+    var lhWork = Path.Combine(Path.GetTempPath(), "latticelog-loghub-" + Environment.ProcessId);
+    Directory.CreateDirectory(lhWork);
+    return Loghub.Run(Opt("zips", Path.Combine("research", "data", "loghub-2.0", "zip")), int.Parse(Opt("lines", "200000")),
+        Opt("out", Path.Combine("research", "results")), lhWork);
 }
 
 var events = int.Parse(Opt("events", "200000"));

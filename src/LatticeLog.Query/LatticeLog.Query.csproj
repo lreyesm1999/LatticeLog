@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
     <ProjectReference Include="..\LatticeLog.Abstractions\LatticeLog.Abstractions.csproj" />
@@ -7,6 +7,7 @@
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
+    <Description>LatticeLog query language, index-based planner, stable cursors and aggregations over .llog stores.</Description>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>

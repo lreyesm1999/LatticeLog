@@ -152,22 +152,20 @@ public sealed class EventGenerator : IIncrementalGenerator
             sb.Append(pad).Append(m.Accessibility).Append(" static partial void ").Append(m.MethodName).Append('(').Append(m.ParameterList).AppendLine(")");
             sb.Append(pad).AppendLine("{");
             sb.Append(pad).Append("    if (!").Append(m.LoggerParam).Append(".IsEnabled((global::LatticeLog.Severity)").Append(m.Level).AppendLine(")) return;");
-            sb.Append(pad).Append("    ").Append(m.LoggerParam).AppendLine(".Write(new global::LatticeLog.LogRecord");
-            sb.Append(pad).AppendLine("    {");
-            sb.Append(pad).Append("        Severity = (global::LatticeLog.Severity)").Append(m.Level).AppendLine(",");
-            sb.Append(pad).Append("        Event = ").Append(desc).AppendLine(",");
-            if (m.Fields.Count == 0) sb.Append(pad).AppendLine("        Attributes = global::LatticeLog.LogRecord.NoAttributes,");
-            else
+            // Pooled record (P14-T03): the logger recycles it after a non-retaining sink encoded it; otherwise the GC does.
+            sb.Append(pad).Append("    var __llRecord = global::LatticeLog.LogRecordPool.Rent(").Append(m.Fields.Count).AppendLine(");");
+            sb.Append(pad).Append("    __llRecord.Severity = (global::LatticeLog.Severity)").Append(m.Level).AppendLine(";");
+            sb.Append(pad).Append("    __llRecord.Event = ").Append(desc).AppendLine(";");
+            if (m.Fields.Count > 0)
             {
-                sb.Append(pad).AppendLine("        Attributes = new global::LatticeLog.LogAttribute[]");
-                sb.Append(pad).AppendLine("        {");
-                foreach (var f in m.Fields)
-                    sb.Append(pad).Append("            new global::LatticeLog.LogAttribute(").Append(Literal(f.Name)).Append(", ").Append(f.Conversion).AppendLine("),");
-                sb.Append(pad).AppendLine("        },");
+                sb.Append(pad).AppendLine("    var __llAttributes = __llRecord.Attributes;");
+                for (var fi = 0; fi < m.Fields.Count; fi++)
+                    sb.Append(pad).Append("    __llAttributes[").Append(fi).Append("] = new global::LatticeLog.LogAttribute(")
+                      .Append(Literal(m.Fields[fi].Name)).Append(", ").Append(m.Fields[fi].Conversion).AppendLine(");");
             }
             if (m.ExceptionParam is not null)
-                sb.Append(pad).Append("        Exception = ").Append(m.ExceptionParam).Append(" is null ? null : global::LatticeLog.ExceptionInfo.FromException(").Append(m.ExceptionParam).AppendLine("),");
-            sb.Append(pad).AppendLine("    });");
+                sb.Append(pad).Append("    __llRecord.Exception = ").Append(m.ExceptionParam).Append(" is null ? null : global::LatticeLog.ExceptionInfo.FromException(").Append(m.ExceptionParam).AppendLine(");");
+            sb.Append(pad).Append("    ").Append(m.LoggerParam).AppendLine(".Write(__llRecord);");
             sb.Append(pad).AppendLine("}");
             sb.AppendLine();
         }

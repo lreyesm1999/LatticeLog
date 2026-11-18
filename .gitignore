@@ -12,3 +12,6 @@ research/results/tmp/
 __pycache__/
 *.pyc
 /artifacts/
+
+# Public datasets downloaded locally (never committed, see research/dataset-manifest.yaml)
+research/data/

@@ -63,6 +63,34 @@ public class DurabilityTests
     }
 
     [Fact]
+    public void Torn_tail_never_orphans_records_from_their_catalog()
+    {
+        // Catalog blocks are written before the records that need them, in file order. A crash can only cut the tail,
+        // so no cut position can leave a complete records block whose schema/context block is missing (ADR-0006 update).
+        var (path, expected, bytes) = UnsealedSegment(23, 120, 5);
+        var dir = Path.GetDirectoryName(path)!;
+        List<BlockIndexEntry> blocks;
+        using (var full = SegmentReader.Open(path)) blocks = full.RebuildIndex(new ScanReport()).Blocks.ToList();
+        Assert.True(blocks.Count(b => b.Type != BlockType.Records) > 3, "test needs catalog blocks interleaved with records");
+        var cuts = new SortedSet<long>();
+        foreach (var b in blocks)
+            foreach (var c in new[] { b.Offset, b.Offset + 1, b.Offset + Llog.FrameHeaderSize, b.Offset + b.Length - 1, b.Offset + b.Length })
+                if (c >= Llog.FileHeaderSize && c <= bytes.Length) cuts.Add(c);
+        foreach (var cut in cuts)
+        {
+            var p = Path.Combine(dir, $"orphan-{cut}.llog");
+            File.WriteAllBytes(p, bytes.AsSpan(0, (int)cut).ToArray());
+            var report = new ScanReport();
+            SegmentIndex idx;
+            using (var r = SegmentReader.Open(p)) idx = r.RebuildIndex(report);
+            Assert.DoesNotContain(report.Issues, i => i.Kind == IssueKind.UndecodableBlock);
+            var complete = blocks.Where(b => b.Type == BlockType.Records && b.Offset + b.Length <= cut).Sum(b => b.RecordCount);
+            Assert.Equal(complete, idx.RecordCount);
+            File.Delete(p);
+        }
+    }
+
+    [Fact]
     public void Store_recovers_torn_tail_and_continues()
     {
         var root = TestData.TempDir();

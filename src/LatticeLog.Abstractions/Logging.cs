@@ -93,6 +93,13 @@ public interface IRecordSink : IDisposable
     AckLevel Flush(AckLevel level);
 
     ulong LastSequence { get; }
+
+    /// <summary>
+    /// True (default) when the sink may keep references to records or their attribute arrays after
+    /// <see cref="WriteBatch"/> returns. A sink that only encodes them returns false, which lets the logger recycle
+    /// pooled records (<see cref="LogRecordPool"/>).
+    /// </summary>
+    bool RetainsRecords => true;
 }
 
 /// <summary>

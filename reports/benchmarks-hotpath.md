@@ -32,5 +32,29 @@ Interpretación:
   cache por clave (`RedactionPolicy.IsSensitiveKey`) eliminó los descartes en el caso de texto libre (0 de 48 M).
 - Toda pérdida quedó contada (`DroppedSaturation`); ningún descarte fue silencioso.
 
-Pendiente (P02-T08, P14-T03): reproductor a tasa fija con medición de latencia p50/p99/p99.9 por llamada (HdrHistogram),
-pool de registros/atributos para reducir asignaciones, y la misma medición en Linux y ARM64.
+## Actualización P14 (18-nov-2026, misma máquina y configuración)
+
+Tres cambios, medidos uno a uno con el mismo benchmark (`--filter '*Enabled*'`, sink nulo):
+
+| paso | tipado (4 campos) | asignado | texto libre + 2 atributos | asignado |
+|---|---:|---:|---:|---:|
+| antes (cola `ConcurrentQueue` + `SortedSet` de tickets) | 189 ns | 417 B | 252 ns | 340 B |
+| 1. anillo acotado preasignado (`BoundedRing`, posición = ticket) | 80 ns | 488 B | 68 ns | 280 B |
+| 2. redacción sin enumerador (bucle por índice + caché de sensibilidad del descriptor) | 75 ns | 360 B | 67 ns | 280 B |
+| 3. pool de registros (`LogRecordPool`) para eventos generados y API de texto libre | **56 ns** | **5 B** | **63 ns** | **105 B** |
+
+Corrida final con los 4 casos: evento deshabilitado 1,12 ns / 0 B; MEL deshabilitado 0,12 ns; tipado habilitado
+55,6 ns / 5 B (Gen0 0,0003 por 1000 operaciones); texto libre 63,1 ns / 105 B (el array `params` de quien llama).
+
+Lectura honesta:
+- El paso 1 subió las asignaciones medidas del tipado (417 → 488 B) aunque bajó el tiempo a menos de la mitad: antes
+  dos tercios de los registros se **descartaban** por saturación y nunca llegaban al hilo escritor, así que lo que
+  éste asignaba no se contaba entero. Con el anillo el escritor ya no se queda atrás (**0 descartes** en 193 M
+  registros) y su coste aparece completo. Eso destapó el paso 2: `RedactionPolicy.Apply` recorría `IReadOnlyList`
+  con `foreach`, un enumerador por atributo y registro.
+- El pool solo recicla un registro cuando el sink declara `IRecordSink.RetainsRecords = false` (`StoreWriter` lo
+  hace); cualquier otro sink o logger simplemente deja los registros al GC. Los arrays de atributos que pasa quien
+  llama nunca se limpian ni se reutilizan (prueba `Pooled_records_are_recycled_without_corrupting_persisted_data`).
+- Objetivo propuesto en la versión anterior (< 100 ns / < 200 B en la ruta habilitada): **cumplido** en ambos casos.
+- Limitaciones: un hilo productor, sink nulo, una máquina Windows. El coste con disco real y bajo carga sostenida
+  está en `reports/latency-v1.md`. Pendiente: Linux y ARM64.

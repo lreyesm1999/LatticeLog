@@ -98,7 +98,7 @@ public sealed class McpServer
         foreach (var (name, type, desc, req) in props)
         {
             properties[name] = new JsonObject { ["type"] = type, ["description"] = desc };
-            if (req) required.Add(name);
+            if (req) required.Add((JsonNode?)JsonValue.Create(name)); // non-generic Add: trimming-safe
         }
         return new JsonObject { ["type"] = "object", ["properties"] = properties, ["required"] = required, ["additionalProperties"] = false };
     }
@@ -116,8 +116,8 @@ public sealed class McpServer
             ["inputSchema"] = schema,
             ["annotations"] = new JsonObject { ["readOnlyHint"] = true, ["destructiveHint"] = false, ["idempotentHint"] = true, ["openWorldHint"] = false },
         };
-        return
-        [
+        // JsonArray(params JsonNode[]) instead of a collection expression, which binds to the generic Add<T> (not trim-safe).
+        return new JsonArray(
             Tool("search_events", "Search events with a typed filter. Returns events with stable refs, coverage and a cursor for more.",
                 Schema(where, since, until, ("limit", "integer", "Max events (1-200, default 50).", false), ("cursor", "string", "Cursor from a previous call.", false), ("newest_first", "boolean", "Return newest events first.", false))),
             Tool("get_event", "Get one event by stable reference (llog://<store>/e/<seq>) with provenance.", Schema(("ref", "string", "Event reference or sequence number.", true))),
@@ -128,8 +128,7 @@ public sealed class McpServer
             Tool("get_context_pack", "Budgeted evidence pack (errors first, then bounds, warnings, neighbours, samples) with full coverage accounting.",
                 Schema(("trace_id", "string", "Optional trace scope.", false), where, since, until, budget)),
             Tool("get_event_schema", "Declared event contracts: ids, names, versions, field names/types and sensitivity.", Schema()),
-            Tool("get_overview", "Counts by severity, event and service plus top error groups for a time window.", Schema(since, until)),
-        ];
+            Tool("get_overview", "Counts by severity, event and service plus top error groups for a time window.", Schema(since, until)));
     }
 
     private JsonObject Call(JsonObject p)

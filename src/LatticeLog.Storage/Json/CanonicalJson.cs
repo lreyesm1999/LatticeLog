@@ -364,10 +364,12 @@ public sealed class RedactionPolicy
     {
         if (!Enabled || v.IsNull) return v;
         if (IsSensitiveKey(key)) return Value.From(Mask);
-        if (r?.Event is { } e)
+        if (r?.Event is { } e && e.MaxFieldSensitivity != Sensitivity.None)
         {
-            foreach (var f in e.Fields)
+            var fields = e.Fields;
+            for (var i = 0; i < fields.Count; i++) // index loop: no enumerator allocation on the writer thread
             {
+                var f = fields[i];
                 if (f.Name != key) continue;
                 if (f.Sensitivity == Sensitivity.Secret || (RedactPersonal && f.Sensitivity == Sensitivity.Personal)) return Value.From(Mask);
                 break;

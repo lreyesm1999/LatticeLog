@@ -10,9 +10,13 @@ using LatticeLog.Core;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
+// Fixed-rate latency mode (not BenchmarkDotNet): dotnet run -c Release --project benchmarks/LatticeLog.Benchmarks -- latency
+if (args.Length > 0 && args[0] == "latency") return FixedRate.Run(args[1..]);
+
 // In-process toolchain: no separate build of a generated project (also avoids depending on the system `dotnet` on PATH).
 var config = DefaultConfig.Instance.AddJob(Job.Default.WithToolchain(InProcessEmitToolchain.Instance).WithWarmupCount(5).WithIterationCount(15));
 BenchmarkSwitcher.FromAssembly(typeof(HotPathBenchmarks).Assembly).Run(args, config);
+return 0;
 
 /// <summary>Sink that discards batches: isolates the producer + queue + writer-thread cost from disk I/O.</summary>
 public sealed class NullSink : IRecordSink
@@ -20,6 +24,7 @@ public sealed class NullSink : IRecordSink
     public ulong LastSequence { get; private set; }
     public long WriteBatch(IReadOnlyList<LogRecord> batch) { LastSequence += (ulong)batch.Count; return 0; }
     public AckLevel Flush(AckLevel level) => level;
+    public bool RetainsRecords => false; // like StoreWriter: lets the logger recycle pooled records
     public void Dispose() { }
 }
 

@@ -1,0 +1,9 @@
+<Project>
+  <!-- Evaluated after each project file, so TargetFramework is known here (in Directory.Build.props it is not yet set,
+       which silently disabled the trimming/AOT analyzers until 2026-11-18). Libraries and tools under src/ must stay
+       trimming- and Native-AOT-compatible (P14-T04): IL2xxx/IL3xxx warnings are errors there. -->
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0' and $(MSBuildProjectFullPath.Replace('\', '/').Contains('/src/'))">
+    <IsAotCompatible>true</IsAotCompatible>
+    <WarningsAsErrors>$(WarningsAsErrors);IL2026;IL2046;IL2057;IL2060;IL2067;IL2070;IL2072;IL2075;IL2087;IL2091;IL2104;IL3050;IL3051;IL3053</WarningsAsErrors>
+  </PropertyGroup>
+</Project>

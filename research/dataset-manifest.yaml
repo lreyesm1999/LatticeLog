@@ -24,7 +24,14 @@ synthetic:
     adversarial-random: 8D4DD9A867EC090F
 public:
   - name: Loghub-2.0
-    status: pending            # download requires explicit approval and license review (P02-T01, R14)
+    status: downloaded         # approved by the project owner on 2026-11-18 (P02-T01, R14)
+    source: "https://zenodo.org/records/8275861 (DOI 10.5281/zenodo.8275861)"
+    license: CC-BY-4.0         # as declared by the Zenodo record metadata; attribution required
+    cite: "Jiang et al., A Large-Scale Evaluation for Log Parsing Techniques: How Far Are We?, ISSTA 2024"
+    local_path: research/data/loghub-2.0/zip   # git-ignored; never committed
+    files: 14 zips, 965,628,385 bytes, all MD5 checksums verified against the Zenodo record
+    used: "first 200,000 lines of each <name>_full.log and <name>_full.log_structured.csv, read from the zips"
+    experiment: "dotnet run -c Release --project research/LatticeLog.Lab -- loghub --lines 200000"
     import: "latticelog import <store> <file.log> --format text"   # byte-exact raw import
 real:
   status: pending              # requires authorization and anonymization (P02-T02)

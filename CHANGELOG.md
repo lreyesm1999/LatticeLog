@@ -1,5 +1,33 @@
 # Changelog
 
+## Sin publicar — endurecimiento del SDK (P14)
+
+- **Pruebas de caída real**: un proceso hijo (`tests/LatticeLog.CrashHarness`) se mata a mitad de escritura 3 veces
+  por modo (Fast/Balanced/Durable) con rotación de segmentos; ningún registro confirmado se pierde, el almacén queda
+  como prefijo sin huecos ni duplicados y la recuperación es limpia.
+- **Ruta caliente**: la cola pasa a un anillo acotado preasignado (`BoundedRing`) donde la posición es el ticket de
+  confirmación (sin `SortedSet` en el hilo escritor); pool de registros (`LogRecordPool`) para eventos generados,
+  `WriteEvent` y la API de texto libre; redacción sin asignaciones. Evento tipado: 189 → 56 ns y 417 → 5 B por
+  evento; texto libre: 252 → 63 ns y 340 → 105 B (`reports/benchmarks-hotpath.md`).
+- `IRecordSink.RetainsRecords` (por defecto `true`): un sink que no retiene registros permite reciclarlos.
+  `StoreWriter` devuelve `false`.
+- `QueueCapacity` se redondea a potencia de dos, el anillo se reserva al crear el logger (16 B por hueco) y el máximo
+  baja de 100 M a 16 777 216.
+- `BalancedFsyncBytes` (opcional, 0 = desactivado): fsync adicional por volumen en modo Balanced.
+- **Latencia a tasa fija**: nuevo modo `latency` del proyecto de benchmarks (p50/p99/p99.9/máx exactos, tiempo de
+  servicio y de respuesta respecto al horario). Hallazgo abierto: bloqueos de E/S del hilo escritor de 0,1–2 s en
+  Balanced a 500k eventos/s en la máquina de referencia (`reports/latency-v1.md`).
+- **Trimming/AOT**: el análisis `IsAotCompatible` nunca estaba activo (se evaluaba antes de conocer `TargetFramework`);
+  movido a `Directory.Build.targets`, con avisos IL de trimming/AOT como errores en `src/`. Corregidos los usos de
+  serialización JSON por reflexión en CLI, cursores de consulta (source generator, mismo JSON) y MCP. La CLI publicada
+  con trimming funciona (verify, inspect, query con cursor, stats, context, MCP). Native AOT real queda en CI (Linux).
+- **Paquetes NuGet** locales (9 paquetes + símbolos); `LatticeLog.Core` incluye el generador; la CLI como
+  `dotnet tool` (`LatticeLog.Cli`). Sin licencia: no publicables todavía.
+- **Loghub-2.0** (CC-BY-4.0) descargado con aprobación y verificado por MD5; nuevo experimento `loghub` del
+  laboratorio (`reports/loghub2-v1.md`).
+- Segmentos abiertos: analizado el riesgo de catálogo (un corte por caída nunca deja registros huérfanos, probado);
+  sin cambio de formato (ADR-0006).
+
 ## Sin publicar — formato `.llog` 0.2
 
 - **P04-R1 mitigado**: el footer de cada segmento sellado guarda una copia comprimida de los catálogos de esquemas y

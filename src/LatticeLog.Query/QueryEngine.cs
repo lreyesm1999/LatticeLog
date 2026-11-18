@@ -65,7 +65,7 @@ public static class Cursor
 {
     public static string Encode(string storeId, string queryKey, ulong lastSequence, SortOrder order)
     {
-        var json = JsonSerializer.Serialize(new CursorData(1, storeId, Hash(queryKey), lastSequence, order == SortOrder.Descending));
+        var json = JsonSerializer.Serialize(new CursorData(1, storeId, Hash(queryKey), lastSequence, order == SortOrder.Descending), CursorJson.Default.CursorData);
         return Convert.ToBase64String(Encoding.UTF8.GetBytes(json)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
     }
 
@@ -75,7 +75,7 @@ public static class Cursor
         {
             var b64 = cursor.Replace('-', '+').Replace('_', '/');
             b64 = b64.PadRight(b64.Length + (4 - b64.Length % 4) % 4, '=');
-            var d = JsonSerializer.Deserialize<CursorData>(Encoding.UTF8.GetString(Convert.FromBase64String(b64)))!;
+            var d = JsonSerializer.Deserialize(Encoding.UTF8.GetString(Convert.FromBase64String(b64)), CursorJson.Default.CursorData)!;
             if (d.V != 1) throw new ArgumentException("Unsupported cursor version.");
             if (d.S != storeId) throw new ArgumentException("Cursor belongs to another store.");
             if (d.Q != Hash(queryKey)) throw new ArgumentException("Cursor was issued for a different query.");
@@ -90,7 +90,7 @@ public static class Cursor
 
     private static string Hash(string s) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(s)))[..16];
 
-    private sealed record CursorData(int V, string S, string Q, ulong L, bool D);
+    internal sealed record CursorData(int V, string S, string Q, ulong L, bool D);
 }
 
 /// <summary>
@@ -369,3 +369,7 @@ public sealed class QueryEngine(StoreReader store)
         _ => false,
     };
 }
+
+/// <summary>Source-generated serializer for cursors (no reflection: trimming/AOT-safe). Same JSON shape as before.</summary>
+[System.Text.Json.Serialization.JsonSerializable(typeof(Cursor.CursorData))]
+internal sealed partial class CursorJson : System.Text.Json.Serialization.JsonSerializerContext;

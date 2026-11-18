@@ -95,6 +95,94 @@ public class LoggerTests
     }
 
     [Fact]
+    public async Task Ring_with_many_producers_delivers_each_record_once_in_producer_order()
+    {
+        // 8 producers, a 16-slot ring and 2-record batches: the ring wraps ~10,000 times and producers constantly block.
+        var sink = new MemorySink();
+        var logger = new LatticeLogger(sink, new LatticeLoggerOptions
+        {
+            QueueCapacity = 16, BatchMaxRecords = 2, Saturation = SaturationPolicy.Block, Durability = DurabilityMode.Fast,
+            BatchMaxDelay = TimeSpan.FromMilliseconds(1), FlushOnProcessExit = false,
+        });
+        const int producers = 8, perProducer = 20_000;
+        var tasks = Enumerable.Range(0, producers).Select(t => Task.Run(() =>
+        {
+            for (var i = 0; i < perProducer; i++)
+                Assert.True(logger.Info("r", new LogAttribute("t", t), new LogAttribute("i", i)));
+        })).ToArray();
+        await Task.WhenAll(tasks);
+        var flushed = await logger.FlushAsync(AckLevel.WrittenToOs);
+        Assert.Equal(AckLevel.WrittenToOs, flushed.Level);
+        Assert.Equal((ulong)(producers * perProducer), flushed.LastSequence);
+        logger.Dispose();
+
+        Assert.Equal(producers * perProducer, sink.Records.Count);
+        var next = new int[producers];
+        foreach (var r in sink.Records)
+        {
+            Assert.True(r.TryGetAttribute("t", out var t));
+            Assert.True(r.TryGetAttribute("i", out var i));
+            Assert.Equal(next[t.AsInt64()]++, i.AsInt64()); // per-producer order kept, nothing duplicated or skipped
+        }
+        var s = logger.GetStats();
+        Assert.Equal(producers * perProducer, s.Accepted);
+        Assert.Equal(0, s.DroppedSaturation);
+        Assert.Equal(0, s.QueueDepth);
+    }
+
+    [Fact]
+    public async Task Pooled_records_are_recycled_without_corrupting_persisted_data()
+    {
+        // StoreWriter does not retain records, so the logger recycles pooled ones while producers keep renting.
+        var root = TestData.TempDir();
+        var shared = new[] { new LogAttribute("tenant", "acme"), new LogAttribute("region", "eu") };
+        var descriptor = new EventDescriptor(77, "pool.check", 1, Severity.Info, null,
+            [new EventField("t", ValueKind.Int64), new EventField("i", ValueKind.Int64), new EventField("password", ValueKind.String, Sensitivity.Secret)]);
+        const int producers = 6, perProducer = 3000;
+        using (var logger = LatticeLogger.CreateLocal(root, o => { o.Durability = DurabilityMode.Fast; o.FlushOnProcessExit = false; o.QueueCapacity = 64; o.BatchMaxRecords = 16; }))
+        {
+            var tasks = Enumerable.Range(0, producers).Select(t => Task.Run(() =>
+            {
+                for (var i = 0; i < perProducer; i++)
+                {
+                    logger.WriteEvent(descriptor, null, Value.From(t), Value.From(i), Value.From($"pw-{t}-{i}"));
+                    logger.Info("free", shared);
+                }
+            })).ToArray();
+            await Task.WhenAll(tasks);
+            Assert.Equal(AckLevel.FsyncConfirmed, (await logger.FlushAsync(AckLevel.FsyncConfirmed)).Level);
+        }
+        // The caller's array was referenced, never cleared or reused by the pool.
+        Assert.Equal(new LogAttribute("tenant", "acme"), shared[0]);
+        Assert.Equal(new LogAttribute("region", "eu"), shared[1]);
+
+        var rep = new ScanReport();
+        var all = StoreReader.Open(root).ReadAll(rep).ToList();
+        Assert.True(rep.IsClean);
+        Assert.Equal(2 * producers * perProducer, all.Count);
+        var next = new int[producers];
+        foreach (var r in all)
+        {
+            if (r.EffectiveEventName == "pool.check")
+            {
+                Assert.Equal(3, r.Attributes.Length);
+                var t = (int)r.Attributes[0].Value.AsInt64();
+                Assert.Equal(next[t]++, r.Attributes[1].Value.AsInt64());
+                Assert.Equal(LatticeLog.Storage.Json.RedactionPolicy.Mask, r.Attributes[2].Value.AsString()); // secret redacted, never leaked across reuse
+                Assert.True(r.Flags.HasFlag(RecordFlags.Redacted));
+            }
+            else
+            {
+                Assert.Equal("free", r.Body.AsString());
+                Assert.Equal(shared, r.Attributes);
+                Assert.Null(r.EffectiveEventName);
+                Assert.False(r.Flags.HasFlag(RecordFlags.Redacted));
+            }
+        }
+        Assert.All(next, n => Assert.Equal(perProducer, n));
+    }
+
+    [Fact]
     public async Task Write_errors_are_reported_in_flush_and_stats()
     {
         var sink = new MemorySink { Fail = true };

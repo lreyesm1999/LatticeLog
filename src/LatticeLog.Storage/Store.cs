@@ -159,6 +159,9 @@ public sealed class StoreWriter : IRecordSink
     public string Root => _root;
     public StoreInfo Info { get; }
     public ulong LastSequence => _lastSequence;
+
+    /// <summary>Records are encoded during <see cref="WriteBatch"/> and never referenced afterwards.</summary>
+    public bool RetainsRecords => false;
     public IReadOnlyList<RecoveryResult> Recovery { get; }
     public long TotalBytes => _sealedBytes + (_current?.Length ?? 0);
     public int SegmentsSealed { get; private set; }

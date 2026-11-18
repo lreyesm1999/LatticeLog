@@ -1,7 +1,8 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using LatticeLog;
 using LatticeLog.Evidence;
 using LatticeLog.OpenTelemetry;
@@ -202,13 +203,16 @@ public static class Program
 
     // ------------------------------------------------------------------ commands
 
+    // JsonNode output only: no reflection-based serialization, so the tool stays trimming/AOT-safe.
+    private static readonly JsonSerializerOptions Indented = new() { WriteIndented = true };
+
     private static int Init(Args a)
     {
         var dir = Store(a);
         Directory.CreateDirectory(dir);
         Directory.CreateDirectory(Path.Combine(dir, StoreLayout.SegmentsDir));
         var info = StoreWriter.EnsureStoreFile(dir);
-        Console.WriteLine(a.Format == "json" ? JsonSerializer.Serialize(new { store_id = info.StoreId, path = Path.GetFullPath(dir) }) : $"Initialized store {info.StoreId} at {Path.GetFullPath(dir)}");
+        Console.WriteLine(a.Format == "json" ? new JsonObject { ["store_id"] = info.StoreId, ["path"] = Path.GetFullPath(dir) }.ToJsonString() : $"Initialized store {info.StoreId} at {Path.GetFullPath(dir)}");
         return ExitCodes.Ok;
     }
 
@@ -216,11 +220,11 @@ public static class Program
     {
         var target = Store(a);
         var files = File.Exists(target) ? [target] : StoreReader.Open(target).SegmentIds.Select(id => StoreLayout.SegmentPath(target, id)).ToList();
-        var rows = new List<Dictionary<string, object?>>();
+        var rows = new List<JsonObject>();
         foreach (var f in files)
         {
             using var r = SegmentReader.Open(f);
-            var row = new Dictionary<string, object?>
+            var row = new JsonObject
             {
                 ["file"] = Path.GetFileName(f),
                 ["segment_id"] = r.Header.SegmentId,
@@ -237,17 +241,17 @@ public static class Program
                 row["max_time"] = x.HasRecords ? UnixTime.FormatRfc3339(x.MaxTimestamp) : null;
                 row["blocks"] = x.Blocks.Count;
                 row["events"] = x.Events.Count;
-                row["services"] = x.Services;
+                row["services"] = new JsonArray(x.Services.Select(s => (JsonNode?)JsonValue.Create(s)).ToArray());
                 row["bytes_per_record"] = x.HasRecords ? Math.Round((double)r.Length / x.RecordCount, 2) : null;
             }
             rows.Add(row);
         }
-        if (a.Format == "json") Console.WriteLine(JsonSerializer.Serialize(rows, new JsonSerializerOptions { WriteIndented = true }));
+        if (a.Format == "json") Console.WriteLine(new JsonArray(rows.Select(r => (JsonNode?)r).ToArray()).ToJsonString(Indented));
         else
         {
             foreach (var row in rows)
                 Console.WriteLine(string.Join("  ", row.Where(kv => kv.Value is not null && kv.Key != "services").Select(kv => $"{kv.Key}={kv.Value}")));
-            Console.WriteLine($"{rows.Count} segment(s), {rows.Sum(r => (long)r["bytes"]!)} bytes, {rows.Sum(r => r.TryGetValue("records", out var n) && n is long l ? l : 0)} records in sealed segments");
+            Console.WriteLine($"{rows.Count} segment(s), {rows.Sum(r => (long)r["bytes"]!)} bytes, {rows.Sum(r => r.TryGetPropertyValue("records", out var n) && n is not null ? (long)n : 0)} records in sealed segments");
         }
         return ExitCodes.Ok;
     }
@@ -263,7 +267,7 @@ public static class Program
             case "jsonl":
                 foreach (var h in res.Hits) Console.WriteLine(CanonicalJson.ToFriendlyJson(h.Record, res.StoreId, fo));
                 if (res.NextCursor is not null || res.Partial)
-                    Console.Error.WriteLine(JsonSerializer.Serialize(new { next_cursor = res.NextCursor, truncated = res.Truncated, partial = res.Partial, partial_reason = res.PartialReason }));
+                    Console.Error.WriteLine(new JsonObject { ["next_cursor"] = res.NextCursor, ["truncated"] = res.Truncated, ["partial"] = res.Partial, ["partial_reason"] = res.PartialReason }.ToJsonString());
                 break;
             case "json":
                 {
@@ -383,11 +387,11 @@ public static class Program
         var by = a.Get("by") ?? (bucket is null ? "event" : "time");
         var res = Engine(a).Aggregate(Scope(a), by, bucket, a.Int("top", 50));
         if (a.Format == "json")
-            Console.WriteLine(JsonSerializer.Serialize(new
+            Console.WriteLine(new JsonObject
             {
-                group_by = res.GroupBy, total = res.Total, from_index_only = res.UsedIndexOnly, partial = res.Partial,
-                groups = res.Groups.Select(g => new { key = g.Key, count = g.Count }),
-            }));
+                ["group_by"] = res.GroupBy, ["total"] = res.Total, ["from_index_only"] = res.UsedIndexOnly, ["partial"] = res.Partial,
+                ["groups"] = new JsonArray(res.Groups.Select(g => (JsonNode?)new JsonObject { ["key"] = g.Key, ["count"] = g.Count }).ToArray()),
+            }.ToJsonString());
         else
         {
             var width = res.Groups.Count == 0 ? 0 : res.Groups.Max(g => g.Key.Length);
@@ -432,12 +436,16 @@ public static class Program
         }
         var ok = report.IsClean && manifestProblems.Count == 0;
         if (a.Format == "json")
-            Console.WriteLine(JsonSerializer.Serialize(new
+            Console.WriteLine(new JsonObject
             {
-                ok, segments, records, bytes_read = report.BytesRead, elapsed_ms = Math.Round(sw.Elapsed.TotalMilliseconds, 1),
-                issues = report.Issues.Select(i => new { kind = i.Kind.ToString(), file = Path.GetFileName(i.File), offset = i.Offset, length = i.Length, message = i.Message, lost_records = i.LostRecords }),
-                manifest_problems = manifestProblems,
-            }, new JsonSerializerOptions { WriteIndented = true }));
+                ["ok"] = ok, ["segments"] = segments, ["records"] = records, ["bytes_read"] = report.BytesRead, ["elapsed_ms"] = Math.Round(sw.Elapsed.TotalMilliseconds, 1),
+                ["issues"] = new JsonArray(report.Issues.Select(i => (JsonNode?)new JsonObject
+                {
+                    ["kind"] = i.Kind.ToString(), ["file"] = Path.GetFileName(i.File), ["offset"] = i.Offset, ["length"] = i.Length,
+                    ["message"] = i.Message, ["lost_records"] = i.LostRecords,
+                }).ToArray()),
+                ["manifest_problems"] = new JsonArray(manifestProblems.Select(p => (JsonNode?)JsonValue.Create(p)).ToArray()),
+            }.ToJsonString(Indented));
         else
         {
             foreach (var i in report.Issues) Console.WriteLine($"{i.Kind} {Path.GetFileName(i.File)} @{i.Offset} len={i.Length}{(i.LostRecords is { } l ? $" lost_records={l}" : "")}: {i.Message}");

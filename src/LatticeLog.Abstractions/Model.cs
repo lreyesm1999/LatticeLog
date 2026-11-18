@@ -246,6 +246,26 @@ public sealed record EventDescriptor(
            && MessageTemplate == other.MessageTemplate && Description == other.Description && Fields.SequenceEqual(other.Fields);
 
     public override int GetHashCode() => HashCode.Combine(Id, Name, Version);
+
+    // Immutable holder published by a single reference write, so a concurrent reader never sees a half-written pair.
+    // Tied to the Fields instance: a `with` copy that replaces Fields recomputes it.
+    private sealed record SensitivityCache(IReadOnlyList<EventField> Fields, Sensitivity Max);
+    private SensitivityCache? _sensitivity;
+
+    /// <summary>Highest sensitivity among the fields; lets redaction skip events without sensitive fields.</summary>
+    public Sensitivity MaxFieldSensitivity
+    {
+        get
+        {
+            var cached = Volatile.Read(ref _sensitivity);
+            if (cached is not null && ReferenceEquals(cached.Fields, Fields)) return cached.Max;
+            var max = Sensitivity.None;
+            for (var i = 0; i < Fields.Count; i++)
+                if (Fields[i].Sensitivity > max) max = Fields[i].Sensitivity;
+            Volatile.Write(ref _sensitivity, new SensitivityCache(Fields, max));
+            return max;
+        }
+    }
 }
 
 [Flags]
@@ -344,5 +364,44 @@ public sealed class LogRecord : IEquatable<LogRecord>
     public override bool Equals(object? obj) => Equals(obj as LogRecord);
     public override int GetHashCode() => HashCode.Combine(TimestampUnixNanos, Sequence, Severity, EffectiveEventId);
 
-    public LogRecord ShallowClone() => (LogRecord)MemberwiseClone();
+    public LogRecord ShallowClone()
+    {
+        var c = (LogRecord)MemberwiseClone();
+        c.PoolBucket = -1; // a clone never goes back to the pool
+        return c;
+    }
+
+    // ------------------------------------------------------------------ pooling (see LogRecordPool)
+
+    /// <summary>Attribute-count bucket this record was rented from; -1 = not pooled.</summary>
+    internal int PoolBucket = -1;
+    /// <summary>1 while the record sits in the pool (guards against double returns).</summary>
+    internal int InPool;
+
+    internal void ResetForPool()
+    {
+        TimestampUnixNanos = 0;
+        ObservedUnixNanos = 0;
+        MonotonicNanos = 0;
+        Severity = default;
+        Event = null;
+        EventId = 0;
+        EventName = null;
+        HasBody = false;
+        Body = default;
+        TraceId = default;
+        SpanId = default;
+        TraceFlags = 0;
+        OperationId = null;
+        ParentOperationId = null;
+        CorrelationId = null;
+        Exception = null;
+        Context = null;
+        Flags = RecordFlags.None;
+        Sequence = 0;
+        // Bucket 0 records may carry an array provided by the caller (free-text API): never clear it, just let go of it.
+        // Other buckets own their array (rented with the record, or a copy made by redaction): clear its references.
+        if (PoolBucket == 0) Attributes = NoAttributes;
+        else Array.Clear(Attributes);
+    }
 }

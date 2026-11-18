@@ -1,8 +1,9 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\LatticeLog.Query\LatticeLog.Query.csproj" />
     <ProjectReference Include="..\..\src\LatticeLog.Core\LatticeLog.Core.csproj" />
+    <ProjectReference Include="..\..\src\LatticeLog.OpenTelemetry\LatticeLog.OpenTelemetry.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -11,8 +11,13 @@ public sealed class LatticeLoggerOptions
 
     public SaturationPolicy Saturation { get; set; } = SaturationPolicy.Block;
 
-    /// <summary>Maximum records waiting in memory. Bounds memory use (P05-T04).</summary>
+    /// <summary>
+    /// Maximum records waiting in memory. Bounds memory use (P05-T04). Rounded up to the next power of two; the ring
+    /// is allocated up front (16 bytes per slot: 1 MiB for the default 65,536).
+    /// </summary>
     public int QueueCapacity { get; set; } = 65_536;
+
+    internal int EffectiveQueueCapacity => BoundedRing<LogRecord>.RoundUpToPowerOfTwo(QueueCapacity);
 
     /// <summary>Maximum time a producer blocks under <see cref="SaturationPolicy.Block"/> before the record is dropped and counted.</summary>
     public TimeSpan BlockTimeout { get; set; } = TimeSpan.FromSeconds(5);
@@ -24,6 +29,12 @@ public sealed class LatticeLoggerOptions
 
     /// <summary>Balanced mode: periodic fsync interval.</summary>
     public TimeSpan BalancedFsyncInterval { get; set; } = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// Balanced mode: also fsync once this many bytes were written since the last fsync (0 = off, the default). Bounds
+    /// the data at risk on power loss. It did not measurably reduce writer-thread stalls (reports/latency-v1.md §3).
+    /// </summary>
+    public long BalancedFsyncBytes { get; set; }
 
     public TimeSpan ShutdownTimeout { get; set; } = TimeSpan.FromSeconds(10);
 
@@ -66,11 +77,12 @@ public sealed class LatticeLoggerOptions
     /// <summary>Validates options with actionable messages (P14-T05).</summary>
     public void Validate()
     {
-        if (QueueCapacity is < 16 or > 100_000_000) throw new ArgumentOutOfRangeException(nameof(QueueCapacity), QueueCapacity, "QueueCapacity must be between 16 and 100,000,000.");
+        if (QueueCapacity is < 16 or > 16_777_216) throw new ArgumentOutOfRangeException(nameof(QueueCapacity), QueueCapacity, "QueueCapacity must be between 16 and 16,777,216 (the ring is allocated up front, 16 bytes per slot).");
         if (BatchMaxRecords is < 1 or > 1_000_000) throw new ArgumentOutOfRangeException(nameof(BatchMaxRecords), BatchMaxRecords, "BatchMaxRecords must be between 1 and 1,000,000.");
         if (BatchMaxRecords > QueueCapacity) throw new ArgumentException("BatchMaxRecords cannot exceed QueueCapacity.", nameof(BatchMaxRecords));
         if (BlockTimeout < TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(BlockTimeout), "BlockTimeout cannot be negative.");
         if (EffectiveBatchDelay <= TimeSpan.Zero || EffectiveBatchDelay > TimeSpan.FromMinutes(1)) throw new ArgumentOutOfRangeException(nameof(BatchMaxDelay), "BatchMaxDelay must be in (0, 1 min].");
+        if (BalancedFsyncBytes is < 0 or (> 0 and < 4096)) throw new ArgumentOutOfRangeException(nameof(BalancedFsyncBytes), "BalancedFsyncBytes must be 0 (off) or >= 4096.");
         if (SamplingKeepOneOf < 1) throw new ArgumentOutOfRangeException(nameof(SamplingKeepOneOf), "SamplingKeepOneOf must be >= 1.");
         if (ShutdownTimeout < TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(ShutdownTimeout));
         foreach (var a in Resource)

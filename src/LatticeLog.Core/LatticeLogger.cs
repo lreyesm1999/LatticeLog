@@ -12,12 +12,6 @@ namespace LatticeLog.Core;
 /// </summary>
 public sealed class LatticeLogger : ILatticeLogger, IDisposable, IAsyncDisposable
 {
-    private readonly struct Item(LogRecord record, long ticket)
-    {
-        public readonly LogRecord Record = record;
-        public readonly long Ticket = ticket;
-    }
-
     private sealed class FlushRequest(long ticket, AckLevel level, long errorsAtRequest)
     {
         public readonly long Ticket = ticket;
@@ -28,8 +22,10 @@ public sealed class LatticeLogger : ILatticeLogger, IDisposable, IAsyncDisposabl
 
     private readonly LatticeLoggerOptions _options;
     private readonly IRecordSink _sink;
-    private readonly ConcurrentQueue<Item> _queue = new();
-    private readonly ConcurrentQueue<long> _resolvedTickets = new();
+    private readonly bool _recycle; // the sink does not retain records: pooled ones go back to LogRecordPool
+    // Records waiting for the writer. Ring position + 1 is the record's acknowledgement ticket: tickets are dense, so
+    // "every ticket <= T is resolved" is simply "the writer consumed and persisted T positions".
+    private readonly BoundedRing<LogRecord> _ring;
     private readonly ConcurrentQueue<FlushRequest> _flushRequests = new();
     private readonly ManualResetEventSlim _wake = new(false);
     private readonly ManualResetEventSlim _space = new(true);
@@ -41,23 +37,23 @@ public sealed class LatticeLogger : ILatticeLogger, IDisposable, IAsyncDisposabl
     private readonly int _minLevel;
     private readonly AckLevel _modeAck;
 
-    private long _ticket;
-    private long _queueCount;
     private volatile int _writerSleeping;
     private volatile bool _closing;
     private volatile bool _stopped;
     private long _sampleCounter;
 
-    // Counters
-    private long _accepted, _filtered, _sampled, _droppedSat, _droppedDisposed, _droppedWrite, _written, _writtenOs, _fsynced, _bytes, _writeErrors;
+    // Counters (accepted = ring tail, no per-record interlocked increment)
+    private long _filtered, _sampled, _droppedSat, _droppedDisposed, _droppedWrite, _written, _writtenOs, _fsynced, _bytes, _writeErrors;
     private long _ackedOs, _ackedFsync; // tickets watermark per level (writer thread only, read with Volatile)
     private long _lastFsyncTimestamp;
+    private long _bytesAtLastFsync; // writer thread only
 
     public LatticeLogger(IRecordSink sink, LatticeLoggerOptions? options = null)
     {
         _options = options ?? new LatticeLoggerOptions();
         _options.Validate();
         _sink = sink;
+        _recycle = !sink.RetainsRecords;
         _minLevel = (int)_options.MinimumLevel;
         _modeAck = _options.Durability switch
         {
@@ -65,6 +61,7 @@ public sealed class LatticeLogger : ILatticeLogger, IDisposable, IAsyncDisposabl
             DurabilityMode.Balanced => AckLevel.WrittenToOs,
             _ => AckLevel.WrittenToOs,
         };
+        _ring = new BoundedRing<LogRecord>(_options.EffectiveQueueCapacity);
         _root = new ContextSnapshot(ContextKind.Resource, null, _options.Resource.ToArray(), null);
         _lastFsyncTimestamp = Stopwatch.GetTimestamp();
         _writer = new Thread(WriterLoop) { IsBackground = true, Name = "LatticeLog.Writer" };
@@ -98,54 +95,51 @@ public sealed class LatticeLogger : ILatticeLogger, IDisposable, IAsyncDisposabl
         if ((int)record.Severity < _minLevel)
         {
             Interlocked.Increment(ref _filtered);
+            LogRecordPool.Return(record); // never enqueued: nobody else references it (no-op unless pooled)
             return false;
         }
         if (_closing)
         {
             Interlocked.Increment(ref _droppedDisposed);
+            LogRecordPool.Return(record);
             return false;
         }
         if (_options.SamplingKeepOneOf > 1 && record.Severity <= _options.SamplingMaxSeverity
             && Interlocked.Increment(ref _sampleCounter) % _options.SamplingKeepOneOf != 0)
         {
             Interlocked.Increment(ref _sampled);
+            LogRecordPool.Return(record);
             return false;
         }
         Enrich(record);
-        var ticket = Interlocked.Increment(ref _ticket);
-        if (!TryReserveSlot())
-        {
-            _resolvedTickets.Enqueue(ticket);
-            Interlocked.Increment(ref _droppedSat);
-            WakeWriter();
-            if (_options.Saturation == SaturationPolicy.Throw) throw new LoggerSaturatedException($"LatticeLog queue full ({_options.QueueCapacity} records).");
-            return false;
-        }
-        _queue.Enqueue(new Item(record, ticket));
-        Interlocked.Increment(ref _accepted);
-        if (_writerSleeping == 1 && (_options.Durability == DurabilityMode.Durable || Volatile.Read(ref _queueCount) >= _options.BatchMaxRecords)) WakeWriter();
+        if (!_ring.TryEnqueue(record) && !EnqueueSaturated(record)) return false;
+        if (_writerSleeping == 1 && (_options.Durability == DurabilityMode.Durable || _ring.Count >= _options.BatchMaxRecords)) WakeWriter();
         return true;
     }
 
-    private bool TryReserveSlot()
+    /// <summary>Slow path when the ring is full: apply the saturation policy; every drop is counted.</summary>
+    private bool EnqueueSaturated(LogRecord record)
     {
-        var cap = _options.QueueCapacity;
-        if (Interlocked.Increment(ref _queueCount) <= cap) return true;
-        Interlocked.Decrement(ref _queueCount);
-        if (_options.Saturation != SaturationPolicy.Block) return false;
-        var deadline = Stopwatch.GetTimestamp() + (long)(_options.BlockTimeout.TotalSeconds * Stopwatch.Frequency);
-        WakeWriter();
-        while (true)
+        if (_options.Saturation == SaturationPolicy.Block)
         {
-            if (Interlocked.Increment(ref _queueCount) <= cap) return true;
-            Interlocked.Decrement(ref _queueCount);
-            var remaining = deadline - Stopwatch.GetTimestamp();
-            if (remaining <= 0 || _closing) return false;
-            _space.Reset();
-            if (Volatile.Read(ref _queueCount) < cap) continue;
+            var deadline = Stopwatch.GetTimestamp() + (long)(_options.BlockTimeout.TotalSeconds * Stopwatch.Frequency);
             WakeWriter();
-            _space.Wait(TimeSpan.FromMilliseconds(Math.Min(50, remaining * 1000.0 / Stopwatch.Frequency)));
+            while (true)
+            {
+                if (_ring.TryEnqueue(record)) return true;
+                var remaining = deadline - Stopwatch.GetTimestamp();
+                if (remaining <= 0 || _closing) break;
+                _space.Reset();
+                if (_ring.TryEnqueue(record)) return true; // space freed between the failed attempt and the reset
+                WakeWriter();
+                _space.Wait(TimeSpan.FromMilliseconds(Math.Min(50, remaining * 1000.0 / Stopwatch.Frequency)));
+            }
         }
+        Interlocked.Increment(ref _droppedSat);
+        LogRecordPool.Return(record);
+        WakeWriter();
+        if (_options.Saturation == SaturationPolicy.Throw) throw new LoggerSaturatedException($"LatticeLog queue full ({_ring.Capacity} records).");
+        return false;
     }
 
     private void Enrich(LogRecord r)
@@ -178,7 +172,7 @@ public sealed class LatticeLogger : ILatticeLogger, IDisposable, IAsyncDisposabl
             var last = _sink.LastSequence;
             return ValueTask.FromResult(new FlushResult(AckLevel.FsyncConfirmed, last, false, null));
         }
-        var req = new FlushRequest(Volatile.Read(ref _ticket), level, Volatile.Read(ref _writeErrors));
+        var req = new FlushRequest(_ring.Tail, level, Volatile.Read(ref _writeErrors));
         _flushRequests.Enqueue(req);
         WakeWriter();
         if (!cancellationToken.CanBeCanceled) return new ValueTask<FlushResult>(req.Tcs.Task);
@@ -226,54 +220,52 @@ public sealed class LatticeLogger : ILatticeLogger, IDisposable, IAsyncDisposabl
     }
 
     public LoggerStats GetStats() => new(
-        Interlocked.Read(ref _accepted), Interlocked.Read(ref _filtered), Interlocked.Read(ref _sampled),
+        _ring.Tail, Interlocked.Read(ref _filtered), Interlocked.Read(ref _sampled),
         Interlocked.Read(ref _droppedSat), Interlocked.Read(ref _droppedDisposed), Interlocked.Read(ref _droppedWrite),
         Interlocked.Read(ref _written), Interlocked.Read(ref _writtenOs), Interlocked.Read(ref _fsynced),
-        Math.Max(0, Volatile.Read(ref _queueCount)), Interlocked.Read(ref _bytes), Interlocked.Read(ref _writeErrors), _sink.LastSequence);
+        _ring.Count, Interlocked.Read(ref _bytes), Interlocked.Read(ref _writeErrors), _sink.LastSequence);
 
     // ---------------------------------------------------------------------------------- writer thread
 
     private void WriterLoop()
     {
         var batch = new List<LogRecord>(_options.BatchMaxRecords);
-        var batchTickets = new List<long>(_options.BatchMaxRecords);
-        var completedOutOfOrder = new SortedSet<long>();
-        long watermark = 0; // all tickets <= watermark are resolved (written or dropped)
         var delay = _options.EffectiveBatchDelay;
+        var shortWait = TimeSpan.FromMilliseconds(1);
+        var stalledSpins = 0;
         while (true)
         {
             batch.Clear();
-            batchTickets.Clear();
-            while (batch.Count < _options.BatchMaxRecords && _queue.TryDequeue(out var item))
-            {
-                batch.Add(item.Record);
-                batchTickets.Add(item.Ticket);
-            }
+            while (batch.Count < _options.BatchMaxRecords && _ring.TryDequeue(out var record)) batch.Add(record);
+            // A producer is between its claim and its write (nanoseconds, unless it was preempted): retry soon instead
+            // of sleeping a whole batch delay, but never spin for long.
+            var stalled = batch.Count < _options.BatchMaxRecords && _ring.NextIsClaimedButUnpublished();
+            stalledSpins = stalled ? stalledSpins + 1 : 0;
+            if (stalledSpins > 64) stalled = false;
             if (batch.Count > 0)
             {
-                Interlocked.Add(ref _queueCount, -batch.Count);
                 _space.Set();
                 PersistBatch(batch);
-                foreach (var t in batchTickets) completedOutOfOrder.Add(t);
+                if (_recycle)
+                    for (var i = 0; i < batch.Count; i++) LogRecordPool.Return(batch[i]);
             }
-            while (_resolvedTickets.TryDequeue(out var t)) completedOutOfOrder.Add(t);
-            while (completedOutOfOrder.Count > 0 && completedOutOfOrder.Min == watermark + 1)
-            {
-                completedOutOfOrder.Remove(watermark + 1);
-                watermark++;
-            }
+            // Every position below the head was consumed and its batch persisted (or counted as a write error).
+            var watermark = _ring.Head;
             var achieved = AckAfterBatch(batch.Count > 0, watermark);
             CompleteFlushRequests(watermark, achieved);
 
-            if (_closing && _queue.IsEmpty && Volatile.Read(ref _queueCount) <= 0 && watermark >= Volatile.Read(ref _ticket))
+            if (_closing && _ring.Count == 0)
             {
                 CompleteFlushRequests(watermark, achieved, final: true);
                 return;
             }
-            if (!_queue.IsEmpty && Volatile.Read(ref _queueCount) >= _options.BatchMaxRecords) continue;
-            if (batch.Count > 0 && _options.Durability == DurabilityMode.Durable && !_queue.IsEmpty) continue;
+            var pending = _ring.Count;
+            if (pending >= _options.BatchMaxRecords) continue;
+            if (batch.Count > 0 && _options.Durability == DurabilityMode.Durable && pending > 0 && !stalled) continue;
             _writerSleeping = 1;
-            if (_queue.IsEmpty || _options.Durability != DurabilityMode.Durable) _wake.Wait(delay);
+            if (stalled) Thread.Yield();
+            else if (stalledSpins > 0 || (pending > 0 && _options.Durability == DurabilityMode.Durable)) _wake.Wait(shortWait);
+            else _wake.Wait(delay);
             _writerSleeping = 0;
             _wake.Reset();
         }
@@ -325,7 +317,8 @@ public sealed class LatticeLogger : ILatticeLogger, IDisposable, IAsyncDisposabl
         var needFsync = false;
         if (_options.Durability == DurabilityMode.Durable && wroteSomething) needFsync = true;
         if (_options.Durability == DurabilityMode.Balanced && wroteSomething
-            && Stopwatch.GetElapsedTime(_lastFsyncTimestamp) >= _options.BalancedFsyncInterval) needFsync = true;
+            && (Stopwatch.GetElapsedTime(_lastFsyncTimestamp) >= _options.BalancedFsyncInterval
+                || (_options.BalancedFsyncBytes > 0 && Interlocked.Read(ref _bytes) - _bytesAtLastFsync >= _options.BalancedFsyncBytes))) needFsync = true;
         foreach (var req in _flushRequests)
         {
             if (req.Level >= AckLevel.FsyncConfirmed && req.Ticket <= watermark && Volatile.Read(ref _ackedFsync) < req.Ticket) needFsync = true;
@@ -342,6 +335,7 @@ public sealed class LatticeLogger : ILatticeLogger, IDisposable, IAsyncDisposabl
                     Interlocked.Exchange(ref _fsynced, Interlocked.Read(ref _written));
                 }
                 _lastFsyncTimestamp = Stopwatch.GetTimestamp();
+                _bytesAtLastFsync = Interlocked.Read(ref _bytes);
             }
             catch (Exception ex)
             {
@@ -404,8 +398,9 @@ public sealed class LatticeLogger : ILatticeLogger, IDisposable, IAsyncDisposabl
         if (finished)
         {
             // Producers that raced with shutdown: their records were accepted after the writer stopped. Count them, never hide them.
-            var late = 0;
-            while (_queue.TryDequeue(out _)) late++;
+            var late = 0L;
+            while (_ring.TryDequeue(out _)) late++;
+            late += _ring.Count; // claimed by a producer but never published: will not be persisted either
             if (late > 0)
             {
                 Interlocked.Add(ref _droppedDisposed, late);
@@ -414,7 +409,7 @@ public sealed class LatticeLogger : ILatticeLogger, IDisposable, IAsyncDisposabl
         }
         if (!finished)
         {
-            Diagnose($"shutdown timed out after {timeout}; {Volatile.Read(ref _queueCount)} records not persisted");
+            Diagnose($"shutdown timed out after {timeout}; {_ring.Count} records not persisted");
         }
         else
         {

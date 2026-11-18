@@ -36,14 +36,16 @@ Estados: PASS · CONDITIONAL (gate cumplido con pendientes explícitos) · NOT P
 | P28 | Mantenimiento y evolución | NOT STARTED |
 
 ## Current
-- Cerrar pendientes de M1/M3 para Local v1.0 (P14): Linux/macOS/ARM64 en CI, pruebas de crash con proceso real,
-  pool de asignaciones en la ruta habilitada, AOT/trimming, empaquetado NuGet.
+- Cerrar pendientes de M1/M3 para Local v1.0 (P14). Hecho el 18-nov-2026: pruebas de caída con proceso real, anillo
+  y pool en la ruta habilitada (56 ns / 5 B), análisis de trimming/AOT activo y limpio, paquetes NuGet locales,
+  benchmark de latencia a tasa fija. Falta: CI Linux/macOS/ARM64 + Native AOT (requiere remoto), causa de los
+  bloqueos del hilo escritor en Balanced a 500k/s, licencia, firma, N-1 y RC (`docs/decisions/PHASE-14-REVIEW.md`).
 - ~~Mitigar P04-R1~~ hecho en el formato 0.2 (copia comprimida de catálogos en el footer).
 
 ## Next
 - P16 protocolo de ingestión remota (ADR-0009) y P17 servidor single-node.
 - Evaluación externa AI-friendly (P12-T17..T19) con modelo externo y revisión humana.
-- Datasets públicos/reales en el laboratorio (requiere aprobación de descarga y revisión de licencias).
+- Datasets reales propios en el laboratorio (Loghub-2.0 ya medido: `reports/loghub2-v1.md`).
 
 ## Later
 - P18 seguridad de servidor, P19–P20 escala y tiers, P21 SDKs, P23 consola, P24 SRE, P25–P27 comercial y lanzamiento.
