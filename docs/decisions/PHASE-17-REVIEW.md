@@ -1,7 +1,7 @@
 # PHASE-17-REVIEW — Servidor de consultas, catálogo y multiusuario (Server v1.0)
 
-- Estado: **CONDITIONAL** (servidor de un nodo con namespaces, roles, API de lectura completa y probada; faltan
-  administración en línea, retención, imagen Docker construida y validación en otro hardware)
+- Estado: **CONDITIONAL** (servidor de un nodo con namespaces, roles, API de lectura completa y probada,
+  administración en línea; faltan imagen Docker construida, TLS entre máquinas y validación en otro hardware)
 - Fecha: 2026-11-18
 - Entregables: `src/LatticeLog.Server` (`LatticeServer`), `src/LatticeLog.ServerHost` (`latticelog-server`),
   `specs/server-api.md`, `deploy/Dockerfile`, `docs/deploy/single-node.md`, `tests/LatticeLog.Tests/ServerApiTests.cs`,
@@ -20,7 +20,7 @@
 | T09 snapshots y compactación | documentado | snapshot por petición; cursores por secuencia estable; la compactación retira segmentos vía manifest |
 | T10 datos recientes y compactados | hecho | un único planificador sobre segmentos sellados y el activo |
 | T11 llegada frente a evento | hecho | `observed_time` = llegada al servidor salvo que el productor la fije; documentado y probado |
-| T12 administración (retención, compactación, reindexado) | no hecho | compactación y verificación solo fuera de línea con la CLI; **sin retención** |
+| T12 administración (retención, compactación, reindexado) | hecho | `POST /v1/admin/retention\|compact\|verify\|erase\|backup` sin parar la ingestión, auditados (`ServerApiTests.Online_retention_compaction_and_verify_keep_dedup_and_are_audited`); el reindexado no es necesario (índices por segmento) |
 | T13 migraciones de metadatos | no aplica aún | formato de metadatos v1 único; la versión de STORE.json se comprueba al abrir |
 | T14 Docker y health | parcial | `deploy/Dockerfile` (chiseled, no root, configuración por env y secretos) **no construido**; `/v1/health` con detalle para admin |
 | T15 guía de una máquina | hecho | `docs/deploy/single-node.md` |

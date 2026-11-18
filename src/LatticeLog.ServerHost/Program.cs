@@ -1,10 +1,12 @@
 // latticelog-server — ingestion (forwarders) and read API per namespace (P16, P17).
 //
 //   latticelog-server --data <dir> --tokens <tokens.json> [--listen https://0.0.0.0:7400 --cert server.pfx]
+//        [--backup-dir <dir>] [--metrics-anonymous] [--replicate-to <url>]
 //   latticelog-server hash-token <secret>       prints the SHA-256 to put in tokens.json
 //
 // Every option can also come from the environment (containers): LATTICELOG_DATA, LATTICELOG_TOKENS,
-// LATTICELOG_LISTEN, LATTICELOG_CERT. The certificate password is read only from LATTICELOG_CERT_PASSWORD.
+// LATTICELOG_LISTEN, LATTICELOG_CERT, LATTICELOG_BACKUP_DIR, LATTICELOG_REPLICATE_TO. Secrets come only from the
+// environment: LATTICELOG_CERT_PASSWORD and LATTICELOG_REPLICA_TOKEN (an ingest token of the replica).
 using LatticeLog.Server;
 
 string? Opt(string name, string env) { var i = Array.IndexOf(args, "--" + name); return i >= 0 && i + 1 < args.Length ? args[i + 1] : Environment.GetEnvironmentVariable(env); }
@@ -19,11 +21,23 @@ var tokens = Opt("tokens", "LATTICELOG_TOKENS");
 if (data is null || tokens is null)
 {
     Console.Error.WriteLine("usage: latticelog-server --data <dir> --tokens <tokens.json> [--listen <url>] [--cert <pfx>] [--allow-insecure-http]");
+    Console.Error.WriteLine("                         [--backup-dir <dir>] [--metrics-anonymous] [--replicate-to <url>]");
     Console.Error.WriteLine("       latticelog-server hash-token <secret>");
+    return 2;
+}
+var replicaUrl = Opt("replicate-to", "LATTICELOG_REPLICATE_TO");
+var replicaToken = Environment.GetEnvironmentVariable("LATTICELOG_REPLICA_TOKEN");
+if (replicaUrl is not null && string.IsNullOrEmpty(replicaToken))
+{
+    Console.Error.WriteLine("--replicate-to needs LATTICELOG_REPLICA_TOKEN (an ingest token valid on the replica)");
     return 2;
 }
 var options = new ServerOptions
 {
+    Diagnostics = m => Console.Error.WriteLine(m),
+    BackupDirectory = Opt("backup-dir", "LATTICELOG_BACKUP_DIR"),
+    MetricsAnonymous = args.Contains("--metrics-anonymous"),
+    Replication = replicaUrl is null ? null : new ReplicationOptions { Target = new Uri(replicaUrl), Token = replicaToken! },
     DataDirectory = data,
     Tokens = TokenStore.FromFile(tokens),
     IngestTemplate = new IngestServiceOptions { StoreDirectory = "", Diagnostics = m => Console.Error.WriteLine(m) },

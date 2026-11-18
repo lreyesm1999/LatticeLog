@@ -89,12 +89,46 @@ Common parameters:
   - 503: `query_timeout`;
   - 500: `internal_error` (reported through `ServerOptions.Diagnostics`; the stack trace is never sent to the client).
 
-## 5. Not yet (see docs/decisions/PHASE-17-REVIEW.md)
+## 5. Administration (scope `admin`, P17-T12, P18, P24)
 
-- **Not built yet:**
-  - an online admin API for compaction and reindexing (compaction and verification exist offline in the CLI);
-  - retention (age-based deletion), in any form;
-  - a gRPC read API;
-  - query snapshots pinned across requests;
-  - per-tenant byte quotas for reads.
-- **Not wired in:** an `admin` token cannot run reads outside its namespaces unless they include `*`.
+Every admin call takes `ns=<namespace>`, runs **while the server keeps ingesting and answering reads**, and is
+written to the audit log. Requests are serialized per namespace (one admin operation at a time).
+
+| endpoint | parameters | effect |
+|---|---|---|
+| `POST /v1/admin/retention` | `max_age` (`30d`, `12h`…) and/or `max_mb`; `dry_run=true` | deletes whole **sealed** segments, oldest first, entirely older than the cutoff / until under the size. The deletion is journaled (`segment_deleted`) before the file goes. Never touches the active segment. |
+| `POST /v1/admin/compact` | `policy=fast\|balanced\|compact` | rewrites sealed segments into fewer, larger ones; sequences and references stay valid. 409 `compaction_refused` when there is nothing to do or no space. |
+| `POST /v1/admin/verify` | — | full read of the namespace; returns records and issues. Uses a query slot (503 `overloaded` when none). |
+| `POST /v1/admin/erase` | `where=<filter>` (required, must not match everything); `dry_run=true` | privacy erasure (P18-T12): rewrites every segment that holds a match without those records; the active segment is sealed first. The rewritten files contain no trace of the erased values. Resends of the erased batches are answered as duplicates, so they do not come back. |
+| `POST /v1/admin/backup` | — | hot backup into the server's configured backup directory (`--backup-dir`; the client never names a path): sealed segments as they are, the active one up to its last complete block, verified by reading it back. 409 `backup_not_configured` without a directory. |
+
+Erasure and backups: an erase does not reach backups taken before it, nor the producers' local spools, nor a replica
+(the replica must receive the same call). This is documented in `docs/operations/runbook.md` §Privacidad.
+
+## 6. Operations
+
+- `GET /metrics`: Prometheus text format, admin token required (or `--metrics-anonymous` on a trusted network).
+  Per namespace: `latticelog_store_last_sequence`, `latticelog_ingest_records_stored_total`, `…_batches_stored_total`,
+  `…_batches_duplicate_total`, `…_flushes_total`, `…_queue_depth`, `…_producers`, `…_failed`. Global:
+  `latticelog_queries_running`, `latticelog_audit_events_dropped_total`, `latticelog_process_working_set_bytes`,
+  `latticelog_gc_heap_bytes`; with replication, `latticelog_replication_lag_records` per namespace. The server does
+  not log about itself into its own stores (no feedback loop, P24-T02).
+- `GET /ui`: the web console (P23), static files embedded in the server with
+  `Content-Security-Policy: default-src 'self'…; frame-ancestors 'none'`, `X-Frame-Options: DENY`. It calls the read
+  API with the token the user types (kept in `sessionStorage` of that tab) and renders log content only as text.
+- Every response carries `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`.
+- **Audit log** (`data/audit/audit-YYYYMMDD.jsonl`): one JSON object per line prefixed with its CRC-32. It records admin
+  calls, reads (path and filters, never results), and authentication failures. Lines are written by a bounded
+  background queue; if it overflows, events are counted in `latticelog_audit_events_dropped_total` rather than slowing
+  requests. The file is append-only for the process but **not tamper-proof** against someone with access to the disk;
+  ship it elsewhere if that matters. Note: the filters of reads and erasures are recorded and may contain personal data.
+- **Brute-force brake**: 20 failed authentications from one address within a minute → 429 for that address until
+  the window passes, whichever token it then presents.
+- **Replication** (`--replicate-to <url>`, token in `LATTICELOG_REPLICA_TOKEN`): every namespace is forwarded to the
+  same namespace on another server with the ingest protocol; see `docs/operations/replication.md`.
+
+## 7. Not yet
+
+- gRPC read API; query snapshots pinned across requests; per-tenant byte quotas for reads.
+- Cluster: sharding, routing, consensus and automatic failover (P19); object storage tiers (P20).
+- An `admin` token cannot run reads outside its namespaces unless they include `*`.

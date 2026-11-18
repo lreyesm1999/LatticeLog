@@ -85,8 +85,10 @@ concurrencia deben repetirse en otro equipo o en CI.
 `benchmarks … -- ingest --records 320000 --producers 4,16 --batch 1000 --readers 0|4`, con el proceso fijado a **4
 CPUs lógicas** (con 8 seguía apareciendo la inestabilidad del equipo de §3: una `AccessViolationException` y
 `NullReferenceException` dentro de bucles de .NET; con 4 CPUs, 0 fallos en todas las corridas). Cada lector alterna
-una búsqueda por atributo (`attributes.quantity = 3`, sin índice que la pode) y una agregación por evento sobre el
-namespace que se está escribiendo. Dos corridas por configuración:
+una búsqueda por atributo sin índice que la pode y una agregación por evento sobre el namespace que se está
+escribiendo. *Errata (18-nov-2026)*: el filtro estaba mal escrito (`attributes.quantity` en vez de `attr.quantity`)
+y no devolvía resultados. El coste medido sigue siendo el de recorrer todo el namespace, que es lo que se quería
+medir, pero esas búsquedas no devolvían eventos. Dos corridas por configuración:
 
 | productores | lectores | registros/s ingeridos | ACK p50 ms | ACK p99 ms | consultas | consulta p50 ms | consulta p99 ms |
 |---:|---:|---:|---:|---:|---:|---:|---:|
@@ -104,3 +106,21 @@ Lectura:
   consultas por tiempo o severidad se podan por índice y son mucho más baratas (`reports/baseline-v1.md` §3).
 - Esta prueba encontró un fallo real: errores inesperados de lectura salían como 500 sin rastro. Desde ahora se
   reportan por `ServerOptions.Diagnostics` (tipo, mensaje y pila en el servidor; al cliente solo tipo y mensaje).
+
+## 5. Cuerpo binario frente a JSONL (18-nov-2026)
+
+Mismo benchmark que §3 (envelopes precodificados, gzip, ACK fsync, lotes de 1 000), proceso fijado a **4 CPUs**,
+`--encoding 1` (JSONL) frente a `--encoding 2` (minisegmento binario: catálogo + Lattice-S). Dos corridas:
+
+| productores | JSONL registros/s | binario registros/s | binario ACK p50 ms | binario ACK p99 ms | lotes por fsync (binario) |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 234 615 / 232 327 | **561 249 / 470 147** | 1,6 / 2,1 | 2,9 / 3,4 | 1,0 |
+| 4 | 512 920 / 517 415 | **1 155 975 / 1 153 816** | 3,0 / 3,1 | 14,0 / 13,2 | 2,0 |
+| 16 | 422 723 / 432 953 | **1 450 214 / 1 454 228** | 10,4 / 10,5 | 19,0 / 28,2 | 7,8 |
+
+Lectura:
+- **2,0–3,4× más throughput** y menos memoria (≈240 MiB frente a 345–400 MiB de pico del proceso). La decodificación
+  JSONL dominaba el coste del servidor. Con el cuerpo binario, el techo de 16 productores ya no baja respecto a 4.
+- La precodificación oculta el coste del cliente. Codificar en binario también es más barato que en JSONL, pero no
+  se midió por separado.
+- Sigue siendo una máquina con 4 CPUs y problemas de estabilidad (§3): hay que repetirlo en hardware estable.

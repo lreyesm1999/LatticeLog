@@ -46,6 +46,12 @@ public sealed record ServerOptions
     public bool AllowInsecureHttp { get; init; }
     /// <summary>Server-level diagnostics (unexpected errors). Must not block or throw.</summary>
     public Action<string>? Diagnostics { get; init; }
+    /// <summary>Where <c>POST /v1/admin/backup</c> writes snapshots (null = endpoint disabled).</summary>
+    public string? BackupDirectory { get; init; }
+    /// <summary>Serve <c>/metrics</c> without a token (only on a trusted network).</summary>
+    public bool MetricsAnonymous { get; init; }
+    /// <summary>Asynchronous replication of the namespaces to another server (P19). Null = no replication.</summary>
+    public ReplicationOptions? Replication { get; init; }
 }
 
 /// <summary>
@@ -61,6 +67,8 @@ public sealed partial class LatticeServer : IAsyncDisposable
     private readonly QuotaLimiter _quota = new();
     private readonly SemaphoreSlim _querySlots;
     private readonly ConcurrentDictionary<string, int> _queriesPerToken = new(StringComparer.Ordinal);
+    private readonly AuditLog _audit;
+    private Replicator? _replicator;
 
     private LatticeServer(WebApplication app, ServerOptions options)
     {
@@ -69,7 +77,13 @@ public sealed partial class LatticeServer : IAsyncDisposable
         _namespaces = new NamespaceRegistry(options.DataDirectory, options.IngestTemplate);
         _cursors = CursorSigner.FromDataDirectory(options.DataDirectory, options.Query.CursorTtl);
         _querySlots = new SemaphoreSlim(options.Query.MaxConcurrentQueries);
+        _audit = new AuditLog(options.DataDirectory);
     }
+
+    public AuditLog AuditTrail => _audit;
+
+    private void Audit(HttpContext ctx, TokenInfo? token, string? ns, string action, string? detail = null, string outcome = "ok")
+        => _audit.Record(action, token?.Id, ctx.Connection.RemoteIpAddress?.ToString(), ns, outcome, detail);
 
     /// <summary>Address actually bound (useful with port 0).</summary>
     public Uri BaseAddress { get; private set; } = null!;
@@ -109,7 +123,10 @@ public sealed partial class LatticeServer : IAsyncDisposable
         app.MapPost(IngestProtocol.Path, (RequestDelegate)server.HandleIngestAsync);
         app.MapGet("/v1/health", (RequestDelegate)server.HandleHealthAsync);
         server.MapReadApi(app);
+        server.MapAdminApi(app);
+        server.MapOps(app);
         await app.StartAsync().ConfigureAwait(false);
+        if (options.Replication is { } repl) server._replicator = new Replicator(server._namespaces, repl, server.Diagnose);
         var bound = app.Urls.First();
         server.BaseAddress = new Uri(bound.Replace("[::]", "127.0.0.1", StringComparison.Ordinal).Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal));
         return server;
@@ -144,18 +161,41 @@ public sealed partial class LatticeServer : IAsyncDisposable
         return _options.Tokens.Authenticate(auth.StartsWith("Bearer ", StringComparison.Ordinal) ? auth[7..].Trim() : null);
     }
 
+    // Brute-force brake (P18): too many failed authentications from one address → 429 for the rest of the window.
+    private readonly ConcurrentDictionary<string, (long WindowStart, int Failures)> _authFailures = new(StringComparer.Ordinal);
+    private const int MaxAuthFailuresPerMinute = 20;
+
+    private bool AuthThrottled(HttpContext ctx, bool failedNow)
+    {
+        var ip = ctx.Connection.RemoteIpAddress?.ToString() ?? "?";
+        var now = Environment.TickCount64;
+        var entry = _authFailures.AddOrUpdate(ip,
+            _ => (now, failedNow ? 1 : 0),
+            (_, e) => now - e.WindowStart > 60_000 ? (now, failedNow ? 1 : 0) : (e.WindowStart, e.Failures + (failedNow ? 1 : 0)));
+        if (_authFailures.Count > 100_000) _authFailures.Clear(); // bounded memory under address spraying
+        return entry.Failures > MaxAuthFailuresPerMinute;
+    }
+
     /// <summary>Authenticates and checks scope + namespace. Writes the error and returns null when refused.</summary>
     private async Task<(TokenInfo Token, string Namespace)?> AuthorizeAsync(HttpContext ctx, TokenScopes scope, string? requestedNamespace)
     {
+        if (AuthThrottled(ctx, failedNow: false))
+        {
+            await ErrorAsync(ctx, 429, "too_many_auth_failures", "too many failed authentications from this address; wait a minute", TimeSpan.FromSeconds(60)).ConfigureAwait(false);
+            return null;
+        }
         var token = Authenticate(ctx);
         if (token is null)
         {
+            AuthThrottled(ctx, failedNow: true);
+            Audit(ctx, null, requestedNamespace, "auth." + ctx.Request.Path, null, "unauthorized");
             ctx.Response.Headers.WWWAuthenticate = "Bearer";
             await ErrorAsync(ctx, 401, "unauthorized", "missing or unknown bearer token").ConfigureAwait(false);
             return null;
         }
         if (!token.Has(scope))
         {
+            Audit(ctx, token, requestedNamespace, "auth." + ctx.Request.Path, $"missing scope {scope}", "forbidden");
             await ErrorAsync(ctx, 403, "forbidden_scope", $"token '{token.Id}' lacks the '{scope.ToString().ToLowerInvariant()}' scope").ConfigureAwait(false);
             return null;
         }
@@ -167,6 +207,7 @@ public sealed partial class LatticeServer : IAsyncDisposable
         }
         if (!token.AllowsNamespace(ns))
         {
+            Audit(ctx, token, ns, "auth." + ctx.Request.Path, "namespace not allowed", "forbidden");
             await ErrorAsync(ctx, 403, "forbidden_namespace", $"token '{token.Id}' may not access namespace '{ns}'").ConfigureAwait(false);
             return null;
         }
@@ -226,6 +267,7 @@ public sealed partial class LatticeServer : IAsyncDisposable
             return;
         }
         var ack = ctx.Request.Headers[IngestProtocol.AckHeader].ToString() == "os" ? AckLevel.WrittenToOs : AckLevel.FsyncConfirmed;
+        IngestService.Prepare(batch);
         IngestService service;
         try { service = _namespaces.Ingest(ns); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -261,6 +303,23 @@ public sealed partial class LatticeServer : IAsyncDisposable
         var body = new JsonObject { ["status"] = failed.Count == 0 ? "ok" : "failed", ["open_namespaces"] = services.Count };
         if (Authenticate(ctx) is { } t && t.Has(TokenScopes.Admin))
         {
+            body["audit_events_dropped"] = _audit.Dropped;
+            if (_replicator is not null)
+            {
+                var repl = new JsonObject();
+                foreach (var st in _replicator.Status())
+                {
+                    var last = _namespaces.Exists(st.Namespace) ? _namespaces.Ingest(st.Namespace).LastSequence : 0;
+                    repl[st.Namespace] = new JsonObject
+                    {
+                        ["replicated_through"] = st.ReplicatedThrough.ToString(CultureInfo.InvariantCulture),
+                        ["lag_records"] = (long)(last - Math.Min(last, st.ReplicatedThrough)),
+                        ["state"] = st.State.ToString(),
+                        ["last_error"] = st.LastError,
+                    };
+                }
+                body["replication"] = repl;
+            }
             var detail = new JsonObject();
             foreach (var (ns, svc) in services)
             {
@@ -289,17 +348,24 @@ public sealed partial class LatticeServer : IAsyncDisposable
     public async Task AbortAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        if (_replicator is not null) await _replicator.DisposeAsync().ConfigureAwait(false);
         await _app.StopAsync().ConfigureAwait(false);
         await _app.DisposeAsync().ConfigureAwait(false);
         _namespaces.Abort();
+        await _audit.DisposeAsync().ConfigureAwait(false);
     }
+
+    /// <summary>Replication status per namespace (null when replication is off).</summary>
+    public IReadOnlyList<Replicator.NamespaceStatus>? ReplicationStatus => _replicator?.Status();
 
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        if (_replicator is not null) await _replicator.DisposeAsync().ConfigureAwait(false);
         await _app.StopAsync().ConfigureAwait(false);
         await _app.DisposeAsync().ConfigureAwait(false);
         _namespaces.Dispose();
         _querySlots.Dispose();
+        await _audit.DisposeAsync().ConfigureAwait(false);
     }
 }

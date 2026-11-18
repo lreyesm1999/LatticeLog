@@ -1,5 +1,33 @@
 # Changelog
 
+## Sin publicar — proyecto público con licencia MIT
+
+- Licencia **MIT** (`LICENSE`): el proyecto es gratuito y abierto, sin ediciones comerciales. Metadatos de paquete
+  (`PackageLicenseExpression`, repositorio) en `Directory.Build.props`, `pyproject.toml` y `composer.json`.
+- Limpieza para publicar: cero avisos de compilación (orden de `CancellationToken`, `Dispose` del stream de envoltura,
+  mensaje del diagnóstico LL0007) y `.gitignore` que ya no oculta `sdks/php/bin/`.
+
+## Sin publicar — operación, seguridad, réplica y SDKs (P17–P24)
+
+- **Retención** por antigüedad o tamaño: segmentos sellados completos, el más antiguo primero; se anota en el journal
+  antes de borrar y nunca toca el segmento activo. CLI `latticelog retention` y `POST /v1/admin/retention`.
+- **Administración en línea** sin parar la ingestión: compactación, verificación, **borrado de privacidad**
+  (`/v1/admin/erase`, reescribe sin dejar rastro y los reenvíos no resucitan datos) y **backup en caliente** verificado
+  (`/v1/admin/backup`, `latticelog backup`).
+- **Ingestión más rápida**: cuerpo binario (`body_encoding = 2`, mini segmento Lattice-S), 2,0–3,4× frente a JSONL
+  con 4 CPUs; decodificación fuera del hilo escritor. Vuelta automática a JSONL si el servidor responde 415.
+- **Forwarder** incremental (`StoreTail`): no relee el segmento activo en cada sondeo.
+- **Seguridad**: auditoría (`data/audit/*.jsonl`, CRC por línea) de admin, lecturas y fallos de autenticación; freno
+  de 20 fallos/min por dirección; cabeceras `nosniff`/`no-referrer`; 500 JSON sin detalles internos; `server.key` 0600.
+- **Réplica asíncrona** (`--replicate-to`): un forwarder por namespace; la réplica deduplica tras un failover de los
+  productores usando la procedencia.
+- **Operación**: `GET /metrics` (Prometheus), consola web en `/ui` (CSP estricta, sin HTML de los logs), runbooks.
+- **SDKs**: Python (`logging`, spool duradero, envío en segundo plano) y PHP (spool compartido entre procesos con
+  `flock`, envío al final de la petición).
+- **Consultas**: `attributes.<nombre>` es alias de `attr.<nombre>`. Un segmento borrado durante una consulta aparece
+  como problema en la cobertura en lugar de ignorarse.
+- Corregido antes de publicar: un reintento del forwarder incremental podía declarar un hueco falso y perder datos.
+
 ## Sin publicar — servidor de consultas v1 (P17) y carga multi-productor
 
 - `latticelog-server` (sustituye a `latticelog-collector`):
@@ -73,7 +101,7 @@
   serialización JSON por reflexión en CLI, cursores de consulta (source generator, mismo JSON) y MCP. La CLI publicada
   con trimming funciona (verify, inspect, query con cursor, stats, context, MCP). Native AOT real queda en CI (Linux).
 - **Paquetes NuGet** locales (9 paquetes + símbolos); `LatticeLog.Core` incluye el generador; la CLI como
-  `dotnet tool` (`LatticeLog.Cli`). Sin licencia: no publicables todavía.
+  `dotnet tool` (`LatticeLog.Cli`). Todavía no publicados en NuGet.
 - **Loghub-2.0** (CC-BY-4.0) descargado con aprobación y verificado por MD5; nuevo experimento `loghub` del
   laboratorio (`reports/loghub2-v1.md`).
 - Segmentos abiertos: analizado el riesgo de catálogo (un corte por caída nunca deja registros huérfanos, probado);

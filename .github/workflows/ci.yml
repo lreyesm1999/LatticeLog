@@ -1,4 +1,4 @@
-# Fast CI + Correctness CI + basic supply-chain checks (plan §5). Not executed yet: no remote repository exists.
+# Fast CI + Correctness CI + basic supply-chain checks (plan §5).
 name: ci
 on:
   push:
@@ -46,7 +46,7 @@ jobs:
           ./aot/latticelog verify demo-store --format json
           ./aot/latticelog query demo-store --where "level >= ERROR" --limit 3 --format jsonl
           ./aot/latticelog stats demo-store --by event --format json
-      - name: Pack (local verification only; no license chosen, never published)
+      - name: Pack (verification only; packages are not published from CI)
         run: dotnet pack LatticeLog.sln -c Release -o packages
       - uses: actions/upload-artifact@v4
         with:

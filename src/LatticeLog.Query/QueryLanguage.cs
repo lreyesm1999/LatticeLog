@@ -258,6 +258,8 @@ public sealed class QueryParser
         }
         if (lower.StartsWith("ctx.", StringComparison.Ordinal) && name.Length > 4) return new FieldRef(BuiltinField.Context, name[4..]);
         if (lower.StartsWith("attr.", StringComparison.Ordinal) && name.Length > 5) return new FieldRef(BuiltinField.Attribute, name[5..]);
+        // Alias matching the JSON output ("attributes": {...}); an easy mistake otherwise silently matches nothing.
+        if (lower.StartsWith("attributes.", StringComparison.Ordinal) && name.Length > 11) return new FieldRef(BuiltinField.Attribute, name[11..]);
         if (name.Length == 0 || name.Length > 256) throw new QuerySyntaxException("Invalid field name", pos);
         return new FieldRef(BuiltinField.Attribute, name);
     }

@@ -146,6 +146,8 @@ public sealed record StoreWriterOptions
     /// Synchronous <see cref="StoreWriter.Flush"/> still waits for both. False = everything inline, as before P14.
     /// </summary>
     public bool BackgroundDurability { get; init; } = true;
+    /// <summary>Optional retention applied after each rotation (null = never delete anything automatically).</summary>
+    public RetentionPolicy? Retention { get; init; }
 }
 
 public sealed record RecoveryResult(ulong SegmentId, long TruncatedBytes, string? TailCopy, IReadOnlyList<ScanIssue> Issues);
@@ -177,6 +179,12 @@ public sealed class StoreWriter : IRecordSink
     public long TotalBytes => Interlocked.Read(ref _sealedBytes) + (_current?.Length ?? 0);
     /// <summary>Segments closed for writing (rotated or sealed). With background durability, sealing may still be in progress.</summary>
     public int SegmentsSealed { get; private set; }
+
+    /// <summary>Segment currently open for writing (null between rotations).</summary>
+    public ulong? CurrentSegmentId => _current?.SegmentId;
+
+    /// <summary>Id the next segment will get (segments at or above it do not exist yet).</summary>
+    public ulong NextSegmentId => Interlocked.Read(ref _nextSegmentId);
 
     /// <summary>Every record with a sequence &lt;= this value is on stable storage.</summary>
     public ulong DurableSequence => Math.Max(_durability?.DurableSequence ?? 0, Volatile.Read(ref _syncDurable));
@@ -273,12 +281,18 @@ public sealed class StoreWriter : IRecordSink
         CompactionRecovery.Complete(_root);
         var manifest = Manifest.Load(_root);
         var retired = manifest.RetiredSegments();
+        var deletedByRetention = manifest.Entries.Where(e => (string?)e["op"] == "segment_deleted").Select(e => (ulong)e["id"]!).ToHashSet();
         ulong maxId = 0;
         foreach (var file in Directory.EnumerateFiles(Path.Combine(_root, StoreLayout.SegmentsDir), "seg-*.llog").Order(StringComparer.Ordinal))
         {
             if (!StoreLayout.TryParseSegmentId(file, out var id)) continue;
             maxId = Math.Max(maxId, id);
-            if (retired.Contains(id)) continue;
+            if (retired.Contains(id))
+            {
+                // Retention journaled the deletion but the process stopped before removing the file.
+                if (deletedByRetention.Contains(id)) TryDeleteFile(file);
+                continue;
+            }
             SegmentIndex? index;
             bool sealedOk;
             try
@@ -474,7 +488,53 @@ public sealed class StoreWriter : IRecordSink
     {
         if (_current is null) return;
         var age = UnixTime.NowUnixNanos() - _currentOpenedAt;
-        if (_current.Length >= _options.SegmentMaxBytes || age >= _options.SegmentMaxAge.Ticks * 100) CloseCurrent(wait: false);
+        if (_current.Length >= _options.SegmentMaxBytes || age >= _options.SegmentMaxAge.Ticks * 100)
+        {
+            CloseCurrent(wait: false);
+            if (_options.Retention is { IsEmpty: false } policy)
+            {
+                try { ApplyRetention(policy); }
+                catch (IOException ex) { try { _options.Diagnostics?.Invoke("store: retention failed: " + ex.Message); } catch { } }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Applies <paramref name="policy"/> now (writer thread or with the writer idle). Only sealed segments whose seal
+    /// has completed are candidates; the active segment and segments still being sealed are skipped.
+    /// </summary>
+    public RetentionResult ApplyRetention(RetentionPolicy policy, long? nowUnixNanos = null, bool dryRun = false)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        var reader = StoreReader.Open(_root);
+        var current = _current?.SegmentId;
+        var plan = Retention.Plan(reader, policy, nowUnixNanos ?? UnixTime.NowUnixNanos(), id => id != current);
+        if (!dryRun)
+        {
+            Retention.Execute(_root, plan);
+            foreach (var d in plan) Interlocked.Add(ref _sealedBytes, -d.Bytes);
+        }
+        return new RetentionResult(plan, dryRun);
+    }
+
+    /// <summary>Recomputes the size of closed segments from disk (after an in-process compaction changed them).</summary>
+    public void RefreshSizeAccounting()
+    {
+        var reader = StoreReader.Open(_root);
+        long total = 0;
+        foreach (var id in reader.SegmentIds)
+        {
+            if (id == _current?.SegmentId) continue;
+            try { total += new FileInfo(reader.SegmentPath(id)).Length; } catch (IOException) { }
+        }
+        Interlocked.Exchange(ref _sealedBytes, total);
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try { File.Delete(path); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     private SegmentWriter OpenNewSegment()

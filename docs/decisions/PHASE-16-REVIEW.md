@@ -33,3 +33,12 @@
   - un collector que falla al escribir deja de aceptar hasta reiniciarse (decisión deliberada de seguridad);
   - sin réplica (P19).
 - Decisión: avanzar a P17 manteniendo los pendientes.
+
+## Actualización 18-nov-2026 (segunda parte)
+
+- **Cuerpo binario** (`body_encoding = 2`, mini segmento con copia del catálogo + Lattice-S): ingestión 2,0–3,4× más
+  rápida que JSONL con 4 CPUs (`reports/ingest-v1.md` §5). Decodificación y procedencia en el hilo de la petición, no en
+  el escritor. Negociación por 415 con vuelta a JSONL, probada.
+- **Forwarder incremental** (`StoreTail`): ya no relee el segmento activo en cada sondeo. Un fallo encontrado en el
+  camino (reintento tras envío fallido declarado como hueco) se corrigió antes de publicarse y tiene prueba.
+- Sigue faltando: red real entre máquinas y TLS con certificado real.

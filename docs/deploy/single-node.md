@@ -47,17 +47,20 @@ README). Si el servidor no está disponible, los datos esperan en el disco de la
 - **Rotar tokens**: añade el token nuevo al fichero, cambia los clientes y quita el viejo. No hace falta reiniciar.
 - **Actualizar**: parar, sustituir el binario o la imagen y arrancar. Al arrancar se recupera cada namespace y se
   reconstruye la deduplicación desde los datos, así que los forwarders pueden reintentar sin generar duplicados.
-- **Copias de seguridad**: con el servidor parado, copia `ns/` y `server.key`. Con el servidor en marcha, los
-  segmentos sellados son inmutables y se pueden copiar; el activo se recupera al arrancar si la copia quedó a medias.
-- **Compactación y verificación**: hoy se hacen fuera de línea con la CLI (`latticelog compact`, `latticelog verify`)
-  sobre `ns/<namespace>`, con el servidor parado. **No hay retención automática** (borrado por antigüedad): está
-  pendiente, igual que la API de administración en línea.
+- **Copias de seguridad**: en caliente con `POST /v1/admin/backup?ns=…` (arrancar con `--backup-dir`) o
+  `latticelog backup`; cada copia se verifica. Guarda también `server.key` y el fichero de tokens. Detalle y
+  restauración en `docs/operations/runbook.md`.
+- **Retención, compactación, verificación y borrado de privacidad**: en línea, sin parar, con `POST /v1/admin/…`
+  (`specs/server-api.md` §5). Fuera de línea siguen existiendo `latticelog retention|compact|verify`.
+- **Métricas**: `GET /metrics` (Prometheus, token admin). **Consola**: `https://host:7400/ui`. **Auditoría**:
+  `data/audit/`.
 - **Capacidad**: un hilo escritor por namespace. En la máquina de referencia, ~300–600k registros/s de ingestión con
   pocos productores (`reports/ingest-v1.md`). Las consultas pesadas compiten por CPU con la ingestión; si la
   ingestión es prioritaria, baja `MaxConcurrentQueries`.
 
 ## 5. Límites conocidos
 
-- Sin réplica ni alta disponibilidad (P19). Si se pierde el disco, se pierde lo que no exista en los almacenes
-  locales de los productores.
+- Réplica asíncrona opcional con failover manual (`docs/operations/replication.md`); sin clúster ni failover
+  automático. Sin réplica, si se pierde el disco, se pierde lo que no esté en un backup ni en los almacenes locales de
+  los productores.
 - Imagen Docker no construida ni probada todavía en este proyecto.

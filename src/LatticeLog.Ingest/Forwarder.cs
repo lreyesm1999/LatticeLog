@@ -8,18 +8,19 @@ using LatticeLog.Storage;
 namespace LatticeLog.Ingest;
 
 /// <summary>How the client must react to an answer (specs/ingest-protocol.md §3).</summary>
-public enum SendOutcome { Acknowledged, Retry, SequenceGap, TooLarge, Fatal }
+public enum SendOutcome { Acknowledged, Retry, SequenceGap, TooLarge, UnsupportedEncoding, Fatal }
 
 public sealed record SendResult(SendOutcome Outcome, IngestAck? Ack = null, ulong CommittedThrough = 0, TimeSpan? RetryAfter = null, string? Error = null);
 
 /// <summary>Thin HTTP client for <c>POST /v1/ingest</c>. Never retries by itself; see <see cref="Forwarder"/>.</summary>
-public sealed class IngestClient(HttpClient http, Uri baseUri, string token)
+public sealed class IngestClient(HttpClient http, Uri baseUri, string token, string? ns = null)
 {
     public async Task<SendResult> SendAsync(byte[] envelope, AckLevel ack, CancellationToken ct)
     {
         using var req = new HttpRequestMessage(HttpMethod.Post, new Uri(baseUri, IngestProtocol.Path));
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         req.Headers.Add(IngestProtocol.AckHeader, ack >= AckLevel.FsyncConfirmed ? "fsync" : "os");
+        if (ns is not null) req.Headers.Add("LatticeLog-Namespace", ns);
         req.Content = new ByteArrayContent(envelope);
         req.Content.Headers.ContentType = new MediaTypeHeaderValue(IngestProtocol.ContentType);
         HttpResponseMessage resp;
@@ -47,6 +48,8 @@ public sealed class IngestClient(HttpClient http, Uri baseUri, string token)
                     return new SendResult(SendOutcome.SequenceGap, CommittedThrough: ulong.Parse((string)json!["committed_through"]!, CultureInfo.InvariantCulture), Error: error);
                 case 413:
                     return new SendResult(SendOutcome.TooLarge, Error: error);
+                case 415:
+                    return new SendResult(SendOutcome.UnsupportedEncoding, Error: error);
                 case 429 or 503 or >= 500:
                     return new SendResult(SendOutcome.Retry, RetryAfter: retryAfter, Error: error);
                 default:
@@ -60,9 +63,13 @@ public sealed record ForwarderOptions
 {
     public required Uri Endpoint { get; init; }
     public required string Token { get; init; }
+    /// <summary>Target namespace on the server (null = the token's default namespace).</summary>
+    public string? Namespace { get; init; }
     public AckLevel Ack { get; init; } = AckLevel.FsyncConfirmed;
     public int MaxBatchRecords { get; init; } = 5_000;
     public bool Gzip { get; init; } = true;
+    /// <summary>Body encoding: binary mini segment (default, faster and smaller) or JSONL. Falls back to JSONL on 415.</summary>
+    public byte BodyEncoding { get; init; } = IngestProtocol.EncodingLlog;
     public TimeSpan PollInterval { get; init; } = TimeSpan.FromMilliseconds(200);
     public TimeSpan RetryBase { get; init; } = TimeSpan.FromMilliseconds(200);
     public TimeSpan RetryMax { get; init; } = TimeSpan.FromSeconds(30);
@@ -89,6 +96,8 @@ public sealed class Forwarder : IAsyncDisposable
     private readonly Task _loop;
     private readonly string _cursorPath;
     private readonly string _producer;
+    private readonly StoreTail _tail;
+    private byte _encoding;
     private long _committed;
     private long _batches, _retries, _gaps;
     private volatile string? _lastError;
@@ -101,10 +110,12 @@ public sealed class Forwarder : IAsyncDisposable
         _producer = StoreWriter.ReadStoreFile(root).StoreId;
         _http = options.Handler is null ? new HttpClient() : new HttpClient(options.Handler, disposeHandler: false);
         _http.Timeout = options.RequestTimeout;
-        _client = new IngestClient(_http, options.Endpoint, options.Token);
-        var endpointKey = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(options.Endpoint.AbsoluteUri)))[..12].ToLowerInvariant();
+        _client = new IngestClient(_http, options.Endpoint, options.Token, options.Namespace);
+        var endpointKey = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(options.Endpoint.AbsoluteUri + "|" + options.Namespace)))[..12].ToLowerInvariant();
         _cursorPath = Path.Combine(root, $"FORWARD-{endpointKey}.json");
         _committed = (long)LoadCursor();
+        _tail = new StoreTail(root);
+        _encoding = options.BodyEncoding;
         _loop = Task.Run(LoopAsync);
     }
 
@@ -118,6 +129,8 @@ public sealed class Forwarder : IAsyncDisposable
     public long BatchesSent => Interlocked.Read(ref _batches);
     public long Retries => Interlocked.Read(ref _retries);
     public long GapsReported => Interlocked.Read(ref _gaps);
+    /// <summary>Frames decoded incrementally and full scans done by the local reader (diagnostics).</summary>
+    public (long Frames, long FullScans) ReaderStats => (_tail.FramesRead, _tail.FullScans);
 
     /// <summary>Waits until everything currently in the local store up to <paramref name="localSequence"/> is acknowledged.</summary>
     public async Task<bool> WaitForAsync(ulong localSequence, TimeSpan timeout)
@@ -170,33 +183,11 @@ public sealed class Forwarder : IAsyncDisposable
     }
 
     /// <summary>
-    /// Reads up to <paramref name="max"/> records after <paramref name="after"/> from the local store. Returns a dense
-    /// run; <paramref name="gap"/> is true when the run does not start at <paramref name="after"/> + 1 (records lost
-    /// locally, e.g. a quarantined segment).
+    /// Reads up to <paramref name="max"/> records after <paramref name="after"/> from the local store, incrementally
+    /// (<see cref="StoreTail"/>: only frames written since the last poll are decoded). <paramref name="gap"/> is true
+    /// when the run does not start at <paramref name="after"/> + 1 (records lost locally, e.g. a quarantined segment).
     /// </summary>
-    private List<LogRecord> ReadAfter(ulong after, int max, out bool gap)
-    {
-        gap = false;
-        var batch = new List<LogRecord>(Math.Min(max, 4096));
-        StoreReader reader;
-        try { reader = StoreReader.Open(_root); }
-        catch (IOException) { return batch; }
-        var report = new ScanReport();
-        foreach (var block in reader.ReadBlocks(report,
-                     segmentFilter: (_, idx) => idx is null || !idx.HasRecords || idx.LastSequence > after,
-                     blockFilter: b => b.Type != Storage.Format.BlockType.Records || b.LastSequence > after))
-        {
-            foreach (var r in block.Records)
-            {
-                if (r.Sequence <= after) continue;
-                if (batch.Count == 0) gap = r.Sequence != after + 1;
-                else if (r.Sequence != batch[^1].Sequence + 1) return batch; // stop at a hole: the next batch reports it
-                batch.Add(r);
-                if (batch.Count >= max) return batch;
-            }
-        }
-        return batch;
-    }
+    private List<LogRecord> ReadAfter(ulong after, int max, out bool gap) => _tail.ReadAfter(after, max, out gap);
 
     private async Task LoopAsync()
     {
@@ -219,7 +210,7 @@ public sealed class Forwarder : IAsyncDisposable
                     Interlocked.Increment(ref _gaps);
                     Diagnose($"local records {after + 1}..{batch[0].Sequence - 1} are missing from the store; sending with gap_acknowledged");
                 }
-                var envelope = IngestProtocol.EncodeBatch(_producer, batch, _options.Gzip, gap);
+                var envelope = IngestProtocol.EncodeBatch(_producer, batch, _options.Gzip, gap, _encoding);
                 var result = await _client.SendAsync(envelope, _options.Ack, ct).ConfigureAwait(false);
                 switch (result.Outcome)
                 {
@@ -248,6 +239,16 @@ public sealed class Forwarder : IAsyncDisposable
                         SaveCursor(result.CommittedThrough);
                         Interlocked.Exchange(ref _committed, (long)result.CommittedThrough);
                         break;
+                    case SendOutcome.UnsupportedEncoding when _encoding != IngestProtocol.EncodingJsonl:
+                        // Older server (negotiation, P16-T09): JSONL is accepted by every v1 server.
+                        Diagnose("server does not accept the binary body; falling back to latticelog.jsonl");
+                        _encoding = IngestProtocol.EncodingJsonl;
+                        break;
+                    case SendOutcome.UnsupportedEncoding:
+                        _lastError = result.Error;
+                        _state = ForwarderState.Failed;
+                        Diagnose("stopped: " + result.Error);
+                        return;
                     case SendOutcome.TooLarge:
                         if (maxRecords == 1) throw new InvalidOperationException("server rejects even a single record as too large: " + result.Error);
                         maxRecords = Math.Max(1, batch.Count / 2);
@@ -292,5 +293,6 @@ public sealed class Forwarder : IAsyncDisposable
         try { await _loop.ConfigureAwait(false); } catch (OperationCanceledException) { }
         _http.Dispose();
         _stop.Dispose();
+        _tail.Dispose();
     }
 }

@@ -1,0 +1,19 @@
+{
+    "name": "latticelog/latticelog",
+    "description": "LatticeLog SDK for PHP: structured logs to a local durable spool, shipped to latticelog-server",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.1",
+        "ext-json": "*",
+        "ext-zlib": "*",
+        "ext-mbstring": "*"
+    },
+    "suggest": {
+        "ext-curl": "faster HTTP; falls back to PHP streams"
+    },
+    "autoload": {
+        "psr-4": { "LatticeLog\\": "src/LatticeLog/" }
+    },
+    "bin": ["bin/latticelog-ship.php"]
+}

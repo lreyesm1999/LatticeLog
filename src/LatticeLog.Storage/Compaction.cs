@@ -79,7 +79,11 @@ public static class CodecPlanner
         => Estimate(sample, policy).OrderBy(e => e.Cost).ThenBy(e => e.Codec).First();
 }
 
-public sealed record CompactionResult(IReadOnlyList<ulong> Inputs, ulong Output, long InputBytes, long OutputBytes, long Records, CodecEstimate Choice, TimeSpan Elapsed);
+public sealed record CompactionResult(IReadOnlyList<ulong> Inputs, ulong Output, long InputBytes, long OutputBytes, long Records, CodecEstimate Choice, TimeSpan Elapsed)
+{
+    /// <summary>Records removed by an erase filter (0 for plain compaction).</summary>
+    public long Erased { get; init; }
+}
 
 /// <summary>
 /// Rewrites sealed segments into a new segment with the planned codec (P10-T08..T11).
@@ -90,7 +94,9 @@ public sealed record CompactionResult(IReadOnlyList<ulong> Inputs, ulong Output,
 public static class Compactor
 {
     /// <param name="allocateId">Segment id allocator: pass <see cref="StoreWriter.AllocateSegmentId"/> when a writer is active in-process; otherwise the caller must hold the store lock.</param>
-    public static CompactionResult? Compact(string root, IReadOnlyList<ulong> inputs, CompactionPolicy policy, Func<ulong> allocateId, CancellationToken ct = default)
+    /// <param name="erase">Optional filter (P18 erasure): matching records are left out of the output. The output is
+    /// verified against the kept records and the inputs are retired exactly as in a plain compaction.</param>
+    public static CompactionResult? Compact(string root, IReadOnlyList<ulong> inputs, CompactionPolicy policy, Func<ulong> allocateId, Func<LogRecord, bool>? erase = null, CancellationToken ct = default)
     {
         if (inputs.Count == 0) return null;
         var sw = Stopwatch.StartNew();
@@ -107,6 +113,13 @@ public static class Compactor
             foreach (var b in reader.ReadBlocks(report)) records.AddRange(b.Records);
             if (!report.IsClean) throw new InvalidOperationException($"Segment {id} has integrity issues; run 'verify'/'repair' first. First issue: {report.Issues[0].Message}");
             inputBytes += reader.Length;
+        }
+        var erased = 0L;
+        if (erase is not null)
+        {
+            var before = records.Count;
+            records = records.Where(r => !erase(r)).ToList();
+            erased = before - records.Count;
         }
         var sample = records.Take(Math.Min(records.Count, 4096)).ToList();
         var choice = sample.Count > 0 ? CodecPlanner.Choose(sample, policy) : new CodecEstimate(CodecId.Structural, Compression.None, 0, 0, 0, 0);
@@ -157,6 +170,7 @@ public static class Compactor
                 ["inputs"] = new JsonArray(inputs.Select(i => (JsonNode)i).ToArray()),
                 ["output"] = output,
                 ["records"] = records.Count,
+                ["erased"] = erased,
             });
         }
         catch
@@ -168,7 +182,37 @@ public static class Compactor
         }
         foreach (var id in inputs) TryDelete(StoreLayout.SegmentPath(root, id));
         var outBytes = new FileInfo(final).Length;
-        return new CompactionResult(inputs, output, inputBytes, outBytes, records.Count, choice, sw.Elapsed);
+        return new CompactionResult(inputs, output, inputBytes, outBytes, records.Count, choice, sw.Elapsed) { Erased = erased };
+    }
+
+    /// <summary>
+    /// Erasure (P18): rewrites, one by one, the sealed segments below <paramref name="excludeAtOrAbove"/> that contain
+    /// at least one record matching <paramref name="erase"/>. Segments without matches are not touched.
+    /// </summary>
+    public static List<CompactionResult> EraseMatching(string root, Func<LogRecord, bool> erase, CompactionPolicy policy, Func<ulong> allocateId, ulong excludeAtOrAbove, CancellationToken ct = default)
+    {
+        var store = StoreReader.Open(root);
+        var results = new List<CompactionResult>();
+        foreach (var id in store.SegmentIds)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (id >= excludeAtOrAbove || store.Indexes.GetValueOrDefault(id) is not { HasRecords: true }) continue;
+            bool any;
+            using (var reader = SegmentReader.Open(store.SegmentPath(id)))
+                any = reader.ReadBlocks(new ScanReport()).Any(b => b.Records.Any(erase));
+            if (any && Compact(root, [id], policy, allocateId, erase, ct) is { } r) results.Add(r);
+        }
+        return results;
+    }
+
+    /// <summary>Counts records matching <paramref name="erase"/> in sealed segments below the limit (dry run).</summary>
+    public static long CountMatching(string root, Func<LogRecord, bool> erase, ulong excludeAtOrAbove)
+    {
+        var store = StoreReader.Open(root);
+        long n = 0;
+        foreach (var b in store.ReadBlocks(new ScanReport(), (id, _) => id < excludeAtOrAbove))
+            foreach (var r in b.Records) if (erase(r)) n++;
+        return n;
     }
 
     /// <summary>Groups consecutive sealed segments up to <paramref name="targetBytes"/> and compacts each group.</summary>
@@ -192,7 +236,7 @@ public static class Compactor
         foreach (var g in groups)
         {
             ct.ThrowIfCancellationRequested();
-            if (Compact(root, g, policy, allocateId, ct) is { } r) results.Add(r);
+            if (Compact(root, g, policy, allocateId, ct: ct) is { } r) results.Add(r);
         }
         return results;
     }

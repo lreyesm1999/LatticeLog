@@ -1,14 +1,7 @@
 # PHASE-25-REVIEW — Producto comercial, licencias y SaaS
 
-- Estado: **NOT STARTED**
-- Fecha y versión/commit: 2026-11-18 · 0.1.0-alpha.1 (working tree, sin commits)
-- PRs e issues cerrados: ninguno (no existe repositorio remoto ni tracker; IDs de tarea según docs/PLAN-MAESTRO.md)
-- Entregables verificados: —
-- Evidencia de tests: —
-- Evidencia de benchmarks: —
-- Seguridad/compatibilidad: —
-- Hipótesis aceptadas/refutadas: —
-- Limitaciones abiertas: requiere decisiones de negocio y asesoría legal (licencia, precios, DPA, billing); la licencia del repositorio NO se ha elegido
-- ADRs nuevas: ver docs/decisions/ADR-*.md
-- Riesgos residuales: R13
-- Decisión: —
+- Estado: **NO APLICA** (decisión del responsable, 18-nov-2026)
+- Decisión: LatticeLog es un proyecto **gratuito y abierto con licencia MIT**. No habrá ediciones de pago, SaaS ni
+  facturación. Ver ADR-0012 en `docs/decisions/ADR-0002-to-0008.md` y `docs/product/commercial-decisions.md`.
+- Lo que sigue aplicando de esta fase: portabilidad (T04, hecha: formato documentado y lector independiente) y salida
+  sin bloqueo (T18, hecha: exportación sin pérdida y borrado verificable).

@@ -171,9 +171,12 @@ public sealed class CursorSigner(byte[] key, TimeSpan ttl)
             var fresh = RandomNumberGenerator.GetBytes(32);
             try
             {
-                using var fs = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-                fs.Write(fresh);
-                fs.Flush(flushToDisk: true);
+                using (var fs = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                {
+                    fs.Write(fresh);
+                    fs.Flush(flushToDisk: true);
+                }
+                if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite); // 0600
             }
             catch (IOException) when (File.Exists(path)) { /* another instance created it first */ }
         }

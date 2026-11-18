@@ -1,6 +1,6 @@
 # PHASE-14-REVIEW — SDK .NET listo para producción (Local v1.0)
 
-- Estado: **NOT PASSED** (avance sustancial; quedan criterios que exigen CI multiplataforma, licencia y RC)
+- Estado: **NOT PASSED** (avance sustancial; quedan criterios que exigen CI multiplataforma y RC; licencia MIT decidida)
 - Fecha y versión/commit: 2026-11-18 · sobre `a10d1f9` (formato 0.2) + cambios de esta revisión
 - PRs e issues cerrados: ninguno (no existe repositorio remoto ni tracker; IDs de tarea según docs/PLAN-MAESTRO.md)
 
@@ -26,7 +26,7 @@ Pruebas: 103 en Windows x64 (todas verdes, Debug y Release) + lector Python inde
   98 %, más la espera de NTFS al escribir en el archivo que se está vaciando) y **mitigada** con durabilidad en segundo
   plano (1 productor a 500k/s: de 4/12 a 0/12 corridas con bloqueo). Con 4 productores persisten cuando el disco tarda
   segundos. Falta repetirlo en un disco con espacio libre y en Linux, y decidir si separar codificación y E/S.
-- Licencia (bloquea publicar paquetes), firma de paquetes, SourceLink con el repositorio remoto, SBOM en CI.
+- ~~Licencia~~ (MIT), firma de paquetes, SourceLink con el repositorio remoto, SBOM en CI.
 - Compatibilidad N-1 y release candidate.
 - Pruebas de pérdida de energía / caída del SO (requieren VM o hardware de inyección de fallos).
 

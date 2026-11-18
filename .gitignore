@@ -1,5 +1,7 @@
 bin/
 obj/
+# ...except the PHP SDK's command-line scripts
+!sdks/php/bin/
 *.user
 *.suo
 .vs/

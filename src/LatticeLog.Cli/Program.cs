@@ -89,6 +89,8 @@ public static class Program
         ["verify"] = "verify <dir|file.llog> [--format json]      Exit 3 when integrity issues are found.",
         ["repair"] = "repair <dir>                       Recover unsealed/torn segments (copies torn tails to recovered/).",
         ["compact"] = "compact <dir> [--policy fast|balanced|compact] [--target-mb N]",
+        ["backup"] = "backup <dir> <destination>         Hot backup (safe while a writer runs), verified by reading it back.",
+        ["retention"] = "retention <dir> (--max-age 30d | --max-mb N) [--dry-run] [--format json]   Delete whole old sealed segments (journaled).",
         ["export"] = "export <dir> --format llog-jsonl|otlp-json|raw (--output FILE | --stdout) [--where Q]",
         ["import"] = "import <dir> <file> --format llog-jsonl|otlp-json|jsonl|text [--service NAME] [--preserve-raw]",
         ["tail"] = "tail <dir> [--lines N] [--where Q] [--follow]",
@@ -121,6 +123,8 @@ public static class Program
                 "verify" => Verify(args),
                 "repair" => Repair(args),
                 "compact" => Compact(args),
+                "retention" => RetentionCmd(args),
+                "backup" => BackupCmd(args),
                 "export" => Export(args),
                 "import" => Import(args),
                 "tail" => Tail(args),
@@ -479,6 +483,52 @@ public static class Program
         foreach (var r in results)
             Console.WriteLine($"[{string.Join(",", r.Inputs)}] -> {r.Output}: {r.Records} records, {r.InputBytes} -> {r.OutputBytes} bytes ({(r.InputBytes == 0 ? 0 : 100.0 * r.OutputBytes / r.InputBytes):0.#}%), codec {r.Choice.Codec}+{r.Choice.Compression}, {r.Elapsed.TotalMilliseconds:0} ms");
         Console.WriteLine($"{results.Count} compaction(s) committed.");
+        return ExitCodes.Ok;
+    }
+
+    private static int BackupCmd(Args a)
+    {
+        var dest = a.Positional.ElementAtOrDefault(1) ?? throw new CliException(ExitCodes.Usage, "backup requires a destination directory.");
+        var r = StoreBackup.Create(Store(a), dest);
+        Console.WriteLine($"{r.Segments} segment(s), {r.Records} record(s), {r.Bytes} bytes copied to {Path.GetFullPath(r.Destination)}; verified: {(r.Verified ? "OK" : "ISSUES")}");
+        foreach (var i in r.Issues) Console.WriteLine("  " + i);
+        return r.Verified ? ExitCodes.Ok : ExitCodes.IntegrityIssues;
+    }
+
+    private static int RetentionCmd(Args a)
+    {
+        TimeSpan? maxAge = null;
+        if (a.Get("max-age") is { } age)
+        {
+            var now = UnixTime.NowUnixNanos();
+            maxAge = TimeSpan.FromTicks((now - ParseTimeArg(age, now)!.Value) / 100);
+            if (maxAge <= TimeSpan.Zero) throw new CliException(ExitCodes.Usage, "--max-age must be a positive duration like 30d.");
+        }
+        long? maxBytes = a.Get("max-mb") is null ? null : a.Int("max-mb", 0) * 1024L * 1024;
+        var policy = new RetentionPolicy { MaxAge = maxAge, MaxBytes = maxBytes };
+        if (policy.IsEmpty) throw new CliException(ExitCodes.Usage, "retention requires --max-age and/or --max-mb.");
+        var root = Store(a);
+        using var w = StoreWriter.Open(root); // holds the lock: no concurrent writer
+        var result = w.ApplyRetention(policy, dryRun: a.Has("dry-run"));
+        if (a.Format == "json")
+            Console.WriteLine(new JsonObject
+            {
+                ["dry_run"] = result.DryRun,
+                ["segments"] = result.Deleted.Count,
+                ["records"] = result.Records,
+                ["bytes"] = result.Bytes,
+                ["deleted"] = new JsonArray(result.Deleted.Select(d => (JsonNode?)new JsonObject
+                {
+                    ["segment_id"] = d.SegmentId, ["reason"] = d.Reason, ["records"] = d.Records, ["bytes"] = d.Bytes,
+                    ["first_seq"] = d.FirstSequence, ["last_seq"] = d.LastSequence, ["max_time"] = UnixTime.FormatRfc3339(d.MaxTimestampUnixNanos),
+                }).ToArray()),
+            }.ToJsonString(Indented));
+        else
+        {
+            foreach (var d in result.Deleted)
+                Console.WriteLine($"{(result.DryRun ? "would delete" : "deleted")} segment {d.SegmentId}: {d.Records} records (seq {d.FirstSequence}-{d.LastSequence}, newest {UnixTime.FormatRfc3339(d.MaxTimestampUnixNanos)}), {d.Bytes} bytes — {d.Reason}");
+            Console.WriteLine($"{result.Deleted.Count} segment(s), {result.Records} record(s), {result.Bytes} bytes {(result.DryRun ? "would be deleted (dry run)" : "deleted")}.");
+        }
         return ExitCodes.Ok;
     }
 

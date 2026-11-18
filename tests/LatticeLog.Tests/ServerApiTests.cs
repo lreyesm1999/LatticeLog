@@ -20,9 +20,10 @@ public class ServerApiTests
         TokenStore.Create("ops", "ops-secret", TokenScopes.Read | TokenScopes.Admin, ["*"]),
     ];
 
-    private static async Task<LatticeServer> Start(string data, QueryLimits? query = null)
+    private static async Task<LatticeServer> Start(string data, QueryLimits? query = null, string? backups = null)
         => await LatticeServer.StartAsync(new ServerOptions
         {
+            BackupDirectory = backups,
             DataDirectory = data,
             Tokens = TokenStore.FromTokens(Tokens),
             IngestTemplate = new IngestServiceOptions { StoreDirectory = "", Store = new StoreWriterOptions { MinFreeDiskBytes = 0, SegmentMaxBytes = 8 * 1024 } },
@@ -35,10 +36,10 @@ public class ServerApiTests
     {
         var ctx = new ContextSnapshot(ContextKind.Resource, null, [new("service.name", service)], null);
         var list = new List<LogRecord>(n);
+        Span<byte> t = stackalloc byte[16];
         for (var i = 0; i < n; i++)
         {
             var failed = i % 10 == 9;
-            Span<byte> t = stackalloc byte[16];
             BitConverter.TryWriteBytes(t, (long)(i / 5) + 1);
             BitConverter.TryWriteBytes(t[8..], (long)service.Length);
             list.Add(new LogRecord
@@ -232,7 +233,7 @@ public class ServerApiTests
         await using (var server = await Start(data, new QueryLimits { MaxScannedRecords = 50 }))
         {
             await Ingest(server.BaseAddress, "acme-w", Orders(500, "acme-orders"));
-            var r = await Get(server.BaseAddress, $"/v1/search?ns={Q("acme/prod")}&where={Q("attributes.i = 499")}", "acme-r");
+            var r = await Get(server.BaseAddress, $"/v1/search?ns={Q("acme/prod")}&where={Q("attr.i = 499")}", "acme-r");
             Assert.Equal(HttpStatusCode.OK, r.Status);
             Assert.True((bool)r.Json!["coverage"]!["partial_results"]!); // stopped at the scan limit and says so
 
@@ -248,5 +249,158 @@ public class ServerApiTests
             Assert.Equal((HttpStatusCode)429, r.Status);
             Assert.NotNull(r.Raw.Headers.RetryAfter);
         }
+    }
+
+    private static async Task<(HttpStatusCode Status, JsonNode? Json)> Post(Uri server, string path, string token)
+    {
+        using var http = new HttpClient();
+        using var req = new HttpRequestMessage(HttpMethod.Post, new Uri(server, path));
+        req.Headers.Authorization = new("Bearer", token);
+        using var resp = await http.SendAsync(req);
+        var text = await resp.Content.ReadAsStringAsync();
+        return (resp.StatusCode, text.Length > 0 ? JsonNode.Parse(text) : null);
+    }
+
+    [Fact]
+    public async Task Online_retention_compaction_and_verify_keep_dedup_and_are_audited()
+    {
+        var data = TestData.TempDir();
+        var producer = Guid.NewGuid().ToString("N");
+        var orders = Orders(1_000, "acme-orders"); // event times in 2025: older than 30 days
+        await using (var server = await Start(data))
+        {
+            using var http = new HttpClient();
+            var client = new IngestClient(http, server.BaseAddress, "acme-w");
+            for (var i = 0; i < orders.Count; i += 100)
+                Assert.Equal("stored", (await client.SendAsync(IngestProtocol.EncodeBatch(producer, orders.GetRange(i, 100)), AckLevel.FsyncConfirmed, default)).Ack!.Status);
+            var ns = "?ns=" + Q("acme/prod");
+
+            Assert.Equal(HttpStatusCode.Forbidden, (await Post(server.BaseAddress, "/v1/admin/retention" + ns + "&max_age=30d", "acme-r")).Status);
+
+            var compact = await Post(server.BaseAddress, "/v1/admin/compact" + ns + "&policy=compact", "ops-secret");
+            Assert.Equal(HttpStatusCode.OK, compact.Status);
+            Assert.NotEmpty(compact.Json!["compactions"]!.AsArray());
+            var afterCompact = await Get(server.BaseAddress, $"/v1/search{ns}&limit=1000", "acme-r");
+            Assert.Equal(1_000, afterCompact.Json!["events"]!.AsArray().Count); // nothing lost or doubled by compaction
+
+            var dry = await Post(server.BaseAddress, "/v1/admin/retention" + ns + "&max_age=30d&dry_run=true", "ops-secret");
+            Assert.True((bool)dry.Json!["dry_run"]!);
+            var retention = await Post(server.BaseAddress, "/v1/admin/retention" + ns + "&max_age=30d", "ops-secret");
+            Assert.Equal(HttpStatusCode.OK, retention.Status);
+            var deleted = (long)retention.Json!["records"]!;
+            Assert.True(deleted > 0);
+            var remaining = await Get(server.BaseAddress, $"/v1/search{ns}&limit=1000", "acme-r");
+            Assert.Equal(1_000 - deleted, remaining.Json!["events"]!.AsArray().Count); // only the active segment survives
+
+            // The producer resends everything (lost its cursor): old records must not come back.
+            var resend = await client.SendAsync(IngestProtocol.EncodeBatch(producer, orders.GetRange(0, 100)), AckLevel.FsyncConfirmed, default);
+            Assert.Equal("duplicate", resend.Ack!.Status);
+
+            var verify = await Post(server.BaseAddress, "/v1/admin/verify" + ns, "ops-secret");
+            Assert.True((bool)verify.Json!["ok"]!);
+            await Get(server.BaseAddress, "/v1/search" + ns, "wrong-token");
+        }
+        // After a restart too (dedup comes from the checkpoint written before deleting).
+        await using (var server = await Start(data))
+        {
+            using var http = new HttpClient();
+            var client = new IngestClient(http, server.BaseAddress, "acme-w");
+            Assert.Equal("duplicate", (await client.SendAsync(IngestProtocol.EncodeBatch(producer, orders.GetRange(0, 100)), AckLevel.FsyncConfirmed, default)).Ack!.Status);
+        }
+        var auditFile = Directory.GetFiles(Path.Combine(data, "audit"), "audit-*.jsonl").Single();
+        var (events, corrupt) = AuditLog.ReadFile(auditFile);
+        Assert.Equal(0, corrupt);
+        var actions = events.Select(e => ((string)e["action"]!, (string)e["outcome"]!)).ToList();
+        Assert.Contains(("admin.compact", "ok"), actions);
+        Assert.Contains(("admin.retention", "ok"), actions);
+        Assert.Contains(("admin.verify", "ok"), actions);
+        Assert.Contains(("read.search", "ok"), actions);
+        Assert.Contains(actions, a => a.Item2 == "forbidden"); // the reader trying to administer
+        Assert.Contains(actions, a => a.Item2 == "unauthorized");
+        Assert.All(events, e => Assert.DoesNotContain("s3cr3t", e.ToJsonString())); // no log content in the audit trail
+    }
+
+    [Fact]
+    public async Task Erase_removes_matching_records_everywhere_in_the_store_and_they_cannot_come_back()
+    {
+        var data = TestData.TempDir();
+        var producer = Guid.NewGuid().ToString("N");
+        var orders = Orders(600, "acme-orders");
+        await using var server = await Start(data);
+        using var http = new HttpClient();
+        var client = new IngestClient(http, server.BaseAddress, "acme-w");
+        for (var i = 0; i < orders.Count; i += 100)
+            Assert.Equal("stored", (await client.SendAsync(IngestProtocol.EncodeBatch(producer, orders.GetRange(i, 100)), AckLevel.FsyncConfirmed, default)).Ack!.Status);
+        var ns = "?ns=" + Q("acme/prod");
+        var filter = "&where=" + Q("attr.i < 50 OR attr.i >= 590"); // old (sealed) and newest (active segment) records
+
+        Assert.Equal(HttpStatusCode.BadRequest, (await Post(server.BaseAddress, "/v1/admin/erase" + ns, "ops-secret")).Status);
+        var dry = await Post(server.BaseAddress, "/v1/admin/erase" + ns + filter + "&dry_run=true", "ops-secret");
+        Assert.Equal(60, (long)dry.Json!["records"]!);
+        Assert.Equal(600, (await Get(server.BaseAddress, $"/v1/search{ns}&limit=1000", "acme-r")).Json!["events"]!.AsArray().Count);
+
+        var erase = await Post(server.BaseAddress, "/v1/admin/erase" + ns + filter, "ops-secret");
+        Assert.Equal(HttpStatusCode.OK, erase.Status);
+        Assert.Equal(60, (long)erase.Json!["records"]!);
+        var left = (await Get(server.BaseAddress, $"/v1/search{ns}&limit=1000", "acme-r")).Json!["events"]!.AsArray();
+        Assert.Equal(540, left.Count);
+        Assert.All(left, e => Assert.InRange((long)e!["attributes"]!["i"]!, 50, 589));
+        // Not even in the raw files: every segment is decoded directly.
+        var raw = StoreReader.Open(Path.Combine(data, "ns", "acme~prod")).ReadAll(new ScanReport()).ToList();
+        Assert.DoesNotContain(raw, r => r.Attributes[0].Value.AsInt64() is < 50 or >= 590);
+        // A producer resending the erased records does not bring them back.
+        Assert.Equal("duplicate", (await client.SendAsync(IngestProtocol.EncodeBatch(producer, orders.GetRange(0, 100)), AckLevel.FsyncConfirmed, default)).Ack!.Status);
+        Assert.Equal(540, (await Get(server.BaseAddress, $"/v1/search{ns}&limit=1000", "acme-r")).Json!["events"]!.AsArray().Count);
+        // Ingestion keeps working after the active segment was sealed for the erase.
+        Assert.Equal(SendOutcome.Acknowledged, (await client.SendAsync(IngestProtocol.EncodeBatch(producer, Orders(610, "acme-orders").GetRange(600, 10)), AckLevel.FsyncConfirmed, default)).Outcome);
+    }
+
+    [Fact]
+    public async Task Repeated_bad_tokens_from_one_address_are_throttled()
+    {
+        await using var server = await Start(TestData.TempDir());
+        var statuses = new List<HttpStatusCode>();
+        for (var i = 0; i < 25; i++) statuses.Add((await Get(server.BaseAddress, "/v1/search", "guess-" + i)).Status);
+        Assert.Equal(HttpStatusCode.Unauthorized, statuses[0]);
+        Assert.Equal((HttpStatusCode)429, statuses[^1]);
+        // Even the right token waits out the window: the brake is per address, not per token.
+        Assert.Equal((HttpStatusCode)429, (await Get(server.BaseAddress, $"/v1/search?ns={Q("acme/prod")}", "acme-r")).Status);
+    }
+
+    [Fact]
+    public async Task Console_metrics_and_backup()
+    {
+        var data = TestData.TempDir();
+        var backups = TestData.TempDir();
+        await using var server = await Start(data, backups: backups);
+        await Ingest(server.BaseAddress, "acme-w", Orders(250, "acme-orders"));
+
+        // Console: static, served with a strict CSP and no framing; the page itself needs no token.
+        var page = await Get(server.BaseAddress, "/ui", null);
+        Assert.True(page.Status == HttpStatusCode.OK, page.Text);
+        Assert.Contains("<script src=\"/ui/app.js\">", page.Text);
+        Assert.Contains("default-src 'self'", page.Raw.Headers.GetValues("Content-Security-Policy").Single());
+        Assert.Equal("DENY", page.Raw.Headers.GetValues("X-Frame-Options").Single());
+        Assert.Equal("nosniff", page.Raw.Headers.GetValues("X-Content-Type-Options").Single());
+        var js = await Get(server.BaseAddress, "/ui/app.js", null);
+        Assert.Equal("text/javascript", js.Raw.Content.Headers.ContentType?.MediaType);
+        Assert.DoesNotContain("innerHTML", js.Text);
+
+        // Metrics: admin only, Prometheus text with per-namespace series.
+        Assert.Equal(HttpStatusCode.Unauthorized, (await Get(server.BaseAddress, "/metrics", "acme-r")).Status);
+        var metrics = await Get(server.BaseAddress, "/metrics", "ops-secret");
+        Assert.Equal(HttpStatusCode.OK, metrics.Status);
+        Assert.Contains("# TYPE latticelog_store_last_sequence gauge", metrics.Text);
+        Assert.Contains("latticelog_store_last_sequence{namespace=\"acme/prod\"} 250", metrics.Text);
+        Assert.Contains("latticelog_ingest_records_stored_total{namespace=\"acme/prod\"} 250", metrics.Text);
+
+        // Backup: admin only, into the configured directory, verified; the copy reads back every record.
+        Assert.Equal(HttpStatusCode.Forbidden, (await Post(server.BaseAddress, $"/v1/admin/backup?ns={Q("acme/prod")}", "acme-r")).Status);
+        var bk = await Post(server.BaseAddress, $"/v1/admin/backup?ns={Q("acme/prod")}", "ops-secret");
+        Assert.Equal(HttpStatusCode.OK, bk.Status);
+        Assert.True((bool)bk.Json!["verified"]!);
+        Assert.Equal(250, (long)bk.Json["records"]!);
+        var copy = Directory.GetDirectories(Directory.GetDirectories(backups).Single()).Single();
+        Assert.Equal(250, StoreReader.Open(copy).ReadAll(new ScanReport()).Count());
     }
 }

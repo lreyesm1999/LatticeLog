@@ -145,7 +145,12 @@ public sealed class QueryEngine(StoreReader store)
             }
             SegmentReader reader;
             try { reader = SegmentReader.Open(Store.SegmentPath(id)); }
-            catch (FileNotFoundException) { continue; }
+            catch (FileNotFoundException)
+            {
+                // Removed by retention/compaction after this query's snapshot: say so instead of silently missing data.
+                report.Add(new ScanIssue(IssueKind.Io, Store.SegmentPath(id), 0, 0, "segment removed by retention/compaction during the query"));
+                continue;
+            }
             catch (Exception ex) when (ex is LlogFormatException or IOException)
             {
                 report.Add(new ScanIssue(IssueKind.UnsupportedFile, Store.SegmentPath(id), 0, 0, ex.Message));
@@ -266,7 +271,10 @@ public sealed class QueryEngine(StoreReader store)
         {
             var idx = Store.Indexes.GetValueOrDefault(id);
             if (idx is not null && (!idx.HasRecords || sequence < idx.FirstSequence || sequence > idx.LastSequence)) continue;
-            using var reader = SegmentReader.Open(Store.SegmentPath(id));
+            SegmentReader reader;
+            try { reader = SegmentReader.Open(Store.SegmentPath(id)); }
+            catch (FileNotFoundException) { continue; } // deleted by retention/compaction after the snapshot
+            using var _ = reader;
             if (reader.Index is { } x)
             {
                 var b = x.Blocks.FirstOrDefault(b => b.Type == BlockType.Records && b.FirstSequence <= sequence && b.LastSequence >= sequence);
@@ -325,7 +333,10 @@ public sealed class QueryEngine(StoreReader store)
                 continue;
             }
             usedIndexOnly = false;
-            using var reader = SegmentReader.Open(Store.SegmentPath(id));
+            SegmentReader reader;
+            try { reader = SegmentReader.Open(Store.SegmentPath(id)); }
+            catch (FileNotFoundException) { report.Add(new ScanIssue(IssueKind.Io, Store.SegmentPath(id), 0, 0, "segment removed by retention/compaction during the query")); continue; }
+            using var _ = reader;
             stats.SegmentsScanned++;
             foreach (var block in Blocks(reader, constraints, SortOrder.Ascending, report, stats))
             {

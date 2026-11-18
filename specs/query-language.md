@@ -11,7 +11,7 @@ predicate := field op literal | field "IN" "(" literal ("," literal)* ")" | fiel
            | field "STARTSWITH" literal | field "IS" ["NOT"] "NULL"
 op        := "=" | "==" | "!=" | "<>" | "<" | "<=" | ">" | ">="
 literal   := 'single quoted' | "double quoted" | number | true | false | null | bare word (ERROR, hex ids, ...)
-field     := builtin | ctx.<name> | attr.<name> | `quoted name` | <attribute name>
+field     := builtin | ctx.<name> | attr.<name> | attributes.<name> | `quoted name` | <attribute name>
 ```
 
 Builtins: `time` (RFC 3339 literal or Unix ns), `level|severity` (TRACE..FATAL, sub-levels, or 0..24), `event`,

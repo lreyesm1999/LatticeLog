@@ -1,14 +1,9 @@
 # PHASE-27-REVIEW — Lanzamiento, documentación y soporte
 
-- Estado: **NOT STARTED (documentación inicial)**
-- Fecha y versión/commit: 2026-11-18 · 0.1.0-alpha.1 (working tree, sin commits)
-- PRs e issues cerrados: ninguno (no existe repositorio remoto ni tracker; IDs de tarea según docs/PLAN-MAESTRO.md)
-- Entregables verificados: README, specs, CONTRIBUTING, SECURITY
-- Evidencia de tests: —
-- Evidencia de benchmarks: —
-- Seguridad/compatibilidad: —
-- Hipótesis aceptadas/refutadas: —
-- Limitaciones abiertas: verificación de marca, sitio, canales, RC público
-- ADRs nuevas: ver docs/decisions/ADR-*.md
-- Riesgos residuales: —
-- Decisión: —
+- Estado: **CONDITIONAL** (repositorio público con licencia MIT y documentación completa; faltan CI ejecutado,
+  paquetes publicados y canales de soporte)
+- Fecha: 2026-11-18
+- Entregables: `LICENSE` (MIT), `README.md`, `docs/release/launch-plan.md`, `docs/release/rc-checklist.md`,
+  `docs/compatibility.md`, `CHANGELOG.md`, guías de despliegue y operación, especificaciones (`specs/`).
+- Pendiente: CI en verde en GitHub Actions, canal privado de vulnerabilidades (T09), guías de migración (T03),
+  demo (T05), benchmarks repetidos en hardware estable (T06), paquetes en NuGet/PyPI/Packagist (T13).

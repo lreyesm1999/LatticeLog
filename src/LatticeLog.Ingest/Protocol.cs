@@ -3,6 +3,7 @@ using System.Globalization;
 using System.IO.Compression;
 using System.Text;
 using System.Text.Json.Nodes;
+using LatticeLog.Storage.Codecs;
 using LatticeLog.Storage.Format;
 using LatticeLog.Storage.Json;
 
@@ -17,6 +18,8 @@ public static class IngestProtocol
     public const int HeaderSize = 48;
     public const byte Version = 1;
     public const byte EncodingJsonl = 1;
+    /// <summary>Self-contained mini segment: catalog copy + Lattice-S records (specs/ingest-protocol.md §1.3).</summary>
+    public const byte EncodingLlog = 2;
     public const byte CompressionNone = 0;
     public const byte CompressionGzip = 1;
     public const byte FlagGapAcknowledged = 1;
@@ -28,31 +31,32 @@ public static class IngestProtocol
     /// <summary>
     /// Encodes a dense batch (records carry their local sequence numbers, first..last without gaps).
     /// </summary>
-    public static byte[] EncodeBatch(string producerId, IReadOnlyList<LogRecord> records, bool gzip = true, bool gapAcknowledged = false)
+    public static byte[] EncodeBatch(string producerId, IReadOnlyList<LogRecord> records, bool gzip = true, bool gapAcknowledged = false, byte encoding = EncodingJsonl)
     {
         if (records.Count == 0) throw new ArgumentException("A batch needs at least one record.", nameof(records));
         var producer = ParseProducer(producerId);
         var first = records[0].Sequence;
         for (var i = 0; i < records.Count; i++)
             if (records[i].Sequence != first + (ulong)i) throw new ArgumentException("Batch sequences must be dense and ascending.", nameof(records));
+        // Binary bodies cannot carry keys/names with lone surrogates exactly (the store would sanitize them and flag the
+        // record); such batches travel as JSONL so the flag is set by the server exactly as for local writes.
+        if (encoding == EncodingLlog && NeedsExactText(records)) encoding = EncodingJsonl;
         using var body = new MemoryStream();
-        if (gzip)
+        using (Stream target = gzip ? new GZipStream(body, CompressionLevel.Fastest, leaveOpen: true) : new NonClosingStream(body))
         {
-            using var gz = new GZipStream(body, CompressionLevel.Fastest, leaveOpen: true);
-            using var w = new JsonlExchangeWriter(gz, producerId, leaveOpen: true);
-            foreach (var r in records) w.Write(r);
-        }
-        else
-        {
-            using var w = new JsonlExchangeWriter(body, producerId, leaveOpen: true);
-            foreach (var r in records) w.Write(r);
+            if (encoding == EncodingLlog) WriteLlogBody(target, records);
+            else
+            {
+                using var w = new JsonlExchangeWriter(target, producerId, leaveOpen: true);
+                foreach (var r in records) w.Write(r);
+            }
         }
         var payload = body.GetBuffer().AsSpan(0, (int)body.Length);
         var result = new byte[HeaderSize + payload.Length];
         var h = result.AsSpan();
         Magic.CopyTo(h);
         h[4] = Version;
-        h[5] = EncodingJsonl;
+        h[5] = encoding;
         h[6] = gzip ? CompressionGzip : CompressionNone;
         h[7] = gapAcknowledged ? FlagGapAcknowledged : (byte)0;
         producer.CopyTo(h[8..24]);
@@ -62,6 +66,54 @@ public static class IngestProtocol
         BinaryPrimitives.WriteUInt32LittleEndian(h[44..], Checksum.Crc32(payload));
         payload.CopyTo(h[HeaderSize..]);
         return result;
+    }
+
+    private static bool NeedsExactText(IReadOnlyList<LogRecord> records)
+    {
+        foreach (var r in records)
+        {
+            foreach (var a in r.Attributes) if (Value.HasLoneSurrogate(a.Key)) return true;
+            if (r.EventName is { } en && Value.HasLoneSurrogate(en)) return true;
+            if (r.OperationId is { } op && Value.HasLoneSurrogate(op)) return true;
+            if (r.ParentOperationId is { } pop && Value.HasLoneSurrogate(pop)) return true;
+            if (r.CorrelationId is { } cid && Value.HasLoneSurrogate(cid)) return true;
+        }
+        return false;
+    }
+
+    /// <summary>varint catalog length, catalog copy (schemas + contexts), u8 codec, Lattice-S records payload.</summary>
+    private static void WriteLlogBody(Stream target, IReadOnlyList<LogRecord> records)
+    {
+        var tables = new SegmentTables();
+        var (schemas, contexts) = tables.CollectNew(records, 0, records.Count);
+        var scratch = new ByteWriter();
+        tables.EncodeSchemaBlock(schemas, scratch);   // registers the entries in the tables
+        tables.EncodeContextBlock(contexts, scratch);
+        scratch.Release();
+        var catalog = tables.EncodeCatalogCopy();
+        var w = new ByteWriter(64 * 1024);
+        w.WriteVarUInt((ulong)catalog.Length);
+        w.WriteBytes(catalog);
+        w.WriteByte((byte)CodecId.Structural);
+        RecordCodec.Encode(CodecId.Structural, records, 0, records.Count, tables, w);
+        target.Write(w.WrittenSpan);
+        w.Release();
+    }
+
+    private sealed class NonClosingStream(Stream inner) : Stream
+    {
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => inner.Length;
+        public override long Position { get => inner.Position; set => throw new NotSupportedException(); }
+        public override void Flush() => inner.Flush();
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => inner.Write(buffer, offset, count);
+        public override void Write(ReadOnlySpan<byte> buffer) => inner.Write(buffer);
+        protected override void Dispose(bool disposing) => base.Dispose(false); // leave the inner stream open
     }
 
     public static byte[] ParseProducer(string producerId)
@@ -103,8 +155,9 @@ public static class BatchDecoder
         if (request.Length < IngestProtocol.HeaderSize || !request[..4].SequenceEqual("LLIB"u8))
             throw new IngestException(400, "invalid_envelope", "missing LLIB envelope header");
         if (request[4] != IngestProtocol.Version) throw new IngestException(400, "invalid_envelope", $"unsupported envelope version {request[4]}");
-        if (request[5] != IngestProtocol.EncodingJsonl)
-            throw new IngestException(415, "unsupported_encoding", $"body encoding {request[5]} not supported");
+        var encoding = request[5];
+        if (encoding is not (IngestProtocol.EncodingJsonl or IngestProtocol.EncodingLlog))
+            throw new IngestException(415, "unsupported_encoding", $"body encoding {encoding} not supported");
         var compression = request[6];
         if (compression is not (IngestProtocol.CompressionNone or IngestProtocol.CompressionGzip))
             throw new IngestException(415, "unsupported_encoding", $"compression {compression} not supported");
@@ -127,6 +180,11 @@ public static class BatchDecoder
         CheckLineLengths(decoded, limits.MaxLineBytes);
 
         List<LogRecord> records;
+        if (encoding == IngestProtocol.EncodingLlog)
+        {
+            records = DecodeLlogBody(decoded, (int)count);
+        }
+        else
         try
         {
             var reader = new JsonlExchangeReader();
@@ -146,6 +204,29 @@ public static class BatchDecoder
         for (var i = 0; i < records.Count; i++)
             if (records[i].Sequence != first + (ulong)i) throw new IngestException(400, "invalid_batch", "record sequences do not match the envelope range");
         return new DecodedBatch(producer, first, last, (flags & IngestProtocol.FlagGapAcknowledged) != 0, records);
+    }
+
+    /// <summary>Binary body: every length and count is bounded by the reader; any inconsistency is a 400, never a crash.</summary>
+    private static List<LogRecord> DecodeLlogBody(byte[] body, int count)
+    {
+        try
+        {
+            var r = new ByteReader(body);
+            var catalogLength = r.ReadVarUInt();
+            if (catalogLength > (ulong)(body.Length - r.Position)) throw new LlogFormatException("catalog length exceeds the body");
+            var tables = SegmentTables.DecodeCatalogCopy(body.AsSpan(r.Position, (int)catalogLength));
+            var codecPos = r.Position + (int)catalogLength;
+            if (codecPos >= body.Length) throw new LlogFormatException("missing codec");
+            var codec = (CodecId)body[codecPos];
+            if (codec is not (CodecId.Raw or CodecId.Structural or CodecId.Contextual)) throw new LlogFormatException($"unknown codec {(byte)codec}");
+            var list = new List<LogRecord>(count);
+            RecordCodec.Decode(codec, body.AsSpan(codecPos + 1), count, tables, list);
+            return list;
+        }
+        catch (Exception ex) when (ex is LlogFormatException or OverflowException or ArgumentException or IndexOutOfRangeException or InvalidOperationException)
+        {
+            throw new IngestException(400, "decode_failed", "invalid binary body: " + ex.Message);
+        }
     }
 
     /// <summary>Decompression bomb protection: absolute size and ratio limits, checked while inflating.</summary>

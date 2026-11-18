@@ -102,6 +102,8 @@ public class IngestTests
         {
             Assert.True(await fwd.WaitForAsync(last, TimeSpan.FromSeconds(60)), $"state {fwd.State}, committed {fwd.CommittedThrough}, error {fwd.LastError}");
             Assert.True(fwd.Retries > 0);
+            // Regression: retries once re-read past the unacknowledged batch and declared a false gap (data loss).
+            Assert.Equal(0, fwd.GapsReported);
         }
         Assert.True(faults.Injected > 5, $"only {faults.Injected} faults injected");
         AssertExactlyOnceInOrder(ServerRecords(serverRoot), 12_000, producer);
@@ -134,8 +136,10 @@ public class IngestTests
         return list;
     }
 
-    [Fact]
-    public async Task Duplicate_overlap_and_gap_rules()
+    [Theory]
+    [InlineData(IngestProtocol.EncodingJsonl)]
+    [InlineData(IngestProtocol.EncodingLlog)]
+    public async Task Duplicate_overlap_and_gap_rules(byte encoding)
     {
         var serverRoot = TestData.TempDir();
         await using var collector = await StartCollector(serverRoot);
@@ -143,7 +147,7 @@ public class IngestTests
         var client = new IngestClient(http, collector.BaseAddress, Secret);
         var producer = Guid.NewGuid().ToString("N");
         async Task<SendResult> Send(ulong first, int count, bool gapAck = false)
-            => await client.SendAsync(IngestProtocol.EncodeBatch(producer, Range(first, count), gzip: first % 2 == 0, gapAcknowledged: gapAck), AckLevel.FsyncConfirmed, default);
+            => await client.SendAsync(IngestProtocol.EncodeBatch(producer, Range(first, count), gzip: first % 2 == 0, gapAcknowledged: gapAck, encoding: encoding), AckLevel.FsyncConfirmed, default);
 
         var r1 = await Send(1, 100);
         Assert.Equal(("stored", 100UL, 100L, AckLevel.FsyncConfirmed), (r1.Ack!.Status, r1.Ack.CommittedThrough, r1.Ack.Stored, r1.Ack.Ack));
@@ -270,5 +274,82 @@ public class IngestTests
             Url = "http://0.0.0.0:0",
         }));
         Assert.Contains("plain HTTP", ex.Message);
+    }
+
+    [Fact]
+    public void Binary_body_round_trips_exactly_and_falls_back_to_jsonl_for_lone_surrogate_keys()
+    {
+        var records = new TestData(21).Records(800); // NaN payloads, binary, decimals, deep maps, odd strings in values
+        for (var i = 0; i < records.Count; i++) records[i].Sequence = (ulong)i + 1;
+        var producer = Guid.NewGuid().ToString("N");
+        foreach (var gzip in new[] { true, false })
+        {
+            var env = IngestProtocol.EncodeBatch(producer, records, gzip, encoding: IngestProtocol.EncodingLlog);
+            Assert.Equal(IngestProtocol.EncodingLlog, env[5]);
+            var decoded = BatchDecoder.Decode(env, new IngestLimits());
+            for (var i = 0; i < records.Count; i++) Assert.True(records[i].Equals(decoded.Records[i]), TestData.Describe(records[i], decoded.Records[i]));
+        }
+        var jsonl = IngestProtocol.EncodeBatch(producer, records, encoding: IngestProtocol.EncodingJsonl);
+        var binary = IngestProtocol.EncodeBatch(producer, records, encoding: IngestProtocol.EncodingLlog);
+        Assert.True(binary.Length < jsonl.Length, $"binary {binary.Length} vs jsonl {jsonl.Length}");
+
+        var odd = Range(1, 3);
+        odd[1].Attributes = [new("bad\uD800key", 1)];
+        Assert.Equal(IngestProtocol.EncodingJsonl, IngestProtocol.EncodeBatch(producer, odd, encoding: IngestProtocol.EncodingLlog)[5]);
+    }
+
+    [Fact]
+    public void Corrupted_binary_bodies_are_rejected_cleanly()
+    {
+        var records = Range(1, 200);
+        var env = IngestProtocol.EncodeBatch(Guid.NewGuid().ToString("N"), records, gzip: false, encoding: IngestProtocol.EncodingLlog);
+        var rnd = new Random(9);
+        var accepted = 0;
+        for (var iter = 0; iter < 400; iter++)
+        {
+            var bad = (byte[])env.Clone();
+            for (var f = rnd.Next(1, 4); f > 0; f--) bad[rnd.Next(IngestProtocol.HeaderSize, bad.Length)] ^= (byte)(1 << rnd.Next(8));
+            // Valid CRC on purpose: the decoder itself must cope with garbage (a buggy or hostile client).
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(bad.AsSpan(44), Checksum.Crc32(bad.AsSpan(IngestProtocol.HeaderSize)));
+            try
+            {
+                var d = BatchDecoder.Decode(bad, new IngestLimits());
+                Assert.Equal(200, d.Records.Count); // if accepted, the envelope invariants still hold
+                accepted++;
+            }
+            catch (IngestException ex) { Assert.True(ex.Status is 400 or 413, ex.Message); }
+        }
+        Assert.True(accepted < 400);
+    }
+
+    /// <summary>Plays an older server: 415 for binary bodies, passes JSONL through.</summary>
+    private sealed class OldServerHandler() : DelegatingHandler(new SocketsHttpHandler())
+    {
+        public int Rejected;
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var body = await request.Content!.ReadAsByteArrayAsync(ct);
+            if (body.Length > 5 && body[5] == IngestProtocol.EncodingLlog)
+            {
+                Interlocked.Increment(ref Rejected);
+                return new HttpResponseMessage((System.Net.HttpStatusCode)415) { Content = new StringContent("{\"error\":\"unsupported_encoding\"}") };
+            }
+            request.Content = new ByteArrayContent(body);
+            request.Content.Headers.ContentType = new(IngestProtocol.ContentType);
+            return await base.SendAsync(request, ct);
+        }
+    }
+
+    [Fact]
+    public async Task Forwarder_falls_back_to_jsonl_when_the_server_rejects_the_binary_body()
+    {
+        var (local, producer, last) = ProducerStore(2_000);
+        var serverRoot = TestData.TempDir();
+        await using var collector = await StartCollector(serverRoot);
+        var old = new OldServerHandler();
+        await using (var fwd = Forwarder.Start(local, new ForwarderOptions { Endpoint = collector.BaseAddress, Token = Secret, Handler = old, PollInterval = TimeSpan.FromMilliseconds(10) }))
+            Assert.True(await fwd.WaitForAsync(last, TimeSpan.FromSeconds(30)), fwd.LastError);
+        Assert.Equal(1, old.Rejected); // one 415, then JSONL for the rest
+        AssertExactlyOnceInOrder(ServerRecords(serverRoot), 2_000, producer);
     }
 }

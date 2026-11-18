@@ -19,7 +19,7 @@ LatticeLog-Ack: fsync | os            (optional, default fsync)
 |---:|---:|---|---|
 | 0 | 4 | magic | `LLIB` |
 | 4 | 1 | version | 1 |
-| 5 | 1 | body_encoding | 1 = `latticelog.jsonl` v1 (others reserved; unknown → 415) |
+| 5 | 1 | body_encoding | 1 = `latticelog.jsonl` v1, 2 = binary mini segment (§1.3); others reserved, unknown → 415 |
 | 6 | 1 | compression | 0 = none, 1 = gzip |
 | 7 | 1 | flags | bit 0 = `gap_acknowledged` (the producer knows records before `first_local_seq` are missing) |
 | 8 | 16 | producer_id | 128-bit id = local `store_id`; never all-zero |
@@ -41,6 +41,15 @@ last_local_seq` in order. Anything else → 400 `invalid_batch`.
 | decoded / compressed ratio | 100 |
 | records per batch | 50,000 |
 | line length in the body | 1 MiB |
+
+### 1.3 Binary body (body_encoding = 2)
+
+After decompression: `varint catalog_length`, the catalog copy (schemas then contexts, exactly as the footer catalog
+section of `specs/llog-format-v0.md` §7.3), `u8 codec` (0 Raw, 1 Lattice-S, 2 Lattice-C), then the records payload of
+that codec for `record_count` records (same encoding as a Records block). Every count and length is bounded by the
+decoder, and malformed input gives 400 `decode_failed`. Clients send JSONL instead when a batch has attribute keys or
+names with lone surrogates (the binary form would not carry them exactly). Default for the .NET forwarder since
+2026-11-18. It falls back to JSONL permanently after a 415.
 
 ## 2. Server processing
 

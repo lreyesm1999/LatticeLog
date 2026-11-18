@@ -24,10 +24,10 @@ public sealed partial class LatticeServer
         Read(app, "/v1/events/{seq}/related", RelatedAsync);
         Read(app, "/v1/traces/{traceId}", TraceAsync);
         Read(app, "/v1/stats", StatsAsync);
-        Read(app, "/v1/overview", (ctx, rc, ct) => EvidenceAsync(ctx, rc, ct, e => e.Overview(Scope(rc, limitDefault: 100))));
-        Read(app, "/v1/error-groups", (ctx, rc, ct) => EvidenceAsync(ctx, rc, ct, e => e.ErrorGroups(Scope(rc, limitDefault: 100), IntArg(rc, "top", 20, 1, 200))));
-        Read(app, "/v1/context", (ctx, rc, ct) => EvidenceAsync(ctx, rc, ct, e => e.ContextPack(Scope(rc, limitDefault: 100), IntArg(rc, "budget_bytes", 32_000, 1_000, 1_000_000))));
-        Read(app, "/v1/schema", (ctx, rc, ct) => EvidenceAsync(ctx, rc, ct, e => e.Schema()));
+        Read(app, "/v1/overview", (ctx, rc, ct) => EvidenceAsync(ctx, rc, e => e.Overview(Scope(rc, limitDefault: 100)), ct));
+        Read(app, "/v1/error-groups", (ctx, rc, ct) => EvidenceAsync(ctx, rc, e => e.ErrorGroups(Scope(rc, limitDefault: 100), IntArg(rc, "top", 20, 1, 200)), ct));
+        Read(app, "/v1/context", (ctx, rc, ct) => EvidenceAsync(ctx, rc, e => e.ContextPack(Scope(rc, limitDefault: 100), IntArg(rc, "budget_bytes", 32_000, 1_000, 1_000_000)), ct));
+        Read(app, "/v1/schema", (ctx, rc, ct) => EvidenceAsync(ctx, rc, e => e.Schema(), ct));
         Read(app, "/v1/export", ExportAsync);
         Read(app, "/v1/catalog", CatalogAsync);
     }
@@ -69,6 +69,10 @@ public sealed partial class LatticeServer
                 // Snapshot (P17-T09): the segment list is fixed when the reader opens; later writes are not mixed in.
                 var engine = QueryEngine.Open(_namespaces.StorePath(ns));
                 await handler(ctx, new ReadContext(token, ns, engine, timeout, ctx.Request.Query), cts.Token).ConfigureAwait(false);
+                // Filters and status only: never the returned data.
+                Audit(ctx, token, ns, "read" + ctx.Request.Path.Value!["/v1".Length..].Replace('/', '.'),
+                    $"status={ctx.Response.StatusCode} where={ctx.Request.Query["where"]} since={ctx.Request.Query["since"]} until={ctx.Request.Query["until"]}",
+                    ctx.Response.StatusCode < 400 ? "ok" : "error");
             }
             catch (QuerySyntaxException ex) { await ErrorAsync(ctx, 400, "invalid_query", ex.Message).ConfigureAwait(false); }
             catch (ArgumentException ex) { await ErrorAsync(ctx, 400, "invalid_request", ex.Message).ConfigureAwait(false); }
@@ -221,7 +225,7 @@ public sealed partial class LatticeServer
         await WriteBytesAsync(ctx, 200, "application/json", System.Text.Encoding.UTF8.GetBytes(doc.Json)).ConfigureAwait(false);
     }
 
-    private static async Task EvidenceAsync(HttpContext ctx, ReadContext rc, CancellationToken ct, Func<EvidenceService, EvidenceDocument> build)
+    private static async Task EvidenceAsync(HttpContext ctx, ReadContext rc, Func<EvidenceService, EvidenceDocument> build, CancellationToken ct)
     {
         var doc = await Task.Run(() => build(new EvidenceService(rc.Engine)), ct).ConfigureAwait(false);
         await WriteEvidenceAsync(ctx, doc).ConfigureAwait(false);
@@ -235,19 +239,19 @@ public sealed partial class LatticeServer
             await ErrorAsync(ctx, 404, "event_not_found", $"no event {seq} in this namespace").ConfigureAwait(false);
             return;
         }
-        await EvidenceAsync(ctx, rc, ct, e => e.GetEvent(seq)).ConfigureAwait(false);
+        await EvidenceAsync(ctx, rc, e => e.GetEvent(seq), ct).ConfigureAwait(false);
     }
 
     private static Task RelatedAsync(HttpContext ctx, ReadContext rc, CancellationToken ct)
     {
         var seq = ParseEventRef(Uri.UnescapeDataString((string)ctx.Request.RouteValues["seq"]!));
-        return EvidenceAsync(ctx, rc, ct, e => e.GetRelated(seq, IntArg(rc, "limit", 200, 1, 2_000)));
+        return EvidenceAsync(ctx, rc, e => e.GetRelated(seq, IntArg(rc, "limit", 200, 1, 2_000)), ct);
     }
 
     private static Task TraceAsync(HttpContext ctx, ReadContext rc, CancellationToken ct)
     {
         var id = TraceId.Parse((string)ctx.Request.RouteValues["traceId"]!);
-        return EvidenceAsync(ctx, rc, ct, e => e.GetTrace(id, IntArg(rc, "budget_bytes", 64_000, 1_000, 2_000_000)));
+        return EvidenceAsync(ctx, rc, e => e.GetTrace(id, IntArg(rc, "budget_bytes", 64_000, 1_000, 2_000_000)), ct);
     }
 
     private async Task StatsAsync(HttpContext ctx, ReadContext rc, CancellationToken ct)

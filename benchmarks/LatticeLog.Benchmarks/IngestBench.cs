@@ -22,7 +22,7 @@ public static class IngestBench
         var records = StoreReader.Open(producerRoot).ReadAll(new ScanReport()).ToList();
         var producersArg = Array.IndexOf(args, "--producers");
         if (producersArg >= 0)
-            return await RunConcurrent(records, args[producersArg + 1].Split(',').Select(x => int.Parse(x, CultureInfo.InvariantCulture)).ToArray(), Arg("--batch", 1_000), Arg("--readers", 0));
+            return await RunConcurrent(records, args[producersArg + 1].Split(',').Select(x => int.Parse(x, CultureInfo.InvariantCulture)).ToArray(), Arg("--batch", 1_000), Arg("--readers", 0), (byte)Arg("--encoding", 1));
         Console.WriteLine($"producer store: {records.Count:N0} records; batch {batchSize:N0}; machine: {Environment.ProcessorCount} logical CPUs");
         Console.WriteLine("| body | ack | records/s | MB/s on the wire | bytes/record | ACK p50 ms | ACK p99 ms | ACK max ms |");
         Console.WriteLine("|---|---|---:|---:|---:|---:|---:|---:|");
@@ -67,9 +67,9 @@ public static class IngestBench
     /// P concurrent producers (distinct ids), each with one batch in flight, same total volume. Envelopes are encoded
     /// before timing, so this measures the collector (transport + decode + dedup + group commit), not the clients.
     /// </summary>
-    private static async Task<int> RunConcurrent(List<LogRecord> records, int[] producerCounts, int batchSize, int readers)
+    private static async Task<int> RunConcurrent(List<LogRecord> records, int[] producerCounts, int batchSize, int readers, byte encoding)
     {
-        Console.WriteLine($"concurrent producers: {records.Count:N0} records in total, batch {batchSize:N0}, gzip, ACK fsync, envelopes pre-encoded; {readers} concurrent reader(s)");
+        Console.WriteLine($"concurrent producers: {records.Count:N0} records in total, batch {batchSize:N0}, gzip, body {(encoding == IngestProtocol.EncodingLlog ? "llog" : "jsonl")}, ACK fsync, envelopes pre-encoded; {readers} concurrent reader(s)");
         Console.WriteLine("| producers | records/s | ACK p50 ms | ACK p99 ms | ACK max ms | batches per fsync | queries | query p50 ms | query p99 ms | peak working set MiB |");
         Console.WriteLine("|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
         foreach (var producers in producerCounts.Prepend(producerCounts[0])) // first entry repeated as warm-up
@@ -85,7 +85,7 @@ public static class IngestBench
                 {
                     var batch = slice.GetRange(i, Math.Min(batchSize, slice.Count - i));
                     for (var k = 0; k < batch.Count; k++) batch[k].Sequence = (ulong)(i + k + 1);
-                    envelopes[p].Add(IngestProtocol.EncodeBatch(id, batch, gzip: true));
+                    envelopes[p].Add(IngestProtocol.EncodeBatch(id, batch, gzip: true, encoding: encoding));
                 }
             }
             var serverRoot = Path.Combine(Path.GetTempPath(), "latticelog-ingest-bench", Guid.NewGuid().ToString("N"));
@@ -110,7 +110,7 @@ public static class IngestBench
                 var k = 0;
                 while (!stopReaders.IsCancellationRequested)
                 {
-                    var path = k++ % 2 == 0 ? "/v1/search?ns=default&where=" + Uri.EscapeDataString("attributes.quantity = 3") + "&limit=100&desc=true&order=desc" : "/v1/stats?ns=default&by=event";
+                    var path = k++ % 2 == 0 ? "/v1/search?ns=default&where=" + Uri.EscapeDataString("attr.quantity = 3") + "&limit=100&desc=true&order=desc" : "/v1/stats?ns=default&by=event";
                     var t = Stopwatch.StartNew();
                     using var resp = await rhttp.GetAsync(path);
                     if (resp.StatusCode == System.Net.HttpStatusCode.NotFound) { await Task.Delay(5); continue; } // namespace not created yet

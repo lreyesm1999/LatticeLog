@@ -27,7 +27,7 @@ public sealed class EventGenerator : IIncrementalGenerator
     internal static readonly DiagnosticDescriptor InvalidSignature = new("LL0004", "Invalid event method", "Event method '{0}' must be 'static partial void', in a partial type, with an ILatticeLogger as first parameter: {1}", "LatticeLog", DiagnosticSeverity.Error, true);
     internal static readonly DiagnosticDescriptor InvalidName = new("LL0005", "Invalid event name or id", "Event '{0}': {1}", "LatticeLog", DiagnosticSeverity.Error, true);
     internal static readonly DiagnosticDescriptor NameConflict = new("LL0006", "Event id reused with another name", "Event id {0} is used with names '{1}' and '{2}'; ids must keep a stable identity", "LatticeLog", DiagnosticSeverity.Error, true);
-    internal static readonly DiagnosticDescriptor SchemaChanged = new("LL0007", "Incompatible schema change", "Event {0} v{1} differs from {2}: {3}. Bump Version for incompatible changes", "LatticeLog", DiagnosticSeverity.Error, true);
+    internal static readonly DiagnosticDescriptor SchemaChanged = new("LL0007", "Incompatible schema change", "Event {0} v{1} differs from {2}: {3}. Bump Version for incompatible changes.", "LatticeLog", DiagnosticSeverity.Error, true);
 
     private static readonly Regex NameRegex = new("^[a-z0-9][a-z0-9_.\\-]{0,199}$", RegexOptions.CultureInvariant);
 

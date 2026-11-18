@@ -21,4 +21,9 @@
     <InternalsVisibleTo Include="LatticeLog.Tests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Web console (P23): static files embedded in the assembly, served at /ui. -->
+    <EmbeddedResource Include="ui\**" LogicalName="ui/%(Filename)%(Extension)" />
+  </ItemGroup>
+
 </Project>

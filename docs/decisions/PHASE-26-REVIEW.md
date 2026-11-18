@@ -1,14 +1,11 @@
 # PHASE-26-REVIEW — Calidad, caos y certificación interna
 
-- Estado: **NOT STARTED (prácticas transversales iniciadas)**
-- Fecha y versión/commit: 2026-11-18 · 0.1.0-alpha.1 (working tree, sin commits)
-- PRs e issues cerrados: ninguno (no existe repositorio remoto ni tracker; IDs de tarea según docs/PLAN-MAESTRO.md)
-- Entregables verificados: propiedades, fuzzing básico, inyección de fallos, golden files
-- Evidencia de tests: 90 pruebas
-- Evidencia de benchmarks: —
-- Seguridad/compatibilidad: —
-- Hipótesis aceptadas/refutadas: —
-- Limitaciones abiertas: fase de certificación completa pendiente
-- ADRs nuevas: ver docs/decisions/ADR-*.md
-- Riesgos residuales: R20
-- Decisión: —
+- Estado: **NOT PASSED** (prácticas transversales activas; sin CI ejecutado ni hardware estable)
+- Fecha: 2026-11-18
+- Hecho: suite de pruebas de invariantes (caída real del proceso, redes con pérdidas, deduplicación, corrupción,
+  retención, borrado, backup, aislamiento entre tenants), fuzz del cuerpo binario de ingestión, lector independiente en
+  Python sobre archivos congelados y benchmarks con Loghub-2.0.
+- Hallazgo que bloquea T06, T07 y T14: el equipo de referencia corrompe memoria bajo carga multinúcleo; todas las
+  mediciones con concurrencia se hicieron con 4 CPUs.
+- Pendiente: CI en Linux/macOS (T06, T10), fuzzing continuo (T03), performance budgets en CI (T15), benchmark
+  metodológico publicado (T14), evaluación externa AI-friendly (T13).

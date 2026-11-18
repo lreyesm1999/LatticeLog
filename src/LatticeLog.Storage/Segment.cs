@@ -314,7 +314,7 @@ public sealed class SegmentReader : IDisposable
         return (h, Decompress(h, payload));
     }
 
-    private static byte[] Decompress(FrameHeader h, byte[] payload)
+    internal static byte[] Decompress(FrameHeader h, byte[] payload)
     {
         if (h.Compression == Compression.None) return payload;
         var output = new byte[h.DecodedLength];
