@@ -119,7 +119,8 @@ public class ServerApiTests
     [Fact]
     public async Task Signed_cursors_page_through_everything_and_reject_tampering_borrowing_and_expiry()
     {
-        await using var server = await Start(TestData.TempDir(), new QueryLimits { CursorTtl = TimeSpan.FromSeconds(1) });
+        // Paging, tampering and borrowing with the default cursor lifetime: a slow page must not expire the next cursor.
+        await using var server = await Start(TestData.TempDir());
         await Ingest(server.BaseAddress, "acme-w", Orders(1_050, "acme-orders"));
 
         var seen = new HashSet<long>();
@@ -144,8 +145,14 @@ public class ServerApiTests
         var borrowed = await Get(server.BaseAddress, $"/v1/search?ns={Q("acme/prod")}&limit=10&cursor={Q(c)}", "acme-r2");
         Assert.Equal(HttpStatusCode.BadRequest, borrowed.Status);
         Assert.Contains("signature", (string?)borrowed.Json!["message"]);
+
+        // Expiry on a server whose cursors live 1 s. Waiting longer than planned only makes the cursor more expired, so
+        // a slow machine cannot make this flaky.
+        await using var shortLived = await Start(TestData.TempDir(), new QueryLimits { CursorTtl = TimeSpan.FromSeconds(1) });
+        await Ingest(shortLived.BaseAddress, "acme-w", Orders(100, "acme-orders"));
+        var soon = (string)(await Get(shortLived.BaseAddress, $"/v1/search?ns={Q("acme/prod")}&limit=10", "acme-r")).Json!["coverage"]!["next_cursor"]!;
         await Task.Delay(2_100);
-        var expired = await Get(server.BaseAddress, $"/v1/search?ns={Q("acme/prod")}&limit=10&cursor={Q(c)}", "acme-r");
+        var expired = await Get(shortLived.BaseAddress, $"/v1/search?ns={Q("acme/prod")}&limit=10&cursor={Q(soon)}", "acme-r");
         Assert.Equal(HttpStatusCode.BadRequest, expired.Status);
         Assert.Contains("expired", (string?)expired.Json!["message"]);
     }
