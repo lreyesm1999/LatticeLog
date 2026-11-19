@@ -1,4 +1,4 @@
-﻿// LatticeLog example: an "inventory/orders" workload with typed events, operations and one injected incident.
+// LatticeLog example: an "inventory/orders" workload with typed events, operations and one injected incident.
 // Usage: dotnet run --project examples/dotnet-console -- <store-dir> [orders=2000] [durability=Balanced]
 using System.Diagnostics;
 using LatticeLog;

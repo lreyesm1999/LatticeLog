@@ -67,8 +67,9 @@ public class ReplicationTests
         Assert.Equal("ingest", sample.Context.Parent!.Name);
         Assert.Equal(producer, sample.Context.Parent.Attributes[0].Value.AsString());
         Assert.Equal(3_000UL, replica.Ingest("acme/prod").CommittedThrough(producer)); // learned from upstream provenance
-        var status = Assert.Single(primary.ReplicationStatus!);
-        Assert.Equal(3_000UL, status.ReplicatedThrough);
+        // The replica stores a batch before its acknowledgement reaches the primary, so the primary's view can trail
+        // by one batch for a moment: wait for it rather than sampling it once.
+        await WaitFor(() => Assert.Single(primary.ReplicationStatus!).ReplicatedThrough == 3_000UL, "replication status");
 
         // The primary dies; the producer, which also lost its cursor, switches to the replica and resends everything.
         await primary.AbortAsync();

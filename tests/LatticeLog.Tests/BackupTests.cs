@@ -8,7 +8,10 @@ public class BackupTests
     private static List<LogRecord> Batch(int start, int n)
         => Enumerable.Range(start, n).Select(i => new LogRecord
         {
-            Severity = Severity.Info, EventName = "tick", Attributes = [new("i", i)], TimestampUnixNanos = 1_800_000_000_000_000_000L + i,
+            Severity = Severity.Info,
+            EventName = "tick",
+            Attributes = [new("i", i)],
+            TimestampUnixNanos = 1_800_000_000_000_000_000L + i,
         }).ToList();
 
     [Fact]

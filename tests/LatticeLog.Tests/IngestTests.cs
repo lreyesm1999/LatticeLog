@@ -96,8 +96,13 @@ public class IngestTests
         var faults = new FaultHandler(failBefore: 0.2, dropResponse: 0.2, delay: 0.1, seed: 7);
         await using (var fwd = Forwarder.Start(local, new ForwarderOptions
         {
-            Endpoint = collector.BaseAddress, Token = Secret, MaxBatchRecords = 700, Handler = faults,
-            RetryBase = TimeSpan.FromMilliseconds(2), RetryMax = TimeSpan.FromMilliseconds(20), PollInterval = TimeSpan.FromMilliseconds(10),
+            Endpoint = collector.BaseAddress,
+            Token = Secret,
+            MaxBatchRecords = 700,
+            Handler = faults,
+            RetryBase = TimeSpan.FromMilliseconds(2),
+            RetryMax = TimeSpan.FromMilliseconds(20),
+            PollInterval = TimeSpan.FromMilliseconds(10),
         }))
         {
             Assert.True(await fwd.WaitForAsync(last, TimeSpan.FromSeconds(60)), $"state {fwd.State}, committed {fwd.CommittedThrough}, error {fwd.LastError}");

@@ -393,7 +393,10 @@ public static class Program
         if (a.Format == "json")
             Console.WriteLine(new JsonObject
             {
-                ["group_by"] = res.GroupBy, ["total"] = res.Total, ["from_index_only"] = res.UsedIndexOnly, ["partial"] = res.Partial,
+                ["group_by"] = res.GroupBy,
+                ["total"] = res.Total,
+                ["from_index_only"] = res.UsedIndexOnly,
+                ["partial"] = res.Partial,
                 ["groups"] = new JsonArray(res.Groups.Select(g => (JsonNode?)new JsonObject { ["key"] = g.Key, ["count"] = g.Count }).ToArray()),
             }.ToJsonString());
         else
@@ -442,11 +445,19 @@ public static class Program
         if (a.Format == "json")
             Console.WriteLine(new JsonObject
             {
-                ["ok"] = ok, ["segments"] = segments, ["records"] = records, ["bytes_read"] = report.BytesRead, ["elapsed_ms"] = Math.Round(sw.Elapsed.TotalMilliseconds, 1),
+                ["ok"] = ok,
+                ["segments"] = segments,
+                ["records"] = records,
+                ["bytes_read"] = report.BytesRead,
+                ["elapsed_ms"] = Math.Round(sw.Elapsed.TotalMilliseconds, 1),
                 ["issues"] = new JsonArray(report.Issues.Select(i => (JsonNode?)new JsonObject
                 {
-                    ["kind"] = i.Kind.ToString(), ["file"] = Path.GetFileName(i.File), ["offset"] = i.Offset, ["length"] = i.Length,
-                    ["message"] = i.Message, ["lost_records"] = i.LostRecords,
+                    ["kind"] = i.Kind.ToString(),
+                    ["file"] = Path.GetFileName(i.File),
+                    ["offset"] = i.Offset,
+                    ["length"] = i.Length,
+                    ["message"] = i.Message,
+                    ["lost_records"] = i.LostRecords,
                 }).ToArray()),
                 ["manifest_problems"] = new JsonArray(manifestProblems.Select(p => (JsonNode?)JsonValue.Create(p)).ToArray()),
             }.ToJsonString(Indented));
@@ -519,8 +530,13 @@ public static class Program
                 ["bytes"] = result.Bytes,
                 ["deleted"] = new JsonArray(result.Deleted.Select(d => (JsonNode?)new JsonObject
                 {
-                    ["segment_id"] = d.SegmentId, ["reason"] = d.Reason, ["records"] = d.Records, ["bytes"] = d.Bytes,
-                    ["first_seq"] = d.FirstSequence, ["last_seq"] = d.LastSequence, ["max_time"] = UnixTime.FormatRfc3339(d.MaxTimestampUnixNanos),
+                    ["segment_id"] = d.SegmentId,
+                    ["reason"] = d.Reason,
+                    ["records"] = d.Records,
+                    ["bytes"] = d.Bytes,
+                    ["first_seq"] = d.FirstSequence,
+                    ["last_seq"] = d.LastSequence,
+                    ["max_time"] = UnixTime.FormatRfc3339(d.MaxTimestampUnixNanos),
                 }).ToArray()),
             }.ToJsonString(Indented));
         else

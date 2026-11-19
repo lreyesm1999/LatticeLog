@@ -179,17 +179,23 @@ public static class BatchDecoder
         if (decoded.Length > limits.MaxDecodedBytes) throw new IngestException(413, "too_large", "decoded body too large");
         CheckLineLengths(decoded, limits.MaxLineBytes);
 
-        List<LogRecord> records;
-        if (encoding == IngestProtocol.EncodingLlog)
-        {
-            records = DecodeLlogBody(decoded, (int)count);
-        }
-        else
+        var records = encoding == IngestProtocol.EncodingLlog
+            ? DecodeLlogBody(decoded, (int)count)
+            : DecodeJsonlBody(decoded, count, producer);
+        if (records.Count != count) throw new IngestException(400, "invalid_batch", $"declared {count} records, body has {records.Count}");
+        for (var i = 0; i < records.Count; i++)
+            if (records[i].Sequence != first + (ulong)i) throw new IngestException(400, "invalid_batch", "record sequences do not match the envelope range");
+        return new DecodedBatch(producer, first, last, (flags & IngestProtocol.FlagGapAcknowledged) != 0, records);
+    }
+
+    /// <summary>JSONL body: strict UTF-8, never more records than the envelope declares, same producer as the envelope.</summary>
+    private static List<LogRecord> DecodeJsonlBody(byte[] decoded, uint count, string producer)
+    {
         try
         {
             var reader = new JsonlExchangeReader();
             using var text = new StreamReader(new MemoryStream(decoded), new UTF8Encoding(false, true));
-            records = [];
+            var records = new List<LogRecord>();
             foreach (var r in reader.Read(text))
             {
                 if (records.Count >= count) throw new IngestException(400, "invalid_batch", "more records than declared");
@@ -197,13 +203,10 @@ public static class BatchDecoder
             }
             if (reader.StoreId is { } sid && !string.Equals(sid, producer, StringComparison.OrdinalIgnoreCase))
                 throw new IngestException(400, "invalid_batch", "body store_id differs from the envelope producer");
+            return records;
         }
         catch (FormatException ex) { throw new IngestException(400, "decode_failed", ex.Message); }
         catch (DecoderFallbackException ex) { throw new IngestException(400, "decode_failed", "body is not valid UTF-8: " + ex.Message); }
-        if (records.Count != count) throw new IngestException(400, "invalid_batch", $"declared {count} records, body has {records.Count}");
-        for (var i = 0; i < records.Count; i++)
-            if (records[i].Sequence != first + (ulong)i) throw new IngestException(400, "invalid_batch", "record sequences do not match the envelope range");
-        return new DecodedBatch(producer, first, last, (flags & IngestProtocol.FlagGapAcknowledged) != 0, records);
     }
 
     /// <summary>Binary body: every length and count is bounded by the reader; any inconsistency is a 400, never a crash.</summary>

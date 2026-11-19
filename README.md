@@ -300,7 +300,7 @@ Requires the .NET SDK pinned in [`global.json`](global.json) and Python 3.10+ fo
 
 ## Contributing
 
-Issues and pull requests are welcome. Read [`CONTRIBUTING.md`](CONTRIBUTING.md) first. Format changes need a spec update, new golden files and a pass of the independent reader. Report vulnerabilities privately as described in [`SECURITY.md`](SECURITY.md).
+Issues and pull requests are welcome. Read [`CONTRIBUTING.md`](CONTRIBUTING.md) first. Format changes need a spec update, new golden files and a pass of the independent reader. Participation follows the [Code of Conduct](CODE_OF_CONDUCT.md). Report vulnerabilities privately as described in [`SECURITY.md`](SECURITY.md).
 
 ## License
 

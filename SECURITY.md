@@ -1,12 +1,25 @@
-# Política de seguridad
+# Security Policy
 
-Estado: proyecto en alpha (`0.1.0-alpha.1`), sin versiones soportadas en producción.
+## Supported versions
 
-- **Reporte de vulnerabilidades**: usa el reporte privado de GitHub (pestaña *Security* → *Report a vulnerability*)
-  en `lreyesm1999/LatticeLog`. No publiques detalles en issues públicos. Respuesta orientativa: acuse en 3 días
-  hábiles; corrección o mitigación de severidad alta en 30 días.
-- Superficies y controles actuales: `docs/security/threat-model.md`.
-- Principios: no registrar secretos por defecto (redacción antes de persistir), tratar todo texto de logs como no
-  confiable en las salidas, herramientas externas de solo lectura, sin criptografía propia.
-- Pendiente antes de manejar datos de terceros: SAST/SCA/secret scanning en CI, fuzzing continuo, revisión independiente
-  y pentest (P18-T14, P18-T16), proceso de CVE y parches (P18-T15).
+LatticeLog is in alpha (`0.1.0-alpha.1`). Fixes land on `main`. No released version is supported for production use yet.
+
+## Reporting a vulnerability
+
+Please **do not open a public issue**. Report privately through GitHub instead: open the **Security** tab of [lreyesm1999/LatticeLog](https://github.com/lreyesm1999/LatticeLog/security) and choose **Report a vulnerability**.
+
+Include the affected component (SDK, `.llog` reader, ingest protocol, server API, console, MCP), the version or commit, and steps to reproduce.
+
+What to expect:
+- acknowledgement within **3 business days**;
+- a fix or mitigation for high-severity issues within **30 days**;
+- credit in the advisory, unless you prefer to stay anonymous.
+
+## Scope and design principles
+
+- **Secrets**: they are not logged by default. Redaction happens before data is persisted.
+- **Untrusted log text**: log text is treated as untrusted in every output. The web console renders it as text only under a strict CSP, and evidence documents mark which fields were copied from logs.
+- **External tools**: they get read-only access (MCP, `read` scope).
+- **Cryptography**: no home-made cryptography (HMAC-SHA256 cursors, SHA-256 token hashes, TLS required off loopback).
+
+The current threat model and the known gaps are in [`docs/security/threat-model.md`](docs/security/threat-model.md). Known gaps include encryption at rest and an external penetration test, which has not been done yet.

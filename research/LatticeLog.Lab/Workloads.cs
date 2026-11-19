@@ -51,7 +51,13 @@ public static class Workloads
             var status = r.Next(100) switch { < 90 => 200, < 95 => 404, < 99 => 400, _ => 500 };
             var rec = new LogRecord
             {
-                TimestampUnixNanos = t, Severity = Severity.Info, Event = req, Context = res, TraceId = Trace(r), SpanId = Span(r), TraceFlags = 1,
+                TimestampUnixNanos = t,
+                Severity = Severity.Info,
+                Event = req,
+                Context = res,
+                TraceId = Trace(r),
+                SpanId = Span(r),
+                TraceFlags = 1,
                 Attributes = [new("method", methods[r.Next(methods.Length)]), new("route", route), new("status", (long)status), new("elapsed_ms", Math.Round(r.NextDouble() * 120, 3)),
                     new("client_ip", $"10.0.{r.Next(4)}.{r.Next(1, 255)}"), new("user_agent", agents[r.Next(agents.Length)])],
             };
@@ -60,7 +66,12 @@ public static class Workloads
             {
                 list.Add(new LogRecord
                 {
-                    TimestampUnixNanos = t + 1000, Severity = Severity.Error, Event = err, Context = res, TraceId = rec.TraceId, SpanId = rec.SpanId,
+                    TimestampUnixNanos = t + 1000,
+                    Severity = Severity.Error,
+                    Event = err,
+                    Context = res,
+                    TraceId = rec.TraceId,
+                    SpanId = rec.SpanId,
                     Attributes = [new("route", route), new("status", 500L)],
                     Exception = new ExceptionInfo("System.NullReferenceException", "Object reference not set to an instance of an object.",
                         "   at Api.Controllers.ItemsController.Get(Int32 id) in /src/Api/ItemsController.cs:line 42\n   at Microsoft.AspNetCore.Mvc.Infrastructure.ActionMethodExecutor.Execute()", []),
@@ -204,8 +215,14 @@ public static class Workloads
                 var failing = fail && hop == 2;
                 list.Add(new LogRecord
                 {
-                    TimestampUnixNanos = t, Severity = failing ? Severity.Error : Severity.Info, Event = span, Context = svcs[hop], TraceId = trace, SpanId = Span(r),
-                    OperationId = hop == 0 ? root : root + "/" + hop, ParentOperationId = hop == 0 ? null : (hop == 1 ? root : root + "/" + (hop - 1)),
+                    TimestampUnixNanos = t,
+                    Severity = failing ? Severity.Error : Severity.Info,
+                    Event = span,
+                    Context = svcs[hop],
+                    TraceId = trace,
+                    SpanId = Span(r),
+                    OperationId = hop == 0 ? root : root + "/" + hop,
+                    ParentOperationId = hop == 0 ? null : (hop == 1 ? root : root + "/" + (hop - 1)),
                     Attributes = [new("peer", hop + 1 < svcs.Length ? svcs[hop + 1].ServiceName : "smtp"), new("rpc", "Handle"), new("status", failing ? "DEADLINE_EXCEEDED" : "OK"), new("elapsed_ms", Math.Round(r.NextDouble() * 30, 3))],
                 });
                 if (failing) { if (gt.Count < 5) gt.Add(trace.ToString()); break; }
@@ -225,7 +242,11 @@ public static class Workloads
             t += r.Next(1_000, 500_000);
             var rec = new LogRecord
             {
-                TimestampUnixNanos = t, Severity = Severity.Info, EventName = "event.tracked", Context = res, TraceId = Trace(r),
+                TimestampUnixNanos = t,
+                Severity = Severity.Info,
+                EventName = "event.tracked",
+                Context = res,
+                TraceId = Trace(r),
                 Attributes = [new("user_id", Value.From(new Guid(BytesOf(r, 16)))), new("session", Convert.ToHexString(BytesOf(r, 12))), new("value", r.NextDouble()), new("hash", Convert.ToBase64String(BytesOf(r, 24)))],
             };
             list.Add(rec);

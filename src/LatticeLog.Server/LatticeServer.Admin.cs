@@ -193,7 +193,11 @@ public sealed partial class LatticeServer
                 ["records"] = records,
                 ["issues"] = new JsonArray(report.Issues.Select(i => (JsonNode?)new JsonObject
                 {
-                    ["kind"] = i.Kind.ToString(), ["file"] = Path.GetFileName(i.File), ["offset"] = i.Offset, ["message"] = i.Message, ["lost_records"] = i.LostRecords,
+                    ["kind"] = i.Kind.ToString(),
+                    ["file"] = Path.GetFileName(i.File),
+                    ["offset"] = i.Offset,
+                    ["message"] = i.Message,
+                    ["lost_records"] = i.LostRecords,
                 }).ToArray()),
             }).ConfigureAwait(false);
         }

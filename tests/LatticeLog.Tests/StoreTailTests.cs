@@ -9,7 +9,9 @@ public class StoreTailTests
     private static List<LogRecord> Batch(long first, int n)
         => Enumerable.Range(0, n).Select(i => new LogRecord
         {
-            Severity = Severity.Info, EventName = "e" + ((first + i) % 7), Attributes = [new("n", first + i)],
+            Severity = Severity.Info,
+            EventName = "e" + ((first + i) % 7),
+            Attributes = [new("n", first + i)],
             TimestampUnixNanos = 1_700_000_000_000_000_000 + first + i,
             Context = new ContextSnapshot(ContextKind.Resource, null, [new("service.name", "svc" + ((first + i) % 3))], null),
         }).ToList();

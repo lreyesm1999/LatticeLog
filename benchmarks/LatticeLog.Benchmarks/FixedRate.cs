@@ -34,13 +34,13 @@ public static class FixedRate
         foreach (var (sink, mode) in new[] { ("store", DurabilityMode.Balanced), ("store", DurabilityMode.Durable), ("null", DurabilityMode.Balanced) })
             foreach (var producers in new[] { 1, 4 })
                 foreach (var rate in rates)
-                for (var rep = 0; rep < repeat; rep++)
-                {
-                    if (only is not null && only != $"{sink}-{mode}-{producers}") continue;
-                    var r = Measure(sink, mode, producers, rate, seconds, warmup);
-                    results.Add(r);
-                    Console.WriteLine(Row(r));
-                }
+                    for (var rep = 0; rep < repeat; rep++)
+                    {
+                        if (only is not null && only != $"{sink}-{mode}-{producers}") continue;
+                        var r = Measure(sink, mode, producers, rate, seconds, warmup);
+                        results.Add(r);
+                        Console.WriteLine(Row(r));
+                    }
 
         Directory.CreateDirectory(outDir);
         var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
@@ -116,7 +116,10 @@ public static class FixedRate
             : new NullSink();
         var logger = new LatticeLogger(sink, new LatticeLoggerOptions
         {
-            Durability = mode, FlushOnProcessExit = false, BalancedFsyncBytes = FsyncBytes, QueueCapacity = Queue,
+            Durability = mode,
+            FlushOnProcessExit = false,
+            BalancedFsyncBytes = FsyncBytes,
+            QueueCapacity = Queue,
             InternalDiagnostics = Diag ? Note : null,
         });
         try
@@ -157,7 +160,8 @@ public static class FixedRate
                 behind[p] = Math.Max(0, Stopwatch.GetTimestamp() - end) / (double)Stopwatch.Frequency;
                 service[p] = s;
                 response[p] = rsp;
-            }) { IsBackground = true, Priority = ThreadPriority.AboveNormal }).ToList();
+            })
+            { IsBackground = true, Priority = ThreadPriority.AboveNormal }).ToList();
             foreach (var t in threads) t.Start();
             clock.Restart();
             wallStart = DateTime.UtcNow;

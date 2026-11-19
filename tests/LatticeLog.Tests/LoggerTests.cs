@@ -63,7 +63,10 @@ public class LoggerTests
         var sink = new MemorySink { Delay = 50 };
         var logger = new LatticeLogger(sink, new LatticeLoggerOptions
         {
-            QueueCapacity = 16, BatchMaxRecords = 4, Saturation = SaturationPolicy.DropNewest, FlushOnProcessExit = false,
+            QueueCapacity = 16,
+            BatchMaxRecords = 4,
+            Saturation = SaturationPolicy.DropNewest,
+            FlushOnProcessExit = false,
         });
         var accepted = 0;
         for (var i = 0; i < 500; i++) if (logger.Info("x")) accepted++;
@@ -101,8 +104,12 @@ public class LoggerTests
         var sink = new MemorySink();
         var logger = new LatticeLogger(sink, new LatticeLoggerOptions
         {
-            QueueCapacity = 16, BatchMaxRecords = 2, Saturation = SaturationPolicy.Block, Durability = DurabilityMode.Fast,
-            BatchMaxDelay = TimeSpan.FromMilliseconds(1), FlushOnProcessExit = false,
+            QueueCapacity = 16,
+            BatchMaxRecords = 2,
+            Saturation = SaturationPolicy.Block,
+            Durability = DurabilityMode.Fast,
+            BatchMaxDelay = TimeSpan.FromMilliseconds(1),
+            FlushOnProcessExit = false,
         });
         const int producers = 8, perProducer = 20_000;
         var tasks = Enumerable.Range(0, producers).Select(t => Task.Run(() =>

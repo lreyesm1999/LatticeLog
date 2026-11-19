@@ -23,7 +23,7 @@ public class BackgroundDurabilityTests
         Assert.True(w.RequestBackgroundFsync());
         var sw = Stopwatch.StartNew();
         for (var i = 0; i < 20; i++) w.WriteBatch(Batch(2 + i, 100)); // keeps writing while the fsync hangs
-        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(2), $"writes blocked behind a background fsync: {sw.Elapsed}");
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(8), $"writes blocked behind a background fsync: {sw.Elapsed}"); // the fsync hangs 10 s
         Assert.Equal(0UL, w.DurableSequence); // nothing claimed durable while the fsync is in flight
         release.Set();
         var deadline = Stopwatch.StartNew();
@@ -37,16 +37,24 @@ public class BackgroundDurabilityTests
     public void Rotation_seals_in_background_and_explicit_flush_waits_for_pending_seals()
     {
         var root = TestData.TempDir();
+        using var gate = new ManualResetEventSlim(); // outlives the writer: its final seal on Dispose still runs the hook
         using (var w = StoreWriter.Open(root, new StoreWriterOptions { MinFreeDiskBytes = 0, SegmentMaxBytes = 20_000 }))
         {
+            // Every seal blocks until the gate opens. If rotation sealed inline, the writes below could not finish
+            // with the gate closed (each seal would wait the full 10 s), so finishing proves the seals are deferred.
+            // No wall-clock budget: the assertion does not depend on how fast the machine is.
             var sealsStarted = 0;
-            w.DurabilityFaultInjection = kind => { if (kind == "seal") { Interlocked.Increment(ref sealsStarted); Thread.Sleep(50); } };
-            var sw = Stopwatch.StartNew();
+            w.DurabilityFaultInjection = kind =>
+            {
+                if (kind != "seal") return;
+                Interlocked.Increment(ref sealsStarted);
+                gate.Wait(TimeSpan.FromSeconds(10));
+            };
             for (var i = 0; i < 20; i++) w.WriteBatch(Batch(10 + i, 100));
-            var writeTime = sw.Elapsed;
             Assert.True(w.SegmentsSealed > 2);
-            // The writer did not pay ~50 ms per seal.
-            Assert.True(writeTime < TimeSpan.FromMilliseconds(50 * w.SegmentsSealed), $"seals ran inline: {writeTime} for {w.SegmentsSealed} rotations");
+            Assert.True(Volatile.Read(ref sealsStarted) <= 1, "the writer waited for seals it should have handed off");
+            Assert.True(w.PendingDurabilityWork > 0, "rotations should still be queued behind the blocked seal");
+            gate.Set();
             Assert.Equal(AckLevel.FsyncConfirmed, w.Flush(AckLevel.FsyncConfirmed));
             Assert.Equal(0, w.PendingDurabilityWork);
             Assert.Equal(w.SegmentsSealed, Volatile.Read(ref sealsStarted));
@@ -112,8 +120,11 @@ public class BackgroundDurabilityTests
         store.DurabilityFaultInjection = _ => release.Wait(TimeSpan.FromSeconds(10));
         await using var logger = new LatticeLogger(store, new LatticeLoggerOptions
         {
-            Durability = DurabilityMode.Balanced, BalancedFsyncInterval = TimeSpan.FromMilliseconds(1),
-            QueueCapacity = 1024, BatchMaxRecords = 64, FlushOnProcessExit = false,
+            Durability = DurabilityMode.Balanced,
+            BalancedFsyncInterval = TimeSpan.FromMilliseconds(1),
+            QueueCapacity = 1024,
+            BatchMaxRecords = 64,
+            FlushOnProcessExit = false,
         });
         for (var i = 0; i < 20_000; i++) logger.Info("x", new LogAttribute("i", i)); // ~20 queue capacities
         var written = await logger.FlushAsync(AckLevel.WrittenToOs);
