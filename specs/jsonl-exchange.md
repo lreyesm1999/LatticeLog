@@ -14,3 +14,9 @@ Typed values:
   `{"$dec":"..."}` (scale preserved), `{"$utf16le":"<base64>"}` (strings with unpaired surrogates),
   `{"$map":[[k,v],...]}` (ordered, duplicates allowed).
 - Attributes are `[[key, value], ...]`. Times are RFC 3339 with 9 fractional digits, UTC.
+
+Local mode: the Python SDK's `latticelog.open(folder, ...)` writes these documents directly, one file per process
+folder and rotation, each starting with its own header and context lines; records carry a dense `seq` per process
+folder. See [local-sources.md](local-sources.md). `JsonlExchangeReader.ReadLine` parses one line with the definitions
+seen so far, so an incremental reader can resume after an offset (re-feeding the saved header/context lines) and keep a
+malformed line as a text record instead of losing the rest of the file.

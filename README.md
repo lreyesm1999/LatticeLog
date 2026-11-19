@@ -49,7 +49,7 @@
 | `42`, `"42"` and `42.0` all end up as text; searching means `grep` and regexes. | Every attribute keeps its type: `long`, `decimal`, UUID, timestamp, bytes, maps. |
 | The same JSON keys are repeated millions of times; filtering one hour of errors means decompressing and parsing everything. | Columnar blocks with a key catalog; time/severity/service/trace indexes skip whole blocks. |
 | Results are silently truncated, sampled or incomplete. | Each response states its **coverage**: segments scanned, partial or not and why, storage issues found. |
-| Handing context to a teammate or an AI means copy-pasting fragments. | **Context Packs** and a **read-only MCP server** with references back to every source record. |
+| Handing context to a teammate or an AI means copy-pasting fragments. | **Context Packs** and an **MCP server** that finds logs **by service name**, with references back to every source record. |
 | Retries can duplicate or lose data. | Each record carries `(producer, sequence)`: retries are idempotent, and an ACK reports the durability actually reached. |
 | Your data is locked into a vendor's storage. | Documented format, independent reader, and a lossless export to `latticelog.jsonl` or OTLP. |
 
@@ -160,6 +160,35 @@ Keep your code: reference `src/LatticeLog.Extensions.Logging` as well and regist
 builder.Logging.AddLatticeLog(LatticeLogger.CreateLocal("./logs"));
 ```
 
+### Python services, old log files and your AI tools
+
+A Python service writes LatticeLog's own format into its own folder, with no server: one line for the folder and one
+for structlog ([`sdks/python`](sdks/python)).
+
+```python
+log = latticelog.open("logs/orders-api", service="orders-api", environment="dev")
+structlog.configure(processors=[..., latticelog.structlog_processor(log), structlog.dev.ConsoleRenderer()])
+```
+
+Register the folder that holds your services once (or list them in a project [`latticelog.toml`](specs/local-sources.md#project-file-latticelogtoml-optional)),
+connect your AI client, and ask about a service **by name**: no paths, no formats.
+
+```bash
+latticelog roots add ./logs                      # per-user; .NET stores under it are found too
+latticelog mcp install --client claude-code      # or claude-desktop, cursor, vscode (asks before overwriting)
+latticelog sources                               # orders-api  python-local  12,840 records ...
+```
+
+Old text or JSON logs are converted only when you ask (the MCP tools `preview_migration` and `migrate_logs`, or the
+CLI). The originals are never modified, moved or deleted; re-running imports only new lines.
+
+```bash
+latticelog allow add D:/old-service/logs
+latticelog migrate "D:/old-service/logs/app.log*" --name legacy-app   # 378 MB structlog file -> 7.9 MB, 1,762,702 records
+```
+
+The whole flow, scripted end to end: [`examples/developer-flow`](examples/developer-flow).
+
 ---
 
 ## Try It on Demo Data
@@ -244,7 +273,13 @@ latticelog errors  ./logs --since 24h --top 10
 latticelog context ./logs --where "level >= WARN" --budget-bytes 32000 --format json
 latticelog export  ./logs --format llog-jsonl --output logs.jsonl
 latticelog verify  ./logs                       # exit code 3 when integrity issues are found
-latticelog mcp     ./logs                       # read-only MCP server over stdio
+latticelog mcp     ./logs                       # read-only MCP server over stdio, bound to one store
+latticelog mcp                                  # MCP server over every source, found by name
+latticelog sources                              # list sources (Python folders are indexed first)
+latticelog roots   add ./services               # per-user folders searched for sources
+latticelog migrate ./old/app.log --preview      # what a migration would keep, nothing written
+latticelog migrate "./old/app.log*" --name legacy-app [--follow]
+latticelog mcp install --client claude-desktop  # merge LatticeLog into an MCP client's config
 ```
 
 - A small [query language](specs/query-language.md) with fields, attributes (`attr.name`), time ranges and traces. `--explain` shows which indexes pruned the scan.
@@ -324,12 +359,14 @@ src/
   LatticeLog.Server               latticelog-server library (API, admin, replication, console)
   LatticeLog.ServerHost           latticelog-server executable
   LatticeLog.Cli                  latticelog CLI (also a dotnet tool, trimming/AOT-ready)
-  LatticeLog.Mcp                  read-only MCP server
+  LatticeLog.Sources              sources by name: roots, latticelog.toml, Python index, migration
+  LatticeLog.Mcp                  MCP server (read tools over sources, opt-in migration)
   LatticeLog.OpenTelemetry        OTLP/JSON and importers
   LatticeLog.Extensions.Logging   Microsoft.Extensions.Logging bridge
 sdks/python  sdks/php            SDKs for other languages
 specs/                           normative specs (format, ingest protocol, server API, query language)
 examples/dotnet-console          demo workload with an injected incident
+examples/developer-flow          structlog service + migrated legacy log, asked over MCP by name
 tools/pyllog                     independent Python reader of the format
 deploy/                          server Dockerfile and its HTTPS smoke test
 tests/  benchmarks/  research/  reports/  scripts/
@@ -343,6 +380,7 @@ tests/  benchmarks/  research/  reports/  scripts/
 |---|---|
 | Master plan (phases P00–P28, tasks and gates) | [`docs/MASTER-PLAN.md`](docs/MASTER-PLAN.md) |
 | Format, protocol, server API, query language | [`specs/`](specs) |
+| Sources by name, Python local mode, migration, MCP setup | [`specs/local-sources.md`](specs/local-sources.md) |
 | Deploying a single node | [`docs/deploy/single-node.md`](docs/deploy/single-node.md) |
 | Operations, SLIs, alerts, backup, runbooks | [`docs/operations/runbook.md`](docs/operations/runbook.md) |
 | Replication and failover | [`docs/operations/replication.md`](docs/operations/replication.md) |

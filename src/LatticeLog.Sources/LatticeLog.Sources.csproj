@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\LatticeLog.OpenTelemetry\LatticeLog.OpenTelemetry.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Description>LatticeLog sources: per-user roots, project latticelog.toml, discovery of service folders by name, incremental indexing of Python local-mode folders and safe migration of traditional log files.</Description>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="LatticeLog.Tests" />
+  </ItemGroup>
+
+</Project>

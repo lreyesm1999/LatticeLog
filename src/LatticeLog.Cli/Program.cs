@@ -54,7 +54,7 @@ public sealed class Args
         }
     }
 
-    private static readonly HashSet<string> Flags = ["follow", "no-index", "force", "stdout", "pretty", "help", "preserve-raw", "no-redact", "desc", "explain"];
+    private static readonly HashSet<string> Flags = ["follow", "no-index", "force", "stdout", "pretty", "help", "preserve-raw", "no-redact", "desc", "explain", "preview", "yes", "dry-run", "no-refresh"];
 
     public bool Has(string name) => _opts.ContainsKey(name);
     public string? Get(string name) => _opts.TryGetValue(name, out var v) ? v : null;
@@ -94,7 +94,12 @@ public static class Program
         ["export"] = "export <dir> --format llog-jsonl|otlp-json|raw (--output FILE | --stdout) [--where Q]",
         ["import"] = "import <dir> <file> --format llog-jsonl|otlp-json|jsonl|text [--service NAME] [--preserve-raw]",
         ["tail"] = "tail <dir> [--lines N] [--where Q] [--follow]",
-        ["mcp"] = "mcp <dir>                          Read-only MCP server over stdio for external tools.",
+        ["roots"] = "roots add|remove|list [<folder>]   Per-user folders searched for sources (service folders, .NET stores).",
+        ["allow"] = "allow add|remove|list [<folder>]   Extra folders whose log files may be previewed/migrated.",
+        ["sources"] = "sources [--project DIR] [--no-refresh] [--format json]   List sources by name (indexes Python folders first).",
+        ["migrate"] = "migrate <path|glob> --name <source> [--follow] | --preview   Convert traditional logs into a source; originals untouched.",
+        ["mcp"] = "mcp [<dir>] [--project DIR]        MCP server over stdio: all sources by name (or one store, read-only, with <dir>).",
+        ["mcp install"] = "mcp install --client claude-desktop|claude-code|cursor|vscode [--scope user|project] [--yes] [--dry-run]",
     };
 
     public static int Main(string[] argv)
@@ -128,7 +133,11 @@ public static class Program
                 "export" => Export(args),
                 "import" => Import(args),
                 "tail" => Tail(args),
-                "mcp" => Mcp.McpServer.Run(Store(args), Console.OpenStandardInput(), Console.OpenStandardOutput(), Console.Error),
+                "roots" => SourceCommands.FolderList(args, "roots"),
+                "allow" => SourceCommands.FolderList(args, "allow"),
+                "sources" => SourceCommands.Sources(args),
+                "migrate" => SourceCommands.Migrate(args),
+                "mcp" => SourceCommands.Mcp(args),
                 _ => throw new CliException(ExitCodes.Usage, $"Unknown command '{cmd}'. Run 'latticelog help'."),
             };
         }

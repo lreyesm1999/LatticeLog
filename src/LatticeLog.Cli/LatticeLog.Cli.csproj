@@ -6,6 +6,7 @@
     <ProjectReference Include="..\LatticeLog.Evidence\LatticeLog.Evidence.csproj" />
     <ProjectReference Include="..\LatticeLog.OpenTelemetry\LatticeLog.OpenTelemetry.csproj" />
     <ProjectReference Include="..\LatticeLog.Mcp\LatticeLog.Mcp.csproj" />
+    <ProjectReference Include="..\LatticeLog.Sources\LatticeLog.Sources.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

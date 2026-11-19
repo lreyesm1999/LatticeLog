@@ -35,6 +35,7 @@
     <ProjectReference Include="..\..\src\LatticeLog.Server\LatticeLog.Server.csproj" />
     <!-- Built first so CrashTests can launch it as a separate process; not referenced as an assembly. -->
     <ProjectReference Include="..\LatticeLog.CrashHarness\LatticeLog.CrashHarness.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\src\LatticeLog.Sources\LatticeLog.Sources.csproj" />
   </ItemGroup>
 
   <Target Name="CopyGeneratorForDriverTests" AfterTargets="Build">

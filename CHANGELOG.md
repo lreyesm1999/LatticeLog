@@ -2,6 +2,31 @@
 
 ## Unreleased — public repository under the MIT license
 
+- **Developer flow: logs by service name** ([`specs/local-sources.md`](specs/local-sources.md), new library
+  `LatticeLog.Sources`, example [`examples/developer-flow`](examples/developer-flow)):
+  - Python **local mode** without a server: `latticelog.open(folder, service=..., environment=...)` writes official
+    `latticelog.jsonl` v1 records next to a `latticelog.source.json` manifest, one `p-N` subfolder per live process
+    (shown as one source), dense sequence across restarts, durability modes, retention by age/size that never deletes
+    the file being written.
+  - `latticelog.structlog_processor(log)`: one line in `structlog.configure`; `event` → event name, other keys typed
+    attributes, exceptions with their real Python type. `LatticeLogHandler` keeps structlog's event dict under
+    `ProcessorFormatter.wrap_for_formatter` instead of flattening it with `getMessage()`.
+  - Discovery by name: `latticelog roots add|remove|list`, optional project `latticelog.toml` (`roots`, `[sources]`,
+    `[migrate] allow`), `latticelog sources`. Python folders get an incremental `.llog` index (checkpoints per file,
+    complete lines only, crash-safe, no duplicates); .NET stores are read directly.
+  - MCP: `latticelog mcp` without a store serves every source; new `list_sources`; every tool takes `source` (name,
+    list or `*`), results merged by time and tagged with their source; composite cursors page across sources.
+    `latticelog mcp <dir>` keeps the single-store, read-only server.
+  - Migration on request: `preview_migration` (read-only: format, line count, 5 samples as stored, field mapping,
+    estimated size, loss report) and `migrate_logs` (`readOnlyHint: false`, `destructiveHint: false`): only inside the
+    registered roots or the allowlist (`latticelog allow add`), originals never modified, staged then registered by one
+    rename (a cancelled run leaves nothing), idempotent with rotation/truncation detection, unparsed lines kept as
+    text, compaction at the end, progress and cancellation over MCP. CLI parity: `latticelog migrate <path|glob>
+    --name <source> [--follow] | --preview`. A copy of a real 378 MB structlog file: 1,762,702 records, 7.9 MB, 7 s.
+  - `latticelog mcp install --client claude-desktop|claude-code|cursor|vscode` merges the client configuration, asks
+    before overwriting an entry and keeps a backup.
+  - `JsonlExchangeReader.ReadLine` parses one line at a time (resumable reads; a malformed line can be kept as text).
+
 - **MIT** license (`LICENSE`): the project is free and open, with no commercial editions. Package metadata
   (`PackageLicenseExpression`, repository) in `Directory.Build.props`, `pyproject.toml` and `composer.json`.
 - Clean-up before publishing: zero build warnings (`CancellationToken` ordering, `Dispose` of the wrapper stream, the
