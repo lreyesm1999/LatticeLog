@@ -112,15 +112,17 @@ public sealed class IngestService : IDisposable
         var holder = new Thread(() => { lock (_storeGate) { acquired.Set(); release.Wait(); } }) { IsBackground = true, Name = "LatticeLog.Ingest.TestHold" };
         holder.Start();
         acquired.Wait();
-        return new WriterHold(release, holder);
+        return new WriterHold(acquired, release, holder);
     }
 
-    private sealed class WriterHold(ManualResetEventSlim release, Thread holder) : IDisposable
+    private sealed class WriterHold(ManualResetEventSlim acquired, ManualResetEventSlim release, Thread holder) : IDisposable
     {
         public void Dispose()
         {
             release.Set();
-            holder.Join();
+            holder.Join(); // both events are disposed only once the holder thread can no longer touch them
+            acquired.Dispose();
+            release.Dispose();
         }
     }
 
