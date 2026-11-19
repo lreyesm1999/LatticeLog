@@ -252,21 +252,40 @@ public class IngestTests
         var producer = Guid.NewGuid().ToString("N");
         Assert.Equal(200, (await Post(collector.BaseAddress, IngestProtocol.EncodeBatch(producer, Range(1, 5)), "old-secret")).Status);
 
-        WriteTokens(("new", "new-secret", 100)); // rotation: old removed, new added with a 100 records/s quota
+        WriteTokens(("new", "new-secret", 1)); // rotation: old removed, new added with a 1 record/s quota (burst 2)
         File.SetLastWriteTimeUtc(file, DateTime.UtcNow.AddSeconds(5));
         tokens.ExpireCache();
         Assert.Equal(401, (await Post(collector.BaseAddress, IngestProtocol.EncodeBatch(producer, Range(6, 5)), "old-secret")).Status);
-        Assert.Equal(200, (await Post(collector.BaseAddress, IngestProtocol.EncodeBatch(producer, Range(6, 150)), "new-secret")).Status); // within the 200 burst
+        Assert.Equal(200, (await Post(collector.BaseAddress, IngestProtocol.EncodeBatch(producer, Range(6, 2)), "new-secret")).Status); // the whole burst
 
         using var http = new HttpClient();
         using var req = new HttpRequestMessage(HttpMethod.Post, new Uri(collector.BaseAddress, IngestProtocol.Path))
         {
-            Content = new ByteArrayContent(IngestProtocol.EncodeBatch(producer, Range(156, 150))),
+            // Refused unless 2 s pass between the two requests: the largest margin a 2-second burst allows. The bucket
+            // arithmetic itself is covered with a fake clock in Quota_refills_at_the_token_rate_and_caps_at_the_burst.
+            Content = new ByteArrayContent(IngestProtocol.EncodeBatch(producer, Range(8, 2))),
         };
         req.Headers.Authorization = new("Bearer", "new-secret");
         using var limited = await http.SendAsync(req);
         Assert.Equal(429, (int)limited.StatusCode);
         Assert.NotNull(limited.Headers.RetryAfter?.Delta);
+    }
+
+    [Fact]
+    public void Quota_refills_at_the_token_rate_and_caps_at_the_burst()
+    {
+        long now = 0;
+        var second = System.Diagnostics.Stopwatch.Frequency;
+        var quota = new QuotaLimiter { Clock = () => now };
+        var token = TokenStore.Token("q", "q-secret", recordsPerSecond: 100); // burst = 200
+        Assert.True(quota.TryTake(token, 150, out _));
+        Assert.False(quota.TryTake(token, 150, out var wait)); // 50 left
+        Assert.Equal(TimeSpan.FromSeconds(1), wait);           // 100 more needed at 100/s
+        now += second;                                         // +100
+        Assert.True(quota.TryTake(token, 150, out _));         // 150 available, 0 left
+        now += 10 * second;                                    // refill stops at the burst
+        Assert.False(quota.TryTake(token, 201, out _) && quota.TryTake(token, 1, out _));
+        Assert.True(quota.TryTake(TokenStore.Token("free", "f", recordsPerSecond: 0), 1_000_000, out _)); // 0 = unlimited
     }
 
     [Fact]

@@ -133,6 +133,9 @@ public sealed class QuotaLimiter
     private sealed class Bucket { public double Tokens; public long Last; }
     private readonly Dictionary<string, Bucket> _buckets = new(StringComparer.Ordinal);
 
+    /// <summary>Monotonic clock in <see cref="System.Diagnostics.Stopwatch"/> ticks; replaceable in tests.</summary>
+    internal Func<long> Clock { get; init; } = System.Diagnostics.Stopwatch.GetTimestamp;
+
     public bool TryTake(TokenInfo token, int records, out TimeSpan retryAfter)
     {
         retryAfter = TimeSpan.Zero;
@@ -140,7 +143,7 @@ public sealed class QuotaLimiter
         var burst = token.RecordsPerSecond * 2;
         lock (_buckets)
         {
-            var now = System.Diagnostics.Stopwatch.GetTimestamp();
+            var now = Clock();
             if (!_buckets.TryGetValue(token.Id, out var b)) _buckets[token.Id] = b = new Bucket { Tokens = burst, Last = now };
             b.Tokens = Math.Min(burst, b.Tokens + (now - b.Last) / (double)System.Diagnostics.Stopwatch.Frequency * token.RecordsPerSecond);
             b.Last = now;

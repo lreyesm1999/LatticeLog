@@ -16,6 +16,8 @@
 - **Fixed**: the incremental tail reader treated a frame that was briefly unreadable during a slow fsync as corruption
   after 50 polls and fell back to a full scan. The threshold is now a time (`StoreTail.StallTimeout`, 2 s, replacing
   `StallLimit`), and `StoreTail.LastFullScanReason` says why a full scan happened.
+- Test stability: the token quota test no longer depends on two requests landing within one second; the bucket
+  arithmetic is tested with a fake clock.
 
 ## Unreleased — operations, security, replication and SDKs (P17–P24)
 
