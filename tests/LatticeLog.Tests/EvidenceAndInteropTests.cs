@@ -306,12 +306,12 @@ public class EvidenceAndInteropTests
     }
 
     [Fact]
-    public void Explain_states_that_event_filters_skip_whole_segments_only()
+    public void Explain_states_the_pruning_granularity_of_event_filters()
     {
         var (root, _) = BuildIncidentStore();
         var res = QueryEngine.Open(root).Execute(new QueryRequest { Where = "event = 'order.failed'", Limit = 1 });
         Assert.Contains("events{order.failed}", res.Plan);
-        Assert.Contains("skip whole segments only", res.Plan);
+        Assert.Contains("blocks of segments written in format 0.3", res.Plan);
         var timeOnly = QueryEngine.Open(root).Execute(new QueryRequest { SinceUnixNanos = 1, Limit = 1 });
         Assert.DoesNotContain("granularity", timeOnly.Plan);
     }

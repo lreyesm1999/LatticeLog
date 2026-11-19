@@ -203,7 +203,7 @@ public sealed class QueryEngine(StoreReader store)
 
     private static IEnumerable<DecodedBlock> Blocks(SegmentReader reader, PruningConstraints c, SortOrder order, ScanReport report, QueryStats stats)
     {
-        if (reader.Index is { } idx && (order == SortOrder.Descending || idx.Blocks.Any(b => b.Type == BlockType.Records && c.ExcludeBlock(b) is not null)))
+        if (reader.Index is { } idx && (order == SortOrder.Descending || idx.Blocks.Any(b => b.Type == BlockType.Records && c.ExcludeBlock(b, idx) is not null)))
         {
             // Random access only pays off when some blocks can be skipped (or for reverse order);
             // otherwise the sequential path below is cheaper (measured in reports/baseline-v1.md).
@@ -211,7 +211,7 @@ public sealed class QueryEngine(StoreReader store)
             if (order == SortOrder.Descending) blocks = blocks.Reverse();
             foreach (var b in blocks)
             {
-                if (c.ExcludeBlock(b) is not null) { stats.BlocksPruned++; continue; }
+                if (c.ExcludeBlock(b, idx) is not null) { stats.BlocksPruned++; continue; }
                 DecodedBlock? decoded = null;
                 try
                 {
@@ -258,8 +258,10 @@ public sealed class QueryEngine(StoreReader store)
         if (c.BeforeSequence is { } b) { sb.Append(" seq<").Append(b); any = true; }
         if (!any) sb.Append(" none (every segment is scanned)");
         sb.Append('\n');
-        if (c.MinSeverity is not null || c.Events is not null || c.Services is not null || c.BloomKeys.Count > 0)
-            sb.Append("granularity: severity/event/service/key filters skip whole segments only; blocks are skipped by time and sequence\n");
+        if (c.MinSeverity is not null || c.Events is not null || c.Services is not null)
+            sb.Append("granularity: severity/event/service filters skip segments, and blocks of segments written in format 0.3 or later (0.1/0.2 segments: whole segments only)\n");
+        if (c.BloomKeys.Count > 0)
+            sb.Append("granularity: trace/operation/correlation keys skip whole segments only\n");
         return sb.ToString();
     }
 

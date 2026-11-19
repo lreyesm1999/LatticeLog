@@ -23,9 +23,12 @@ timestamps parsed). A **missing field makes every comparison false, including `!
 `CONTAINS` and `STARTSWITH` are case-insensitive ordinal. Text search scans decoded candidates (no inverted index yet).
 
 Execution: conjunctive constraints on time, level, event, service, trace/operation/correlation ids (bloom filter) and
-`seq` prune segments and blocks using footer indexes before any block is decoded. The full predicate is always
-re-evaluated on decoded records, so indexes never change results (verified against a full-scan oracle in
-`tests/LatticeLog.Tests/QueryTests.cs`).
+`seq` prune segments and blocks using footer indexes before any block is decoded. Time and `seq` skip blocks in
+every sealed segment; level, event and service skip blocks in segments written in format 0.3 or later (block
+summaries, `llog-format-v0.md` §7.4) and only whole segments in older ones; trace/operation/correlation ids skip
+whole segments only. `--explain` states this granularity. The full predicate is always re-evaluated on decoded
+records, so indexes never change results (verified against a full-scan oracle in
+`tests/LatticeLog.Tests/QueryTests.cs` and `BlockSummaryTests.cs`).
 
 Consistency (P11-T17): a query sees sealed segments plus the complete blocks of the active segment at scan time
 (`includes_unsealed_segments=true`). Pagination cursors encode (version, store, query hash, last sequence, order) and

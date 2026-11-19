@@ -7,9 +7,11 @@ public static class Llog
 {
     public static ReadOnlySpan<byte> Magic => "LLOG\r\n\u001a\n"u8;
     public const ushort FormatMajor = 0;
-    public const ushort FormatMinor = 2;
+    public const ushort FormatMinor = 3;
     /// <summary>Optional feature bit 0 (format 0.2): the footer carries a copy of the segment catalogs.</summary>
     public const uint OptionalFooterCatalog = 1;
+    /// <summary>Optional feature bit 1 (format 0.3): the footer carries per Records block summaries (extension tag 1).</summary>
+    public const uint OptionalBlockSummaries = 2;
     public const int FileHeaderSize = 40;
     public const int FrameHeaderSize = 24;
     public const int TrailerSize = 20;

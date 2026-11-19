@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent reference reader for the .llog v0.1/v0.2 format (gate G4).
+"""Independent reference reader for the .llog v0.1/v0.2/v0.3 format (gate G4).
 
 Written only from specs/llog-format-v0.md, using the Python standard library (zlib for CRC-32 and DEFLATE).
 It shares no code with the .NET implementation.
@@ -335,8 +335,8 @@ def parse_frame(data, off):
     return btype, codec, comp, plen, dlen, count, pcrc
 
 
-def read_segment(data):
-    """Returns (records, issues, footer_dict_or_None)."""
+def read_segment(data, blocks_out=None):
+    """Returns (records, issues, footer_dict_or_None). When blocks_out is a list, appends (offset, records) per Records block."""
     if data[:8] != MAGIC:
         raise FormatError("bad magic")
     if crc32(data[:36]) != struct.unpack("<I", data[36:40])[0]:
@@ -365,6 +365,7 @@ def read_segment(data):
             break  # this reference reader stops at the first corrupt frame (resync is optional in the spec)
         btype, codec, comp, plen, dlen, count, pcrc = f
         payload = data[off + 24:off + 24 + plen]
+        block_off = off
         off += 24 + plen
         if crc32(payload) != pcrc:
             issues.append(("payload_crc", off))
@@ -383,7 +384,10 @@ def read_segment(data):
                 if schemas[:len(scanned_schemas)] != scanned_schemas or contexts[:len(scanned_contexts)] != scanned_contexts:
                     issues.append(("catalog_mismatch", off))
             if btype == 3:
-                records.extend(decode_records(codec, payload, count, schemas, contexts))
+                block = decode_records(codec, payload, count, schemas, contexts)
+                records.extend(block)
+                if blocks_out is not None:
+                    blocks_out.append((block_off, block))
         except (FormatError, IndexError) as e:  # unknown references are errors (spec §2, §5): skip the whole block
             issues.append(("undecodable_block", off, str(e)))
     return records, issues, footer
@@ -419,9 +423,80 @@ def decode_footer(payload):
             if not c.end:
                 raise FormatError("trailing bytes in footer catalog")
             f["catalog"] = (schemas, contexts)
-    if not r.end:
-        raise FormatError("trailing bytes in footer")
+    last_tag = None
+    while not r.end:  # format 0.3: extension area, (varint tag; varint length; bytes)* with ascending tags
+        tag = r.varint()
+        if last_tag is not None and tag <= last_tag:
+            raise FormatError("footer extension tags not ascending")
+        last_tag = tag
+        body = r.raw(r.count(1))
+        if tag == 1:
+            f["summaries"] = decode_block_summaries(body, f)
+        # other tags: unknown extensions are skipped (spec §7)
     return f
+
+
+def read_index_set(r, universe):
+    h = r.varint()
+    if h == 1:
+        bits = r.raw((universe + 7) // 8)
+        out = [i for i in range(len(bits) * 8) if bits[i >> 3] & (1 << (i & 7))]
+        if out and out[-1] >= universe:
+            raise FormatError("block summary bitmap padding bits set")
+        return tuple(out)
+    if h & 1:
+        raise FormatError("invalid block summary set encoding")
+    out, prev = [], -1
+    for _ in range(h >> 1):
+        prev = prev + 1 + r.varint()
+        if prev >= universe:
+            raise FormatError("block summary index out of range")
+        out.append(prev)
+    return tuple(out)
+
+
+def decode_block_summaries(body, f):
+    """Spec §7.4: one (severity_mask, event indexes, service indexes) per Records block, in directory order."""
+    r = Reader(body)
+    n = r.count(3)
+    if n != sum(1 for b in f["blocks"] if b[2] == 3):
+        raise FormatError("block summaries do not match the Records blocks of the directory")
+    out = []
+    for _ in range(n):
+        mask = r.varint()
+        if mask == 0 or mask >> 25:
+            raise FormatError("invalid block severity mask")
+        out.append((mask, read_index_set(r, len(f["events"])), read_index_set(r, len(f["services"]))))
+    if not r.end:
+        raise FormatError("trailing bytes in block summaries")
+    return out
+
+
+def service_name(rec):
+    """service.name of the record context: innermost context first, last attribute wins (spec §7)."""
+    for kind, name, attrs in rec["ctx"] or ():
+        for k, v in reversed(attrs):
+            if k == "service.name":
+                return v[1] if v[0] == "str" else None
+    return None
+
+
+def expected_summaries(blocks, footer):
+    """Recomputes §7.4 block summaries from decoded records, independently of the writer."""
+    events = {(eid, name): i for i, (eid, name, _) in enumerate(footer["events"])}
+    services = {s: i for i, s in enumerate(footer["services"])}
+    out = []
+    for _, recs in blocks:
+        mask, ev, sv = 0, set(), set()
+        for rec in recs:
+            mask |= 1 << min(rec["sev"], 24)
+            schema = rec["schema"]
+            ev.add(events[(schema[0], schema[1]) if schema else (rec["event_id"], rec["event_name"] or "")])
+            svc = service_name(rec)
+            if svc is not None:
+                sv.add(services[svc])
+        out.append((mask, tuple(sorted(ev)), tuple(sorted(sv))))
+    return out
 
 
 def fnv1a64(b):
@@ -541,8 +616,15 @@ def verify_golden(directory):
     ok = True
     for name in ["raw", "raw-deflate", "structural", "structural-deflate", "contextual", "contextual-deflate"]:
         data = _read_bytes(os.path.join(directory, name + ".llog"))
-        recs, issues, footer = read_segment(data)
+        blocks = []
+        recs, issues, footer = read_segment(data, blocks)
         good = recs == expected and not issues and footer is not None and footer["records"] == len(expected)
+        minor = struct.unpack("<H", data[10:12])[0]
+        if footer and minor >= 3:  # 0.3 writers always store block summaries; check them against the records
+            try:
+                good = good and footer.get("summaries") == expected_summaries(blocks, footer)
+            except KeyError:  # an event or service missing from the footer lists
+                good = False
         if footer and "bloom" in footer:
             for r in expected:
                 if r["trace"] and not bloom_contains(footer["bloom"], "t:" + r["trace"]):

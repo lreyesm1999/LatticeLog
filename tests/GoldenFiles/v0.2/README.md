@@ -1,7 +1,7 @@
-# Golden files `.llog` v0.2 (actuales)
+# Golden files `.llog` v0.2 (congelados)
 
 Generados por `tests/LatticeLog.Tests/GoldenFileTests.cs` con `LATTICELOG_REGENERATE_GOLDEN=1` (solo se regenera la
-versión actual; `v0.1/` está congelada y debe seguir decodificándose).
+versión actual; esta carpeta y `v0.1/` están congeladas y deben seguir decodificándose).
 
 Mismos 27 registros y mismas variantes que `v0.1/` (ver su README), con el formato 0.2:
 - el footer contiene la copia comprimida de los catálogos de esquemas y contextos (bit 0 de `optional_features`);
