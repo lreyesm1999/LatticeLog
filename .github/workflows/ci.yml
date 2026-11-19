@@ -62,7 +62,7 @@ jobs:
           ./aot/latticelog stats demo-store --by event --format json
       - name: Pack (verification only; packages are not published from CI)
         run: dotnet pack LatticeLog.sln -c Release -o packages
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: packages
           path: packages
@@ -98,7 +98,7 @@ jobs:
         run: |
           dotnet tool install --global CycloneDX
           dotnet-CycloneDX LatticeLog.sln -o sbom
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sbom
           path: sbom
