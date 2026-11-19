@@ -67,6 +67,24 @@ jobs:
           name: packages
           path: packages
 
+  container:
+    # Builds the server image, scans it, and runs it over real TLS: health, ingestion with the Python SDK, queries,
+    # an untrusted client refused, non-root user, data kept across a restart (deploy/smoke-test.sh).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build the image
+        run: docker build -f deploy/Dockerfile -t latticelog-server:ci .
+      - name: Scan the image (fixable HIGH/CRITICAL vulnerabilities fail the build)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: latticelog-server:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+      - name: Smoke test over HTTPS
+        run: bash deploy/smoke-test.sh latticelog-server:ci
+
   security:
     runs-on: ubuntu-latest
     steps:

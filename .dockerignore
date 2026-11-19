@@ -1,0 +1,14 @@
+# Only what `dotnet publish` of the server needs goes into the build context.
+**/bin/
+**/obj/
+.git/
+.github/
+.vs/
+.vscode/
+artifacts/
+BenchmarkDotNet.Artifacts/
+research/data/
+research/results/
+**/TestResults/
+**/__pycache__/
+*.llog
