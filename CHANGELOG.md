@@ -35,6 +35,16 @@
 - Test stability: the token quota test runs with a frozen quota clock (an internal `ServerOptions.QuotaClock`) and the
   bucket arithmetic has its own fake-clock test; the crash test waits for the child's first acknowledgement before its
   random kill delay instead of assuming the process starts within 250 ms.
+- **Fixed (found importing a real structlog log)**: JSONL import used structlog's `event` key as the event name even
+  when it held free text, so every log sentence became its own event. `event` is now the event name only when it looks
+  like an identifier; free text becomes the body.
+- **Fixed**: Python tracebacks imported with the exception type "Traceback (most recent call last)". The type and
+  message now come from the line after the last frame (`httpx.HTTPStatusError: …`).
+- **Fixed**: `overview` reported at most 10,000 `error_events` and `errors` at most 10,000 `matched_events` (the
+  grouping candidate limit). Both totals are exact now, and the documents say how many events the groups were built
+  from. Error groups without a body show the exception message, and Markdown shows each group's event and exception
+  type.
+- `query --explain` states that severity, event, service and key filters skip whole segments only.
 
 ## Unreleased — operations, security, replication and SDKs (P17–P24)
 
