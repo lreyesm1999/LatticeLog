@@ -241,7 +241,8 @@ public class EvidenceAndInteropTests
             {"event": "free text here", "msg": "the message", "timestamp": "2026-05-09T01:57:45Z"}
             """;
         var loss = new LossReport();
-        var recs = StructuredJsonlImporter.Read(new MemoryStream(Encoding.UTF8.GetBytes(lines)), new StructuredJsonlImporter.Options(), loss, 5).ToList();
+        using var input = new MemoryStream(Encoding.UTF8.GetBytes(lines));
+        var recs = StructuredJsonlImporter.Read(input, new StructuredJsonlImporter.Options(), loss, 5).ToList();
         Assert.Equal("bridge_emit_failed", recs[0].EventName);
         Assert.False(recs[0].HasBody);
         Assert.Equal("httpx.HTTPStatusError", recs[0].Exception!.Type);
