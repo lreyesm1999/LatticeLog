@@ -35,7 +35,11 @@ public class CrashTests(ITestOutputHelper output)
         return exe;
     }
 
-    /// <summary>Runs the harness until <paramref name="killAfter"/> elapses, kills it and returns the last acknowledged n.</summary>
+    /// <summary>
+    /// Runs the harness until it has acknowledged at least one record of this run, waits <paramref name="killAfter"/>
+    /// more, kills it and returns the last acknowledged n. Waiting for the first acknowledgement keeps the kill point
+    /// random without depending on how fast the machine starts the process and reaches its first flush.
+    /// </summary>
     private static long RunAndKill(string store, string mode, long firstN, int ackEvery, TimeSpan killAfter, long segmentMaxBytes)
     {
         var psi = new ProcessStartInfo(DotnetHost())
@@ -51,6 +55,7 @@ public class CrashTests(ITestOutputHelper output)
 
         long lastAck = firstN - 1;
         var ready = new ManualResetEventSlim();
+        var acknowledged = new ManualResetEventSlim();
         var stderr = new System.Text.StringBuilder();
         using var p = new Process { StartInfo = psi };
         p.OutputDataReceived += (_, e) =>
@@ -58,13 +63,17 @@ public class CrashTests(ITestOutputHelper output)
             if (e.Data is null) return;
             if (e.Data == "READY") ready.Set();
             else if (e.Data.StartsWith("ACK ", StringComparison.Ordinal))
+            {
                 Interlocked.Exchange(ref lastAck, long.Parse(e.Data.Split(' ')[1], System.Globalization.CultureInfo.InvariantCulture));
+                acknowledged.Set();
+            }
         };
         p.ErrorDataReceived += (_, e) => { if (e.Data is not null) lock (stderr) stderr.AppendLine(e.Data); };
         p.Start();
         p.BeginOutputReadLine();
         p.BeginErrorReadLine();
         Assert.True(ready.Wait(TimeSpan.FromSeconds(30)), "harness did not start: " + stderr);
+        Assert.True(acknowledged.Wait(TimeSpan.FromSeconds(30)), $"harness acknowledged nothing in 30 s ({mode}): " + stderr);
         Thread.Sleep(killAfter);
         Assert.False(p.HasExited, "harness exited early: " + stderr);
         p.Kill(entireProcessTree: true);
@@ -100,7 +109,7 @@ public class CrashTests(ITestOutputHelper output)
         var log = new List<string>();
         for (var cycle = 0; cycle < cycles; cycle++)
         {
-            var killAfter = TimeSpan.FromMilliseconds(rnd.Next(250, 1500));
+            var killAfter = TimeSpan.FromMilliseconds(rnd.Next(0, 1250)); // after the first acknowledgement of the run
             var lastAck = RunAndKill(store, mode, nextN, ackEvery, killAfter, segmentMaxBytes: 128 * 1024);
 
             // Recovery as the next writer would do it: must open, truncate any torn tail and keep everything valid.
@@ -120,7 +129,7 @@ public class CrashTests(ITestOutputHelper output)
             for (var i = 0; i < ns.Count; i++) Assert.True(ns[i] == i + 1, $"cycle {cycle}: expected n={i + 1} at position {i}, found {ns[i]}");
             var persisted = ns.Count == 0 ? 0 : ns[^1];
             Assert.True(persisted >= lastAck, $"cycle {cycle}: acknowledged n={lastAck} but only n={persisted} persisted ({mode})");
-            Assert.True(lastAck >= nextN, $"cycle {cycle}: no acknowledgement observed in {killAfter.TotalMilliseconds} ms ({mode})");
+            Assert.True(lastAck >= nextN, $"cycle {cycle}: no acknowledgement observed ({mode})");
             log.Add($"cycle {cycle}: killed after {killAfter.TotalMilliseconds} ms, last ack {lastAck}, persisted {persisted}");
             nextN = persisted + 1;
         }

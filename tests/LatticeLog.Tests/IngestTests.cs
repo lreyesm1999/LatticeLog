@@ -37,9 +37,10 @@ public class IngestTests
         }
     }
 
-    private static async Task<LatticeServer> StartCollector(string root, TokenStore? tokens = null, IngestLimits? limits = null)
+    private static async Task<LatticeServer> StartCollector(string root, TokenStore? tokens = null, IngestLimits? limits = null, Func<long>? quotaClock = null)
         => await LatticeServer.StartAsync(new ServerOptions
         {
+            QuotaClock = quotaClock,
             DataDirectory = root,
             IngestTemplate = new IngestServiceOptions { StoreDirectory = "", Store = new StoreWriterOptions { MinFreeDiskBytes = 0 } },
             Tokens = tokens ?? TokenStore.FromTokens(TokenStore.Token("t", Secret)),
@@ -248,22 +249,22 @@ public class IngestTests
                 $"{{\"id\":\"{t.Id}\",\"sha256\":\"{TokenStore.HashHex(t.Secret)}\",\"producers\":[\"*\"],\"records_per_second\":{t.Rate}}}")) + "]}");
         WriteTokens(("old", "old-secret", 0));
         var tokens = TokenStore.FromFile(file);
-        await using var collector = await StartCollector(TestData.TempDir(), tokens);
+        // The quota clock is frozen: no refill between requests, however slow the machine (a slow fsync on a CI runner
+        // used to let the bucket refill). The refill arithmetic is tested in Quota_refills_at_the_token_rate_and_caps_at_the_burst.
+        await using var collector = await StartCollector(TestData.TempDir(), tokens, quotaClock: () => 0);
         var producer = Guid.NewGuid().ToString("N");
         Assert.Equal(200, (await Post(collector.BaseAddress, IngestProtocol.EncodeBatch(producer, Range(1, 5)), "old-secret")).Status);
 
-        WriteTokens(("new", "new-secret", 1)); // rotation: old removed, new added with a 1 record/s quota (burst 2)
+        WriteTokens(("new", "new-secret", 100)); // rotation: old removed, new added with a 100 records/s quota (burst 200)
         File.SetLastWriteTimeUtc(file, DateTime.UtcNow.AddSeconds(5));
         tokens.ExpireCache();
         Assert.Equal(401, (await Post(collector.BaseAddress, IngestProtocol.EncodeBatch(producer, Range(6, 5)), "old-secret")).Status);
-        Assert.Equal(200, (await Post(collector.BaseAddress, IngestProtocol.EncodeBatch(producer, Range(6, 2)), "new-secret")).Status); // the whole burst
+        Assert.Equal(200, (await Post(collector.BaseAddress, IngestProtocol.EncodeBatch(producer, Range(6, 150)), "new-secret")).Status); // within the 200 burst
 
         using var http = new HttpClient();
         using var req = new HttpRequestMessage(HttpMethod.Post, new Uri(collector.BaseAddress, IngestProtocol.Path))
         {
-            // Refused unless 2 s pass between the two requests: the largest margin a 2-second burst allows. The bucket
-            // arithmetic itself is covered with a fake clock in Quota_refills_at_the_token_rate_and_caps_at_the_burst.
-            Content = new ByteArrayContent(IngestProtocol.EncodeBatch(producer, Range(8, 2))),
+            Content = new ByteArrayContent(IngestProtocol.EncodeBatch(producer, Range(156, 150))), // only 50 left
         };
         req.Headers.Authorization = new("Bearer", "new-secret");
         using var limited = await http.SendAsync(req);

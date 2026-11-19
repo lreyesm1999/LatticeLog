@@ -50,6 +50,8 @@ public sealed record ServerOptions
     public string? BackupDirectory { get; init; }
     /// <summary>Serve <c>/metrics</c> without a token (only on a trusted network).</summary>
     public bool MetricsAnonymous { get; init; }
+    /// <summary>Clock of the per-token ingest quota, in Stopwatch ticks (tests freeze it; null = real time).</summary>
+    internal Func<long>? QuotaClock { get; init; }
     /// <summary>Asynchronous replication of the namespaces to another server (P19). Null = no replication.</summary>
     public ReplicationOptions? Replication { get; init; }
 }
@@ -64,7 +66,7 @@ public sealed partial class LatticeServer : IAsyncDisposable
     private readonly ServerOptions _options;
     private readonly NamespaceRegistry _namespaces;
     private readonly CursorSigner _cursors;
-    private readonly QuotaLimiter _quota = new();
+    private readonly QuotaLimiter _quota;
     private readonly SemaphoreSlim _querySlots;
     private readonly ConcurrentDictionary<string, int> _queriesPerToken = new(StringComparer.Ordinal);
     private readonly AuditLog _audit;
@@ -74,6 +76,7 @@ public sealed partial class LatticeServer : IAsyncDisposable
     {
         _app = app;
         _options = options;
+        _quota = options.QuotaClock is { } clock ? new QuotaLimiter { Clock = clock } : new QuotaLimiter();
         _namespaces = new NamespaceRegistry(options.DataDirectory, options.IngestTemplate);
         _cursors = CursorSigner.FromDataDirectory(options.DataDirectory, options.Query.CursorTtl);
         _querySlots = new SemaphoreSlim(options.Query.MaxConcurrentQueries);
