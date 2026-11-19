@@ -42,7 +42,9 @@ into its stores, so there are no feedback loops.
   segment and rebuilds deduplication from the data, so producers resend whatever came after the backup without
   duplicates (if they still have it in their spool).
 - **Drill**: periodically restore on another machine and run `latticelog verify`. Tested in `BackupTests` (copy while
-  the writer keeps writing, restore and write afterwards). **Not drilled on new infrastructure yet** (P24-T06 open).
+  the writer keeps writing, restore and write afterwards), and drilled on every CI run: a backup taken on Linux x64 is
+  restored on Windows x64, macOS ARM64 and Linux ARM64, verified, compared record by record and written to
+  (`backup-drill-*` jobs in `.github/workflows/ci.yml`).
 - **RPO/RTO**: without a replica, the RPO is the interval between backups, except for what is still in the producers'
   spools. With a replica, the RPO is the replica lag at the moment of failure. The RTO depends on size and is not
   measured.

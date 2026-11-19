@@ -6,7 +6,7 @@ Draft as of 2026-11-18. It is published together with the first stable version.
 - **Engine and .NET SDK**: the latest minor of the current major gets fixes; the previous one gets security fixes only,
   for 6 months. Runtime: the current .NET LTS and the latest .NET version.
 - **Python SDK**: CPython versions with upstream support (today 3.10+). **PHP SDK**: 8.1+ while PHP maintains it.
-- **Operating systems**: Linux x64, Windows x64 and macOS ARM64, all covered by CI. Linux ARM64 once CI covers it.
+- **Operating systems**: Linux x64, Linux ARM64, Windows x64 and macOS ARM64, all covered by CI.
 
 ## Data compatibility (P28-T06, T07)
 - `.llog` files of a major version are readable throughout that major and for at least **2 years** after the next

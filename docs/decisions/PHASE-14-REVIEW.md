@@ -1,7 +1,7 @@
 # PHASE-14-REVIEW — Production-ready .NET SDK (Local v1.0)
 
-- Status: **NOT PASSED** (substantial progress; the remaining criteria need ARM64 coverage and an RC; MIT license
-  decided)
+- Status: **NOT PASSED** (substantial progress; the remaining criteria need an RC with signed packages and N-1
+  compatibility; ARM64 now covered in CI; MIT license decided)
 - Date and version: 2026-11-18 · on top of `a10d1f9` (format 0.2) + the changes of this review
 - PRs and issues closed: none (tasks are tracked by ID in docs/MASTER-PLAN.md)
 
@@ -19,11 +19,11 @@
 | Public data | Loghub-2.0, `reports/loghub2-v1.md` | byte-exact text import verified on 14 datasets |
 
 Tests at the time: 103 on Windows x64 (all green, Debug and Release) + the independent Python reader over the v0.1 and
-v0.2 golden files. Since publishing, CI runs the suite on Linux, macOS and Windows.
+v0.2 golden files. Since publishing, CI runs the suite on Linux x64, Linux ARM64, macOS ARM64 and Windows x64.
 
 ## Open for PASS
 
-- ARM64 coverage.
+- ~~ARM64 coverage~~ done: the full suite runs on Linux ARM64 (`ubuntu-24.04-arm`) and macOS ARM64 in CI.
 - Writer-thread stalls: **root cause identified** (storage latency, fsync up to 5.3 s on an SSD at 98 % capacity, plus
   NTFS waiting when writing to a file being flushed) and **mitigated** with background durability (1 producer at
   500k/s: from 4/12 to 0/12 runs with a stall). With 4 producers they persist when the disk takes seconds. To be

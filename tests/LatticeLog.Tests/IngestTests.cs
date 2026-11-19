@@ -273,6 +273,102 @@ public class IngestTests
     }
 
     [Fact]
+    public async Task A_full_writer_queue_answers_503_with_retry_after_and_loses_nothing()
+    {
+        const int maxGroup = 4, queueCapacity = 2, batches = maxGroup + queueCapacity + 3, perBatch = 10;
+        var serverRoot = TestData.TempDir();
+        await using var collector = await LatticeServer.StartAsync(new ServerOptions
+        {
+            DataDirectory = serverRoot,
+            IngestTemplate = new IngestServiceOptions
+            {
+                StoreDirectory = "",
+                Store = new StoreWriterOptions { MinFreeDiskBytes = 0 },
+                MaxGroup = maxGroup,
+                QueueCapacity = queueCapacity,
+            },
+            Tokens = TokenStore.FromTokens(TokenStore.Token("t", Secret)),
+            Url = "http://127.0.0.1:0",
+        });
+        using var http = new HttpClient();
+        async Task<(int Status, TimeSpan? RetryAfter)> Send(byte[] body)
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Post, new Uri(collector.BaseAddress, IngestProtocol.Path)) { Content = new ByteArrayContent(body) };
+            req.Headers.Authorization = new("Bearer", Secret);
+            using var resp = await http.SendAsync(req);
+            return ((int)resp.StatusCode, resp.Headers.RetryAfter?.Delta);
+        }
+
+        var warmup = IngestProtocol.EncodeBatch(Guid.NewGuid().ToString("N"), Range(1, perBatch));
+        Assert.Equal(200, (await Send(warmup)).Status); // opens the namespace store
+        var service = collector.Ingest();
+        var bodies = Enumerable.Range(0, batches).Select(_ => IngestProtocol.EncodeBatch(Guid.NewGuid().ToString("N"), Range(1, perBatch))).ToArray();
+
+        // With the writer held it can absorb at most one group (maxGroup batches) plus a full queue, so at least
+        // batches - maxGroup - queueCapacity requests must be refused at once instead of waiting without bound.
+        List<Task<(int Status, TimeSpan? RetryAfter)>> sends;
+        using (service.HoldWriterForTesting())
+        {
+            sends = bodies.Select(Send).ToList();
+            var deadline = DateTime.UtcNow.AddSeconds(30);
+            while (sends.Count(t => t.IsCompleted) < batches - maxGroup - queueCapacity)
+            {
+                Assert.True(DateTime.UtcNow < deadline, "the server never answered 503 while its writer was held");
+                await Task.Delay(20);
+            }
+            Assert.True(service.GetStats().QueueDepth <= queueCapacity);
+        }
+        var answers = await Task.WhenAll(sends);
+        var refused = Enumerable.Range(0, batches).Where(i => answers[i].Status == 503).ToList();
+        Assert.True(refused.Count >= batches - maxGroup - queueCapacity, $"only {refused.Count} refused");
+        Assert.All(refused, i => Assert.NotNull(answers[i].RetryAfter));
+        Assert.All(Enumerable.Range(0, batches).Except(refused), i => Assert.Equal(200, answers[i].Status));
+
+        // A producer that got 503 simply resends: everything ends up stored exactly once.
+        foreach (var i in refused) Assert.Equal(200, (await Send(bodies[i])).Status);
+        foreach (var body in bodies) Assert.Equal(200, (await Send(body)).Status); // a second resend is a duplicate, not new data
+        Assert.Equal((ulong)((batches + 1) * perBatch), service.LastSequence);
+    }
+
+    [Fact]
+    public async Task A_full_producer_spool_refuses_new_records_keeps_the_stored_ones_and_ships_them()
+    {
+        // The producer's local store is its spool. When its quota is reached, new batches are refused and counted
+        // (DroppedWriteError); nothing already stored is deleted, and everything stored still reaches the server.
+        const int written = 5_000;
+        var local = TestData.TempDir();
+        LoggerStats stats;
+        using (var logger = LatticeLogger.CreateLocal(local, o => { o.Durability = DurabilityMode.Balanced; o.FlushOnProcessExit = false; },
+                   new StoreWriterOptions { MinFreeDiskBytes = 0, MaxStoreBytes = 48 * 1024, SegmentMaxBytes = 16 * 1024 }))
+        {
+            for (var i = 0; i < written; i++)
+            {
+                logger.Info("order {i}", new LogAttribute("i", i), new LogAttribute("payload", "p-" + (i % 97)));
+                if (i % 250 == 249) await logger.FlushAsync(AckLevel.WrittenToOs); // several batches, so the quota is hit between them
+            }
+            await logger.FlushAsync(AckLevel.FsyncConfirmed);
+            logger.Info("still alive after the spool filled up"); // logging never throws into the application
+            await logger.FlushAsync(AckLevel.FsyncConfirmed);
+            stats = logger.GetStats();
+        }
+
+        var report = new ScanReport();
+        var spool = StoreReader.Open(local).ReadAll(report).Select(r => r.Attributes[0].Value.AsInt64()).ToList();
+        Assert.True(report.IsClean, string.Join("\n", report.Issues));
+        Assert.True(stats.DroppedWriteError > 0, "the quota was never reached");
+        Assert.True(spool.Count > 0);
+        Assert.Equal(written + 1, spool.Count + stats.DroppedWriteError); // every record is either stored or counted as dropped
+        Assert.Equal(Enumerable.Range(0, spool.Count).Select(i => (long)i), spool); // a prefix: refused at the end, never deleted
+
+        var serverRoot = TestData.TempDir();
+        await using (var collector = await StartCollector(serverRoot))
+        await using (var fwd = Forwarder.Start(local, new ForwarderOptions { Endpoint = collector.BaseAddress, Token = Secret, PollInterval = TimeSpan.FromMilliseconds(10) }))
+            Assert.True(await fwd.WaitForAsync((ulong)spool.Count, TimeSpan.FromSeconds(30)), fwd.LastError);
+        Assert.Equal(spool, ServerRecords(serverRoot).Select(r => r.Attributes[0].Value.AsInt64()));
+        Assert.Equal(spool.Count, StoreReader.Open(local).ReadAll(new ScanReport()).Count()); // shipping does not delete from the spool
+    }
+
+    [Fact]
     public void Quota_refills_at_the_token_rate_and_caps_at_the_burst()
     {
         long now = 0;

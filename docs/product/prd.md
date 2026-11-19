@@ -36,8 +36,8 @@ configuration will **not** be able to change durability or redaction silently: e
 code configuration exists (`LatticeLoggerOptions`, `StoreWriterOptions`), with validation and actionable messages.
 
 ## 5. Platforms (P00-T09)
-.NET 10 LTS (Microsoft support until Nov 2028). Target: Windows/Linux/macOS on x64 and ARM64. CI runs on Linux, macOS
-and Windows x64; ARM64 is not tested yet. The format is language-independent (a Python reader is included).
+.NET 10 LTS (Microsoft support until Nov 2028). Target: Windows/Linux/macOS on x64 and ARM64. CI runs the full suite on Linux x64,
+Linux ARM64, macOS ARM64 and Windows x64. The format is language-independent (a Python reader is included).
 
 ## 6. Versions and compatibility (P00-T10)
 SemVer per package. `.llog` format: 1.x readers will read every 0.1+ file, checked with frozen golden files; target

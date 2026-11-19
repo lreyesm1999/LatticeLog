@@ -100,6 +100,32 @@ public sealed class IngestService : IDisposable
         return p.Done.Task;
     }
 
+    /// <summary>
+    /// Test hook: holds the store gate, as a long admin operation does, so the writer stops taking new groups and the
+    /// queue fills. Released when the returned handle is disposed. The gate is held on its own thread because a
+    /// monitor must be released by the thread that took it.
+    /// </summary>
+    internal IDisposable HoldWriterForTesting()
+    {
+        var acquired = new ManualResetEventSlim();
+        var release = new ManualResetEventSlim();
+        var holder = new Thread(() => { lock (_storeGate) { acquired.Set(); release.Wait(); } }) { IsBackground = true, Name = "LatticeLog.Ingest.TestHold" };
+        holder.Start();
+        acquired.Wait();
+        return new WriterHold(acquired, release, holder);
+    }
+
+    private sealed class WriterHold(ManualResetEventSlim acquired, ManualResetEventSlim release, Thread holder) : IDisposable
+    {
+        public void Dispose()
+        {
+            release.Set();
+            holder.Join(); // both events are disposed only once the holder thread can no longer touch them
+            acquired.Dispose();
+            release.Dispose();
+        }
+    }
+
     // ------------------------------------------------------------------ dedup state
 
     /// <summary>
