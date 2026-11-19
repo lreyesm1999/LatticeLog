@@ -1,11 +1,11 @@
-# PHASE-26-REVIEW — Calidad, caos y certificación interna
+# PHASE-26-REVIEW — Quality, chaos and internal certification
 
-- Estado: **NOT PASSED** (prácticas transversales activas; sin CI ejecutado ni hardware estable)
-- Fecha: 2026-11-18
-- Hecho: suite de pruebas de invariantes (caída real del proceso, redes con pérdidas, deduplicación, corrupción,
-  retención, borrado, backup, aislamiento entre tenants), fuzz del cuerpo binario de ingestión, lector independiente en
-  Python sobre archivos congelados y benchmarks con Loghub-2.0.
-- Hallazgo que bloquea T06, T07 y T14: el equipo de referencia corrompe memoria bajo carga multinúcleo; todas las
-  mediciones con concurrencia se hicieron con 4 CPUs.
-- Pendiente: CI en Linux/macOS (T06, T10), fuzzing continuo (T03), performance budgets en CI (T15), benchmark
-  metodológico publicado (T14), evaluación externa AI-friendly (T13).
+- Status: **NOT PASSED** (cross-cutting practices in place; stable hardware for measurements missing)
+- Date: 2026-11-18
+- Done: an invariant-driven test suite (real process crashes, lossy networks, deduplication, corruption, retention,
+  erasure, backup, tenant isolation), fuzzing of the binary ingest body, an independent Python reader over frozen files,
+  Loghub-2.0 benchmarks, and CI on Linux, macOS and Windows with whitespace formatting enforced.
+- Finding that blocks T06, T07 and T14: the reference machine corrupts memory under all-core load; every concurrency
+  measurement was taken with 4 CPUs.
+- Open: continuous fuzzing (T03), performance budgets in CI (T15), a published methodological benchmark (T14),
+  external AI-friendly evaluation (T13).

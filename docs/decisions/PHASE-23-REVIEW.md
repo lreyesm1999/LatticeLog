@@ -1,24 +1,24 @@
-# PHASE-23-REVIEW — Consola web
+# PHASE-23-REVIEW — Web console
 
-- Estado: **CONDITIONAL** (consola mínima servida por el propio servidor; sin pruebas con usuarios ni E2E en navegador)
-- Fecha: 2026-11-18
-- Entregables: `src/LatticeLog.Server/ui/` (`index.html`, `app.js`, `app.css`, recursos embebidos), rutas `/ui` en
-  `LatticeServer.Ops.cs`, prueba `ServerApiTests.Console_metrics_and_backup`
+- Status: **CONDITIONAL** (a minimal console served by the server itself; no user testing or browser E2E)
+- Date: 2026-11-18
+- Deliverables: `src/LatticeLog.Server/ui/` (`index.html`, `app.js`, `app.css`, embedded resources), `/ui` routes in
+  `LatticeServer.Ops.cs`, test `ServerApiTests.Console_metrics_and_backup`
 
-| tarea | estado | evidencia |
+| task | status | evidence |
 |---|---|---|
-| T01 entrevistas | bloqueado | requiere usuarios |
-| T02 navegación | parcial | Búsqueda, Estadísticas y Catálogo; sin Overview/Sources/Settings |
-| T03 búsqueda | hecho | filtro, desde, orden, paginación con cursor firmado, cobertura visible |
-| T04 inspector | parcial | JSON completo del evento con contexto; sin vista de schema |
-| T05 timeline de traza | parcial | documento de `/v1/traces/{id}` en el inspector; sin gráfico |
-| T06 errores y volumen | parcial | barras por event/level/service con conteos exactos |
-| T07 costes de almacenamiento | parcial | catálogo de segmentos con bytes y registros |
-| T08 Context Pack desde la UI | no hecho | — |
-| T09 permisos y claves | no hecho | el token lo escribe el usuario y se guarda solo en `sessionStorage` |
-| T10 claro/oscuro, responsive | parcial | `prefers-color-scheme` y diseño flexible; sin auditoría WCAG |
-| T11 virtualización | no hecho | páginas de 100 con "Más" |
-| T12 XSS | hecho | todo con `textContent`; CSP `default-src 'self'` sin inline; `X-Frame-Options: DENY`; la prueba comprueba que el JS no usa `innerHTML` |
-| T13 E2E | parcial | prueba HTTP de servido y cabeceras; sin navegador automatizado |
-| T14 usabilidad | bloqueado | requiere usuarios |
-| T15 datos parciales | hecho | la línea de cobertura muestra `PARCIAL: motivo` y los problemas de almacenamiento |
+| T01 interviews | blocked | needs users |
+| T02 navigation | partial | Search, Stats and Catalog; no Overview/Sources/Settings |
+| T03 search | done | filter, since, order, signed-cursor pagination, visible coverage |
+| T04 inspector | partial | the event's full JSON with context; no schema view |
+| T05 trace timeline | partial | the `/v1/traces/{id}` document in the inspector; no chart |
+| T06 errors and volume | partial | bars by event/level/service with exact counts |
+| T07 storage costs | partial | segment catalog with bytes and records |
+| T08 Context Pack from the UI | not done | — |
+| T09 permissions and keys | not done | the user types the token, which is kept only in `sessionStorage` |
+| T10 light/dark, responsive | partial | `prefers-color-scheme` and a flexible layout; no WCAG audit |
+| T11 virtualization | not done | pages of 100 with "More" |
+| T12 XSS | done | everything through `textContent`; CSP `default-src 'self'` with no inline code; `X-Frame-Options: DENY`; the test checks that the JS never uses `innerHTML` |
+| T13 E2E | partial | HTTP test of serving and headers; no automated browser |
+| T14 usability | blocked | needs users |
+| T15 partial data | done | the coverage line shows `PARTIAL: reason` and storage problems |

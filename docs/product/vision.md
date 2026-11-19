@@ -1,38 +1,42 @@
-# LatticeLog — Visión (P00)
+# LatticeLog — Vision (P00)
 
-## Problema (P00-T01)
-Los logs se generan con APIs de texto libre, se almacenan como texto o JSON redundante y se leen volcando miles de
-líneas. Tres costes se repiten:
-1. **Captura**: formatear strings y serializar JSON en el hilo de la aplicación añade latencia y asignaciones.
-2. **Almacenamiento**: el 80–95 % de cada línea se repite (nombres de campo, servicio, plantillas, ids de traza).
-3. **Lectura**: humanos e IA externa reciben volcados sin estructura, sin referencias estables y sin saber qué se omitió.
+## Problem (P00-T01)
+Logs are produced with free-text APIs, stored as text or redundant JSON and read by dumping thousands of lines. Three
+costs keep repeating:
+1. **Capture**: formatting strings and serializing JSON on the application thread adds latency and allocations.
+2. **Storage**: 80–95 % of every line is repeated (field names, service, templates, trace ids).
+3. **Reading**: people and external AI get unstructured dumps, with no stable references and no idea of what was left
+   out.
 
-## Usuarios y escenarios
-| usuario | escenario concreto |
+## Users and scenarios
+| user | concrete scenario |
 |---|---|
-| Desarrollador local | Instrumenta una API .NET con eventos tipados y consulta `latticelog query ./logs --where "level >= ERROR"` sin servidor. |
-| Equipo de microservicios | Correlaciona una petición entre servicios por `trace_id`/`operation_id` y exporta un Context Pack de un incidente. |
-| Operaciones / soporte | Verifica integridad tras un corte de luz (`verify`, `repair`) y obtiene grupos de error con conteos exactos. |
-| Plataforma SaaS (futuro) | Ingesta multi-tenant, retención por niveles y acceso de solo lectura para agentes externos vía MCP. |
+| Local developer | Instruments a .NET API with typed events and runs `latticelog query ./logs --where "level >= ERROR"` with no server. |
+| Microservices team | Correlates a request across services by `trace_id`/`operation_id` and exports a Context Pack for an incident. |
+| Operations / support | Checks integrity after a power cut (`verify`, `repair`) and gets error groups with exact counts. |
+| Shared platform | Multi-tenant ingestion, retention, and read-only access for external agents through MCP. |
 
-## Tres diferenciadores (P00-T02)
-1. **Captura eficiente**: eventos tipados generados en compilación (sin `string.Format`, JSON ni reflexión en la ruta caliente).
-2. **Almacenamiento especializado**: formato `.llog` abierto con catálogos de esquema/contexto, códecs estructurales e
-   índices por segmento; reconstrucción exacta verificada.
-3. **Lectura ventajosa para IA externa sin IA interna**: evidencias deterministas con cobertura, referencias estables
-   y marcado de texto no confiable.
+## Three differentiators (P00-T02)
+1. **Efficient capture**: typed events generated at compile time (no `string.Format`, JSON or reflection on the hot
+   path).
+2. **Specialized storage**: an open `.llog` format with schema/context catalogs, structural codecs and per-segment
+   indexes; exact reconstruction, verified.
+3. **Better reading for external AI without internal AI**: deterministic evidence with coverage, stable references and
+   untrusted-text marking.
 
-## Exclusiones explícitas (P00-T03)
-- LatticeLog **no ejecuta IA**: sin LLM, embeddings ni clasificación neuronal.
-- Sin pérdida silenciosa: toda pérdida (filtro, muestreo, saturación, error de escritura, retención) se cuenta.
-- No se promete compresión universal ni superioridad sin datasets y hardware publicados.
-- Sin dependencia obligatoria de cloud: todo funciona en local.
-- Fuera del núcleo: APM de métricas/trazas completo, base de datos relacional generalista, deducir causalidad por timestamps.
+## Explicit exclusions (P00-T03)
+- LatticeLog **runs no AI**: no LLMs, embeddings or neural classification.
+- No silent loss: every loss (filter, sampling, saturation, write error, retention) is counted.
+- No promise of universal compression or superiority without published datasets and hardware.
+- No mandatory cloud dependency: everything works locally.
+- Outside the core: a full metrics/tracing APM, a general-purpose relational database, inferring causality from
+  timestamps.
 
-## Superficies del producto (P00-T04)
-SDK (.NET hoy; Java/Go/Python/Node planificados) · formato `.llog` · CLI `latticelog` · lenguaje de consulta ·
-API de evidencias · adaptador MCP de solo lectura · servidor (P16–P17) · consola web (P23) · cloud (P25).
+## Product surfaces (P00-T04)
+SDKs (.NET, Python, PHP) · `.llog` format · `latticelog` CLI · query language · evidence API · read-only MCP adapter ·
+server (P16–P24) · web console (P23).
 
-## Estado a 18-nov-2026
-Motor local (SDK, formato, escritor, lector, consultas, evidencias, CLI, MCP) implementado como **0.1.0-alpha.1**,
-con pruebas. Servidor, clúster, multi-SDK, UI y SaaS no iniciados. Ver `ROADMAP.md` y `docs/decisions/PHASE-*-REVIEW.md`.
+## Status on 2026-11-18
+Local engine, single-node server, replication, web console and the .NET, Python and PHP SDKs implemented as
+**0.1.0-alpha.1**, with tests. Cluster and storage tiers not started. See `ROADMAP.md` and
+`docs/decisions/PHASE-*-REVIEW.md`.

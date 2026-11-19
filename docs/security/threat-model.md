@@ -1,45 +1,47 @@
-# Modelo de amenazas — motor local (P18-T01, alcance parcial)
+# Threat model (P18-T01, partial scope)
 
-Alcance: SDK, formato/lector, CLI y MCP local (tabla 1) y, desde el 18-nov-2026, el servidor de un nodo (tabla 2).
-Clúster, UI y cloud **no** están cubiertos (no existen).
+Scope: SDK, format/reader, CLI and local MCP (table 1) and, since 2026-11-18, the single-node server (table 2).
+Cluster and cloud are **not** covered (they do not exist).
 
-| activo / superficie | amenaza | control implementado | pendiente |
+## 1. Local engine
+
+| asset / surface | threat | implemented control | open |
 |---|---|---|---|
-| Datos del productor | secretos persistidos | redacción en el hilo escritor antes de persistir (campos `Secret`, claves sensibles), flag `redacted` | redacción en el hilo productor; política `hash`/`allow-list` |
-| Archivos `.llog` | archivo malicioso o corrupto (parser) | CRC por cabecera/payload, límites de tamaño/expansión/profundidad/conteos, errores explícitos, 300 casos de fuzzing por bit-flip | fuzzing continuo con cobertura (SharpFuzz/libFuzzer) |
-| Archivos `.llog` | manipulación intencional | ninguno (CRC no autentica) | firma/MAC de segmentos para servidor (P18-T04) |
-| Directorio del almacén | dos escritores | lock exclusivo del SO | — |
-| Directorio del almacén | permisos | heredados del SO | documentar permisos recomendados (0700) |
-| CLI | exportación accidental masiva | `export` exige `--output` o `--stdout`, no sobrescribe sin `--force` | — |
-| Consultas | agotamiento de recursos | límites de longitud, profundidad, IN, resultados, escaneo y tiempo | cuotas por usuario (servidor) |
-| MCP / evidencias | inyección de instrucciones vía texto de logs | texto marcado como no confiable, fences Markdown seguros, sin herramientas de escritura | evaluación con agentes reales (P22-T13) |
-| MCP | path traversal | almacén fijo al arranque, sin parámetros de ruta | — |
-| Importadores | entradas gigantes / anidamiento | límites de bytes, registros, atributos y profundidad | fuzzing de importadores |
-| Dependencias | cadena de suministro | dependencias mínimas en runtime (solo `System.IO.Hashing`); Zstd/LZ4 solo en el laboratorio | SBOM, SCA y secret scanning en CI (workflow definido, no ejecutado) |
+| Producer data | persisted secrets | redaction on the writer thread before persistence (`Secret` fields, sensitive keys), `redacted` flag | redaction on the producer thread; `hash`/`allow-list` policies |
+| `.llog` files | malicious or corrupt file (parser) | CRC per header/payload, limits on size/expansion/depth/counts, explicit errors, 300 bit-flip fuzzing cases | continuous coverage-guided fuzzing (SharpFuzz/libFuzzer) |
+| `.llog` files | intentional tampering | none (a CRC does not authenticate) | segment signature/MAC for the server (P18-T04) |
+| Store directory | two writers | exclusive OS lock | — |
+| Store directory | permissions | inherited from the OS | document recommended permissions (0700) |
+| CLI | accidental mass export | `export` requires `--output` or `--stdout` and does not overwrite without `--force` | — |
+| Queries | resource exhaustion | limits on length, depth, IN, results, scan and time | per-user quotas (server) |
+| MCP / evidence | instruction injection through log text | text marked as untrusted, safe Markdown fences, no write tools | evaluation with real agents (P22-T13) |
+| MCP | path traversal | store fixed at startup, no path parameters | — |
+| Importers | huge inputs / deep nesting | limits on bytes, records, attributes and depth | importer fuzzing |
+| Dependencies | supply chain | minimal runtime dependencies (only `System.IO.Hashing`); Zstd/LZ4 only in the lab | SBOM and vulnerable-package check run in CI; SCA and secret scanning not yet |
 
-Criptografía: no se inventa cifrado. El cifrado en reposo y TLS se delegarán a bibliotecas y mecanismos estándar (P18-T04).
+Cryptography: no home-made encryption. Encryption at rest and TLS are delegated to standard libraries and mechanisms
+(P18-T04).
 
-## 2. Servidor (`latticelog-server`, P16–P18)
+## 2. Server (`latticelog-server`, P16–P18)
 
-| activo / superficie | amenaza | control implementado | pendiente |
+| asset / surface | threat | implemented control | open |
 |---|---|---|---|
-| Credenciales | robo de tokens en tránsito | TLS obligatorio fuera de loopback (el servidor no arranca en HTTP plano salvo opción explícita) | mTLS opcional; TLS probado de extremo a extremo |
-| Credenciales | robo del fichero de tokens | solo se guardan SHA-256; comparación en tiempo constante | tokens con caducidad; integración con un gestor de secretos |
-| Credenciales | fuerza bruta | límite de 20 fallos por IP y minuto (429), auditado | bloqueo distribuido (no aplica en un nodo) |
-| Autorización | acceso entre tenants | namespaces aislados (un almacén por namespace), scopes `ingest`/`read`/`admin`, nombres validados contra recorrido de rutas | pruebas de penetración |
-| Cursores | manipulación o reutilización | HMAC-SHA256 con caducidad, ligados a namespace y token; clave `server.key` (0600 en Unix) | rotación de la clave |
-| Ingestión | duplicados o pérdida por reintentos | deduplicación por (productor, secuencia) reconstruida desde los datos; los huecos solo se aceptan declarados (y el cliente los verifica con un recorrido completo) | — |
-| Ingestión | denegación de servicio | límites de petición, descompresión, ratio, registros y línea; cuota por token; cola acotada (503); tasa mínima de cuerpo (slowloris) | límites por IP para peticiones anónimas |
-| Lectura | consultas abusivas | concurrencia global y por token, timeout, tope de registros escaneados (resultado parcial explícito) | cuotas de bytes por tenant |
-| Datos personales | derecho al olvido | `POST /v1/admin/erase` reescribe los segmentos sin los registros afectados, con verificación y auditoría; los reenvíos no los reintroducen | borrado en copias externas (almacenes de productores, exportaciones, backups, réplicas) |
-| Datos personales | retención excesiva | retención por antigüedad o tamaño (CLI, automática al rotar, endpoint de administración) | política por namespace en configuración |
-| Auditoría | acciones sin rastro | registro de solo-añadir con CRC por línea: administración, lecturas (filtros, nunca datos) y fallos de autenticación | firma encadenada (tamper-evident fuerte); envío a un SIEM |
-| Consola web (`/ui`) | XSS por contenido de logs, clickjacking, robo del token | todo se pinta con `textContent`; CSP `default-src 'self'` sin scripts inline; `X-Frame-Options: DENY` y `frame-ancestors 'none'`; token solo en `sessionStorage` de la pestaña | SSO/OIDC en lugar de tokens pegados; auditoría de accesibilidad y E2E en navegador |
-| Métricas (`/metrics`) | reconocimiento (namespaces y volúmenes) | requiere token admin salvo `--metrics-anonymous` explícito | — |
-| Backups | escritura en rutas arbitrarias; copia inconsistente | el destino lo fija el operador (`--backup-dir`), nunca el cliente; copia verificada leyéndola | cifrado de los backups |
-| Réplica | token de réplica expuesto; datos sin cifrar en tránsito | token solo por entorno; HTTPS fuera de loopback igual que la ingestión | fencing entre primarios |
-| Respuestas de error | fuga de información interna | al cliente solo tipo y mensaje, nunca la pila; el detalle va a `Diagnostics` | — |
-| Cadena de suministro | dependencias del servidor | solo el framework ASP.NET Core; imagen *chiseled* sin shell y con usuario no root | escaneo de la imagen; SBOM en CI |
+| Credentials | token theft in transit | TLS required off loopback (the server does not start on plain HTTP without an explicit option) | optional mTLS; end-to-end TLS test |
+| Credentials | theft of the tokens file | only SHA-256 hashes are stored; constant-time comparison | expiring tokens; secret-manager integration |
+| Credentials | brute force | limit of 20 failures per IP per minute (429), audited | distributed lockout (not applicable on one node) |
+| Authorization | cross-tenant access | isolated namespaces (one store per namespace), `ingest`/`read`/`admin` scopes, names validated against path traversal | penetration testing |
+| Cursors | tampering or reuse | HMAC-SHA256 with expiry, bound to namespace and token; `server.key` (0600 on Unix) | key rotation |
+| Ingestion | duplicates or loss through retries | deduplication by (producer, sequence) rebuilt from the data; gaps are accepted only when declared (and the client confirms them with a full scan) | — |
+| Ingestion | denial of service | limits on request, decompression, ratio, records and line length; per-token quota; bounded queue (503); minimum body rate (slowloris) | per-IP limits for anonymous requests |
+| Reads | abusive queries | global and per-token concurrency, timeout, cap on scanned records (explicit partial result) | per-tenant byte quotas |
+| Personal data | right to erasure | `POST /v1/admin/erase` rewrites segments without the affected records, with verification and audit; resends do not reintroduce them | erasure in external copies (producer stores, exports, backups, replicas) |
+| Personal data | excessive retention | retention by age or size (CLI, automatic on rotation, admin endpoint) | per-namespace policy in configuration |
+| Audit | actions without a trace | append-only log with a CRC per line: administration, reads (filters, never data) and authentication failures | chained signatures (strong tamper evidence); shipping to a SIEM |
+| Web console (`/ui`) | XSS through log content, clickjacking, token theft | everything rendered with `textContent`; CSP `default-src 'self'` with no inline scripts; `X-Frame-Options: DENY` and `frame-ancestors 'none'`; token only in the tab's `sessionStorage` | SSO/OIDC instead of pasted tokens; accessibility audit and browser E2E |
+| Metrics (`/metrics`) | reconnaissance (namespaces and volumes) | requires an admin token unless `--metrics-anonymous` is set explicitly | — |
+| Backups | writes to arbitrary paths; inconsistent copy | the destination is set by the operator (`--backup-dir`), never the client; the copy is verified by reading it | backup encryption |
+| Replica | exposed replica token; unencrypted data in transit | token only through the environment; HTTPS off loopback, as for ingestion | fencing between primaries |
+| Error responses | leaking internal information | the client only gets a type and a message, never a stack trace; details go to `Diagnostics` | — |
+| Supply chain | server dependencies | only the ASP.NET Core framework; *chiseled* image with no shell and a non-root user | image scanning |
 
-Revisión externa: el alcance propuesto para un pentest está en `docs/security/pentest-scope.md`. **No se ha hecho
-ningún pentest.**
+External review: the proposed pentest scope is in `docs/security/pentest-scope.md`. **No pentest has been done.**

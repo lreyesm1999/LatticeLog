@@ -1,31 +1,30 @@
-# Despliegue en una sola máquina (P17-T15)
+# Single-node deployment (P17-T15)
 
-Una máquina, sin Kubernetes. `latticelog-server` recibe los datos de los forwarders y sirve las consultas.
+One machine, no Kubernetes. `latticelog-server` receives data from forwarders and serves queries.
 
-## 1. Preparar
+## 1. Prepare
 
-1. **Datos** en un disco con espacio de sobra y que no sea el del sistema si es posible. Dentro van
-   `ns/<namespace>/` (un almacén por namespace) y `server.key` (la clave de los cursores; inclúyela en las copias de
-   seguridad).
-2. **Certificado TLS** en PFX. Fuera de loopback el servidor se niega a arrancar en HTTP plano, salvo con
-   `--allow-insecure-http`, que no se recomienda.
-3. **Tokens**. Para cada secreto:
+1. **Data** on a disk with plenty of space, ideally not the system disk. It holds `ns/<namespace>/` (one store per
+   namespace) and `server.key` (the cursor signing key; include it in backups).
+2. **TLS certificate** as a PFX. Off loopback the server refuses to start on plain HTTP unless you pass
+   `--allow-insecure-http`, which is not recommended.
+3. **Tokens**. For each secret:
    ```bash
-   latticelog-server hash-token "<secreto largo y aleatorio>"
+   latticelog-server hash-token "<long random secret>"
    ```
-   y un `tokens.json` con un token por aplicación (`ingest`, limitado a su namespace) y uno por persona o equipo
-   (`read`). Ver `specs/server-api.md` §2.
+   and a `tokens.json` with one token per application (`ingest`, limited to its namespace) and one per person or team
+   (`read`). See `specs/server-api.md` §2.
 
-## 2. Arrancar
+## 2. Start
 
-Binario:
+Binary:
 
 ```bash
 export LATTICELOG_CERT_PASSWORD='…'
 latticelog-server --data /srv/latticelog --tokens /etc/latticelog/tokens.json --listen https://0.0.0.0:7400 --cert /etc/latticelog/server.pfx
 ```
 
-Contenedor (`deploy/Dockerfile`, imagen *chiseled* sin shell y con usuario no root):
+Container (`deploy/Dockerfile`, a *chiseled* image with no shell and a non-root user):
 
 ```bash
 docker build -f deploy/Dockerfile -t latticelog-server:dev .
@@ -34,33 +33,31 @@ docker run -d --name latticelog -p 7400:7400 -v /srv/latticelog:/data \
   -e LATTICELOG_CERT_PASSWORD='…' latticelog-server:dev
 ```
 
-Comprobar: `curl https://host:7400/v1/health` devuelve `{"status":"ok",…}`. Con un token `admin` también muestra el
-detalle de cada namespace.
+Check: `curl https://host:7400/v1/health` returns `{"status":"ok",…}`. With an `admin` token it also shows the details
+of each namespace.
 
-## 3. Aplicaciones
+## 3. Applications
 
-Las aplicaciones escriben en su almacén local y un `Forwarder` (paquete `LatticeLog.Ingest`) envía al servidor (ver
-README). Si el servidor no está disponible, los datos esperan en el disco de la aplicación, que tiene su propia cuota.
+Applications write to their local store, and a `Forwarder` (package `LatticeLog.Ingest`) ships to the server (see the
+README). If the server is unavailable, data waits on the application's disk, which has its own quota.
 
-## 4. Operación
+## 4. Operations
 
-- **Rotar tokens**: añade el token nuevo al fichero, cambia los clientes y quita el viejo. No hace falta reiniciar.
-- **Actualizar**: parar, sustituir el binario o la imagen y arrancar. Al arrancar se recupera cada namespace y se
-  reconstruye la deduplicación desde los datos, así que los forwarders pueden reintentar sin generar duplicados.
-- **Copias de seguridad**: en caliente con `POST /v1/admin/backup?ns=…` (arrancar con `--backup-dir`) o
-  `latticelog backup`; cada copia se verifica. Guarda también `server.key` y el fichero de tokens. Detalle y
-  restauración en `docs/operations/runbook.md`.
-- **Retención, compactación, verificación y borrado de privacidad**: en línea, sin parar, con `POST /v1/admin/…`
-  (`specs/server-api.md` §5). Fuera de línea siguen existiendo `latticelog retention|compact|verify`.
-- **Métricas**: `GET /metrics` (Prometheus, token admin). **Consola**: `https://host:7400/ui`. **Auditoría**:
+- **Rotating tokens**: add the new token to the file, switch the clients, then remove the old one. No restart needed.
+- **Upgrading**: stop, replace the binary or image, and start. On startup every namespace is recovered and
+  deduplication is rebuilt from the data, so forwarders can retry without creating duplicates.
+- **Backups**: hot, with `POST /v1/admin/backup?ns=…` (start with `--backup-dir`) or `latticelog backup`; every copy is
+  verified. Also keep `server.key` and the tokens file. Details and restore in `docs/operations/runbook.md`.
+- **Retention, compaction, verification and privacy erasure**: online, without stopping, with `POST /v1/admin/…`
+  (`specs/server-api.md` §5). Offline, `latticelog retention|compact|verify` still exist.
+- **Metrics**: `GET /metrics` (Prometheus, admin token). **Console**: `https://host:7400/ui`. **Audit log**:
   `data/audit/`.
-- **Capacidad**: un hilo escritor por namespace. En la máquina de referencia, ~300–600k registros/s de ingestión con
-  pocos productores (`reports/ingest-v1.md`). Las consultas pesadas compiten por CPU con la ingestión; si la
-  ingestión es prioritaria, baja `MaxConcurrentQueries`.
+- **Capacity**: one writer thread per namespace. On the reference machine, ~300–600k records/s of ingestion with a
+  few producers (`reports/ingest-v1.md`). Heavy queries compete for CPU with ingestion; if ingestion takes priority,
+  lower `MaxConcurrentQueries`.
 
-## 5. Límites conocidos
+## 5. Known limits
 
-- Réplica asíncrona opcional con failover manual (`docs/operations/replication.md`); sin clúster ni failover
-  automático. Sin réplica, si se pierde el disco, se pierde lo que no esté en un backup ni en los almacenes locales de
-  los productores.
-- Imagen Docker no construida ni probada todavía en este proyecto.
+- Optional asynchronous replica with manual failover (`docs/operations/replication.md`); no cluster and no automatic
+  failover. Without a replica, losing the disk loses whatever is not in a backup or in the producers' local stores.
+- The Docker image has not been built or tested in this project yet.

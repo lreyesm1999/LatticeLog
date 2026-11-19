@@ -272,10 +272,9 @@ tests/  benchmarks/  research/  reports/
 
 ## Documentation
 
-Specs are in English. Product, operations and design docs are currently in **Spanish**.
-
 | Topic | Where |
 |---|---|
+| Master plan (phases P00–P28, tasks and gates) | [`docs/MASTER-PLAN.md`](docs/MASTER-PLAN.md) |
 | Format, protocol, server API, query language | [`specs/`](specs) |
 | Deploying a single node | [`docs/deploy/single-node.md`](docs/deploy/single-node.md) |
 | Operations, SLIs, alerts, backup, runbooks | [`docs/operations/runbook.md`](docs/operations/runbook.md) |

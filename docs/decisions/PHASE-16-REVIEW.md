@@ -1,44 +1,43 @@
-# PHASE-16-REVIEW — Protocolo de ingestión remota y collector
+# PHASE-16-REVIEW — Remote ingest protocol and collector
 
-- Estado: **CONDITIONAL** (protocolo, cliente y collector funcionan y están probados en loopback con fallos
-  inyectados; carga multi-productor medida en `reports/ingest-v1.md` §3; faltan red real y TLS probado)
-- Fecha: 2026-11-18
-- Decisiones: `docs/decisions/ADR-0009.md` · Especificación: `specs/ingest-protocol.md`
-- Entregables: `src/LatticeLog.Ingest` (envelope, cliente, forwarder), `src/LatticeLog.Server` (collector),
-  `src/LatticeLog.Collector` (ejecutable `latticelog-collector`, desde P17 `src/LatticeLog.ServerHost` → `latticelog-server`), `tests/LatticeLog.Tests/IngestTests.cs`,
-  `reports/ingest-v1.md`
+- Status: **CONDITIONAL** (protocol, client and collector work and are tested on loopback with injected faults;
+  multi-producer load measured in `reports/ingest-v1.md` §3; real network and TLS not yet tested)
+- Date: 2026-11-18
+- Decisions: `docs/decisions/ADR-0009.md` · Specification: `specs/ingest-protocol.md`
+- Deliverables: `src/LatticeLog.Ingest` (envelope, client, forwarder), `src/LatticeLog.Server` (collector),
+  `src/LatticeLog.Collector` (the `latticelog-collector` executable, since P17 `src/LatticeLog.ServerHost` →
+  `latticelog-server`), `tests/LatticeLog.Tests/IngestTests.cs`, `reports/ingest-v1.md`
 
-| tarea | estado | evidencia |
+| task | status | evidence |
 |---|---|---|
-| T01 transporte | hecho | HTTP/1.1+2, un POST por lote; gRPC descartado con motivos (ADR-0009) |
-| T02 envelope | hecho | cabecera de 48 B: productor, rango de secuencias, número de registros, codificación, compresión, CRC-32 |
-| T03 semántica | hecho | at-least-once en el cable, exactly-once efectivo por productor; límites documentados |
-| T04 idempotencia | hecho y probado | deduplicación por (productor, secuencia local); recorte de solapes; huecos explícitos |
-| T05 ACK | hecho | nivel alcanzado de verdad (fsync/os) con group commit; los duplicados también fuerzan el flush pedido; réplica: N/A hasta P19 |
-| T06 reintentos | hecho | backoff exponencial con jitter completo y `Retry-After`; errores no reintentables reportados |
-| T07 spool | hecho | el almacén local es el spool (durable, con cuota) |
-| T08 spool lleno | documentado | cuota local: escritura rechazada y contada (`DroppedWriteError`), sin borrado; sin prueba de extremo a extremo |
-| T09 negociación | parcial | campo `body_encoding` + 415 con lista aceptada; solo existe la codificación JSONL, no hay alternativa a la que caer |
-| T10 TLS/auth/rotación | parcial | tokens con hash y rotación en caliente probados; TLS con Kestrel implementado pero **no probado**; HTTP en dirección pública rechazado |
-| T11 cuotas/backpressure | hecho | 429 por token probado; 503 por cola llena implementado pero no probado; límite de tasa mínima (slowloris) |
-| T12 eventos gigantes/bombas | hecho y probado | límites de petición, descomprimido, ratio, registros y bytes por línea |
-| T13 pruebas de red | parcial | pérdida de petición y de respuesta, retrasos, caída del collector; sin pérdida a nivel TCP ni reordenación (un lote en vuelo) |
-| T14 medición | hecho (loopback) | ~180–217k registros/s, ACK p50 12–15 ms por lote de 5 000 |
-| T15 límites de garantías | hecho | `specs/ingest-protocol.md` §4 |
+| T01 transport | done | HTTP/1.1+2, one POST per batch; gRPC rejected with reasons (ADR-0009) |
+| T02 envelope | done | 48 B header: producer, sequence range, record count, encoding, compression, CRC-32 |
+| T03 semantics | done | at-least-once on the wire, effective exactly-once per producer; limits documented |
+| T04 idempotency | done and tested | deduplication by (producer, local sequence); overlap trimming; explicit gaps |
+| T05 ACK | done | the level actually reached (fsync/os) with group commit; duplicates also force the requested flush; replica ACK: N/A |
+| T06 retries | done | exponential backoff with full jitter and `Retry-After`; non-retryable errors reported |
+| T07 spool | done | the local store is the spool (durable, with a quota) |
+| T08 full spool | documented | local quota: write rejected and counted (`DroppedWriteError`), never deleted; no end-to-end test |
+| T09 negotiation | done | `body_encoding` field + 415 with the accepted list; binary body (2) with automatic fallback to JSONL (1), tested |
+| T10 TLS/auth/rotation | partial | hashed tokens and hot rotation tested; TLS with Kestrel implemented but **not tested**; plain HTTP on a public address refused |
+| T11 quotas/backpressure | done | per-token 429 tested; queue-full 503 implemented but not tested; minimum rate limit (slowloris) |
+| T12 huge events/bombs | done and tested | limits on request, decompressed size, ratio, records and bytes per line |
+| T13 network tests | partial | request and response loss, delays, collector crash; no TCP-level loss or reordering (one batch in flight) |
+| T14 measurement | done (loopback) | ~180–217k records/s with JSONL, p50 ACK 12–15 ms per 5,000-record batch; binary body 2.0–3.4× faster |
+| T15 limits of the guarantees | done | `specs/ingest-protocol.md` §4 |
 
-- Gate G16 ("desconectarse, reintentar y recuperarse sin duplicados silenciosos ni confirmaciones falsas"):
-  **cumplido en loopback con fallos inyectados**. Falta repetirlo por una red real y con TLS.
-- Riesgos residuales:
-  - el forwarder relee el segmento activo en cada sondeo (coste de CPU con segmentos grandes);
-  - un collector que falla al escribir deja de aceptar hasta reiniciarse (decisión deliberada de seguridad);
-  - sin réplica (P19).
-- Decisión: avanzar a P17 manteniendo los pendientes.
+- Gate G16 ("disconnect, retry and recover without silent duplicates or false confirmations"): **met on loopback with
+  injected faults**. To be repeated over a real network and with TLS.
+- Residual risks:
+  - a collector that fails to write stops accepting until restarted (a deliberate safety decision);
+  - replication is asynchronous (P19).
+- Decision: proceed to P17, keeping the open items.
 
-## Actualización 18-nov-2026 (segunda parte)
+## Update 2026-11-18 (second part)
 
-- **Cuerpo binario** (`body_encoding = 2`, mini segmento con copia del catálogo + Lattice-S): ingestión 2,0–3,4× más
-  rápida que JSONL con 4 CPUs (`reports/ingest-v1.md` §5). Decodificación y procedencia en el hilo de la petición, no en
-  el escritor. Negociación por 415 con vuelta a JSONL, probada.
-- **Forwarder incremental** (`StoreTail`): ya no relee el segmento activo en cada sondeo. Un fallo encontrado en el
-  camino (reintento tras envío fallido declarado como hueco) se corrigió antes de publicarse y tiene prueba.
-- Sigue faltando: red real entre máquinas y TLS con certificado real.
+- **Binary body** (`body_encoding = 2`, a mini segment with a catalog copy + Lattice-S): ingestion 2.0–3.4× faster than
+  JSONL on 4 CPUs (`reports/ingest-v1.md` §5). Decoding and provenance happen on the request thread, not on the writer.
+  415 negotiation with fallback to JSONL, tested.
+- **Incremental forwarder** (`StoreTail`): no longer re-reads the active segment on every poll. A bug found along the
+  way (a retry after a failed send declared as a gap) was fixed before release and has a test.
+- Still open: a real network between machines and TLS with a real certificate.

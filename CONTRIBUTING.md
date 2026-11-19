@@ -24,7 +24,8 @@ The .NET SDK version is pinned in [`global.json`](global.json). The Python and P
 - Keep each PR to one concern, branched from `main`. CI must be green on Linux, macOS and Windows.
 - Add or update tests with every behaviour change. Tests must be deterministic: block on events or barriers instead of asserting wall-clock budgets.
 - Update the docs that describe what you changed: `specs/` for anything on the wire or on disk, and `CHANGELOG.md` for anything a user would notice.
-- Code and code comments are in English. Product and operations docs under `docs/` are currently in Spanish. English contributions there are welcome too.
+- Everything in the repository is written in English: code, comments, specs and docs.
+- Reference the task ID from [`docs/MASTER-PLAN.md`](docs/MASTER-PLAN.md) (`PXX-TYY`) when a change belongs to a planned task.
 
 ### Changes with extra requirements
 

@@ -1,7 +1,8 @@
-# PHASE-20-REVIEW — Almacenamiento por niveles y object storage
+# PHASE-20-REVIEW — Tiered storage and object storage
 
-- Estado: **NOT STARTED**
-- Fecha: 2026-11-18
-- Base disponible: segmentos inmutables una vez sellados, manifest con journal, retención por antigüedad y tamaño
-  (`Retention.cs`), backup verificado. Es la base para `hot`/`warm`; no hay `cold` ni object storage.
-- Decisión: depende de P19-T01 y de demanda real de retención larga.
+- Status: **NOT STARTED**
+- Date: 2026-11-18
+- Available foundation: segments immutable once sealed, a journaled manifest, retention by age and size
+  (`Retention.cs`), verified backup. That is the foundation for `hot`/`warm`; there is no `cold` tier or object
+  storage.
+- Decision: depends on P19-T01 and on real demand for long retention.

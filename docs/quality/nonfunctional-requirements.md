@@ -1,17 +1,17 @@
-# Requisitos no funcionales y SLOs objetivo (P00-T05)
+# Non-functional requirements and target SLOs (P00-T05)
 
-**Todos los valores son objetivos iniciales, no resultados.** Las mediciones reales están en `reports/` con hardware.
+**All values are initial targets, not results.** Real measurements, with their hardware, are in `reports/`.
 
-| área | objetivo inicial | cómo se mide | estado |
+| area | initial target | how it is measured | status |
 |---|---|---|---|
-| Logging deshabilitado (nivel filtrado) | 0 asignaciones, < 5 ns por llamada | BenchmarkDotNet `HotPathBenchmarks` | medido, ver `reports/benchmarks-hotpath.md` |
-| Evento tipado habilitado (ruta del productor) | p99 < 2 µs sin saturación; asignaciones acotadas y documentadas | BenchmarkDotNet + prueba de latencia | medido parcialmente |
-| Throughput sostenido local | ≥ 100 k eventos/s por proceso en modo Balanced en hardware de escritorio | app de ejemplo / laboratorio | 128 k ev/s medido en una corrida (Windows x64) |
-| Durable | p99 de ACK < 10 ms en NVMe | pendiente | no medido |
-| Recuperación tras crash | sin corrupción ni registros inventados en el 100 % de los casos de prueba | inyección de fallos | cumplido en pruebas (muestreo de offsets) |
-| Lectura secuencial | ≥ 1 M registros/s decodificados | laboratorio | ver `reports/baseline-v1.md` |
-| Consulta selectiva | trace lookup sin decodificar segmentos que el bloom excluye | `QueryTests`, laboratorio | cumplido |
-| Disponibilidad del servidor | 99,9 % mensual | P24 | no aplicable (sin servidor) |
-| Durabilidad del servidor | ACK solo tras persistencia según política | P16 | no aplicable |
-| Seguridad | ningún secreto conocido persistido; texto de logs marcado como no confiable en salidas | pruebas | cumplido para el motor local |
-| Portabilidad | archivo legible sin .NET | lector Python independiente | cumplido (golden files) |
+| Disabled logging (filtered level) | 0 allocations, < 5 ns per call | BenchmarkDotNet `HotPathBenchmarks` | measured, see `reports/benchmarks-hotpath.md` |
+| Enabled typed event (producer path) | p99 < 2 µs without saturation; bounded, documented allocations | BenchmarkDotNet + latency test | partially measured |
+| Sustained local throughput | ≥ 100k events/s per process in Balanced mode on desktop hardware | sample app / lab | 128k ev/s measured in one run (Windows x64) |
+| Durable | p99 ACK < 10 ms on NVMe | pending | not measured |
+| Crash recovery | no corruption and no invented records in 100 % of test cases | fault injection | met in tests (offset sampling) |
+| Sequential read | ≥ 1M records/s decoded | lab | see `reports/baseline-v1.md` |
+| Selective query | trace lookup without decoding segments the bloom filter excludes | `QueryTests`, lab | met |
+| Server availability | 99.9 % monthly | P24 SLIs (`docs/operations/runbook.md`) | defined, not measured in production |
+| Server durability | ACK only after persistence according to policy | P16 | met in tests |
+| Security | no known secret persisted; log text marked as untrusted in outputs | tests | met for the local engine |
+| Portability | file readable without .NET | independent Python reader | met (golden files) |

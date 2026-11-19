@@ -1,14 +1,14 @@
-# PHASE-09-REVIEW — Lattice-P: predicción (I+D)
+# PHASE-09-REVIEW — Lattice-P: prediction (R&D)
 
-- Estado: **PASS (resultado negativo)**
-- Fecha y versión/commit: 2026-11-18 · 0.1.0-alpha.1 (working tree, sin commits)
-- PRs e issues cerrados: ninguno (no existe repositorio remoto ni tracker; IDs de tarea según docs/PLAN-MAESTRO.md)
-- Entregables verificados: estudio previo con longitudes de código adaptativas en el laboratorio
-- Evidencia de tests: n/a
-- Evidencia de benchmarks: ahorro optimista ≤ 0,6 % de S+deflate en las 8 cargas
-- Seguridad/compatibilidad: n/a
-- Hipótesis aceptadas/refutadas: G9: no hay mejora neta posible que justifique CPU/estado/checkpoints; P se archiva
-- Limitaciones abiertas: residuos numéricos (T06/T07) y datos reales no evaluados
-- ADRs nuevas: ver docs/decisions/ADR-*.md
-- Riesgos residuales: R01, R08 eliminados al no construir P
-- Decisión: detener P; conservar S/C
+- Status: **PASS (negative result)**
+- Date and version: 2026-11-18 · 0.1.0-alpha.1
+- PRs and issues closed: none (tasks are tracked by ID in docs/MASTER-PLAN.md)
+- Verified deliverables: preliminary study with adaptive code lengths in the lab
+- Test evidence: n/a
+- Benchmark evidence: optimistic savings ≤ 0.6 % of S+deflate on all 8 workloads
+- Security/compatibility: n/a
+- Hypotheses accepted/refuted: G9: no possible net improvement justifies the CPU/state/checkpoints; P is archived
+- Open limitations: numeric residuals (T06/T07) and real data not evaluated
+- New ADRs: see docs/decisions/ADR-*.md
+- Residual risks: R01, R08 removed by not building P
+- Decision: stop P; keep S/C

@@ -1,34 +1,36 @@
-# PHASE-14-REVIEW — SDK .NET listo para producción (Local v1.0)
+# PHASE-14-REVIEW — Production-ready .NET SDK (Local v1.0)
 
-- Estado: **NOT PASSED** (avance sustancial; quedan criterios que exigen CI multiplataforma y RC; licencia MIT decidida)
-- Fecha y versión/commit: 2026-11-18 · sobre `a10d1f9` (formato 0.2) + cambios de esta revisión
-- PRs e issues cerrados: ninguno (no existe repositorio remoto ni tracker; IDs de tarea según docs/PLAN-MAESTRO.md)
+- Status: **NOT PASSED** (substantial progress; the remaining criteria need ARM64 coverage and an RC; MIT license
+  decided)
+- Date and version: 2026-11-18 · on top of `a10d1f9` (format 0.2) + the changes of this review
+- PRs and issues closed: none (tasks are tracked by ID in docs/MASTER-PLAN.md)
 
-## Hecho y verificado en esta revisión
+## Done and verified in this review
 
-| criterio | evidencia | resultado |
+| criterion | evidence | result |
 |---|---|---|
-| Durabilidad demostrada con caída real | `tests/LatticeLog.Tests/CrashTests.cs` + `tests/LatticeLog.CrashHarness` | 3 modos × 3 kills con rotación: 0 registros confirmados perdidos, prefijo sin huecos ni duplicados, recuperación limpia |
-| Catálogos de segmentos abiertos | `DurabilityTests.Torn_tail_never_orphans_records_from_their_catalog`, ADR-0006 | un corte nunca deja registros sin catálogo; riesgo residual acotado y documentado |
-| Asignaciones de la ruta habilitada | `reports/benchmarks-hotpath.md` | tipado 56 ns / 5 B (antes 189 ns / 417 B); texto libre 63 ns / 105 B |
-| Concurrencia del anillo | `LoggerTests.Ring_with_many_producers_...`, `Pooled_records_...` | 8 productores en un anillo de 16 huecos: cada registro una vez y en orden por productor; el reciclaje no corrompe datos ni secretos redactados |
-| Latencia a tasa fija | `benchmarks/LatticeLog.Benchmarks/FixedRate.cs`, `reports/latency-v1.md` | medida; hallazgo abierto de bloqueos del hilo escritor (ver abajo) |
-| Trimming/AOT | `Directory.Build.targets`, publish recortado de la CLI | análisis activo y sin avisos; CLI recortada probada de punta a punta. Native AOT: solo en CI Linux (sin toolchain nativo local) |
-| Paquetes | `dotnet pack` → 9 paquetes + snupkg; consumo desde proyecto limpio | generador incluido en `LatticeLog.Core`; eventos tipados funcionan desde el paquete |
-| Datos públicos | Loghub-2.0, `reports/loghub2-v1.md` | importación de texto byte a byte verificada en 14 conjuntos |
+| Durability proven with a real crash | `tests/LatticeLog.Tests/CrashTests.cs` + `tests/LatticeLog.CrashHarness` | 3 modes × 3 kills with rotation: 0 acknowledged records lost, a prefix with no gaps or duplicates, clean recovery |
+| Catalogs of open segments | `DurabilityTests.Torn_tail_never_orphans_records_from_their_catalog`, ADR-0006 | a cut never leaves records without their catalog; residual risk bounded and documented |
+| Allocations on the enabled path | `reports/benchmarks-hotpath.md` | typed 56 ns / 5 B (previously 189 ns / 417 B); free text 63 ns / 105 B |
+| Ring concurrency | `LoggerTests.Ring_with_many_producers_...`, `Pooled_records_...` | 8 producers on a 16-slot ring: each record exactly once and in order per producer; recycling corrupts neither data nor redacted secrets |
+| Fixed-rate latency | `benchmarks/LatticeLog.Benchmarks/FixedRate.cs`, `reports/latency-v1.md` | measured; open finding about writer-thread stalls (see below) |
+| Trimming/AOT | `Directory.Build.targets`, trimmed CLI publish | analysis active and warning-free; trimmed CLI tested end to end. Native AOT verified in CI (Linux) |
+| Packages | `dotnet pack` → 9 packages + snupkg; consumed from a clean project | generator bundled in `LatticeLog.Core`; typed events work from the package |
+| Public data | Loghub-2.0, `reports/loghub2-v1.md` | byte-exact text import verified on 14 datasets |
 
-Pruebas: 103 en Windows x64 (todas verdes, Debug y Release) + lector Python independiente sobre los golden files v0.1 y v0.2.
+Tests at the time: 103 on Windows x64 (all green, Debug and Release) + the independent Python reader over the v0.1 and
+v0.2 golden files. Since publishing, CI runs the suite on Linux, macOS and Windows.
 
-## Pendiente para PASS
+## Open for PASS
 
-- CI en Linux/macOS/ARM64 y Native AOT real (job `aot-and-pack` preparado, nunca ejecutado: no hay remoto).
-- Bloqueos del hilo escritor: **causa identificada** (latencia del almacenamiento, fsync de hasta 5,3 s en un SSD al
-  98 %, más la espera de NTFS al escribir en el archivo que se está vaciando) y **mitigada** con durabilidad en segundo
-  plano (1 productor a 500k/s: de 4/12 a 0/12 corridas con bloqueo). Con 4 productores persisten cuando el disco tarda
-  segundos. Falta repetirlo en un disco con espacio libre y en Linux, y decidir si separar codificación y E/S.
-- ~~Licencia~~ (MIT), firma de paquetes, SourceLink con el repositorio remoto, SBOM en CI.
-- Compatibilidad N-1 y release candidate.
-- Pruebas de pérdida de energía / caída del SO (requieren VM o hardware de inyección de fallos).
+- ARM64 coverage.
+- Writer-thread stalls: **root cause identified** (storage latency, fsync up to 5.3 s on an SSD at 98 % capacity, plus
+  NTFS waiting when writing to a file being flushed) and **mitigated** with background durability (1 producer at
+  500k/s: from 4/12 to 0/12 runs with a stall). With 4 producers they persist when the disk takes seconds. To be
+  repeated on a disk with free space and on Linux, and to decide whether to split encoding and I/O.
+- ~~License~~ (MIT); package signing, SourceLink to the public repository.
+- N-1 compatibility and a release candidate.
+- Power-loss / OS-crash tests (need a VM or fault-injection hardware).
 
-- Riesgos residuales: R04, R05; nuevo: bloqueos de E/S del escritor trasladados a productores con política `Block`.
-- Decisión: no liberar v1.0.
+- Residual risks: R04, R05; new: writer I/O stalls propagated to producers with the `Block` policy.
+- Decision: do not release v1.0.

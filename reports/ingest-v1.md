@@ -1,126 +1,125 @@
 # Remote ingestion v1 — functional evidence and end-to-end measurement (P16-T13, P16-T14)
 
-Fecha: 18-nov-2026 · Misma máquina que el resto de informes (i9-14900KF, Windows 11, .NET 10.0.15, SSD al 98 % de
-ocupación). Collector y cliente en **loopback**: no hay red real de por medio.
+Date: 2026-11-18 · The same machine as the other reports (i9-14900KF, Windows 11, .NET 10.0.15, SSD at 98 %
+capacity). Collector and client on **loopback**: there is no real network in between.
 
-## 1. Pruebas funcionales (`tests/LatticeLog.Tests/IngestTests.cs`, todas verdes 3 veces seguidas)
+## 1. Functional tests (`tests/LatticeLog.Tests/IngestTests.cs`, all green 3 times in a row)
 
-| prueba | qué se inyecta | qué se comprueba |
+| test | what is injected | what is checked |
 |---|---|---|
-| red con pérdidas | 20 % peticiones perdidas, 20 % respuestas perdidas **después** de que el servidor guardó, 10 % con retraso; 12 000 registros en lotes de 700 | el servidor tiene cada registro **exactamente una vez**, en orden local, con su contexto original debajo del de `ingest` |
-| caída del collector | se detiene sin checkpoint a mitad; el cliente pierde además su cursor y reenvía todo desde 1 | la deduplicación se reconstruye a partir de los datos y el resultado final tiene 6 000 registros, ninguno dos veces |
-| reglas de deduplicación | lote repetido, lote solapado, hueco, hueco declarado | `duplicate` / `partial_duplicate` / 409 `sequence_gap` / `gap_before` |
-| seguridad y límites | sin token, token erróneo, productor no permitido, CRC alterado, codificación desconocida, bomba gzip (4 MB de espacios), petición demasiado grande | 401 / 401 / 403 / 400 / 415 / 413 / 413, y el servidor sigue sano después |
-| rotación y cuotas | se cambia el fichero de tokens en caliente; token con 100 registros/s | el token viejo da 401 y el nuevo 200, sin reiniciar; 429 con `Retry-After` |
-| HTTP en una dirección pública | `http://0.0.0.0` sin `AllowInsecureHttp` | se niega a arrancar |
+| lossy network | 20 % of requests lost, 20 % of responses lost **after** the server stored the batch, 10 % delayed; 12,000 records in batches of 700 | the server holds every record **exactly once**, in local order, with its original context under the `ingest` one |
+| collector crash | it stops halfway without a checkpoint; the client also loses its cursor and resends everything from 1 | deduplication is rebuilt from the data and the final result has 6,000 records, none twice |
+| deduplication rules | repeated batch, overlapping batch, gap, declared gap | `duplicate` / `partial_duplicate` / 409 `sequence_gap` / `gap_before` |
+| security and limits | no token, wrong token, disallowed producer, altered CRC, unknown encoding, gzip bomb (4 MB of spaces), oversized request | 401 / 401 / 403 / 400 / 415 / 413 / 413, and the server stays healthy afterwards |
+| rotation and quotas | the tokens file is changed while running; a token limited to 100 records/s | the old token gets 401 and the new one 200, with no restart; 429 with `Retry-After` |
+| HTTP on a public address | `http://0.0.0.0` without `AllowInsecureHttp` | refuses to start |
 
-## 2. Rendimiento de extremo a extremo (`benchmarks … -- ingest`)
+## 2. End-to-end performance (`benchmarks … -- ingest`)
 
-300 000 eventos tipados (4 campos), lotes de 5 000, **un lote en vuelo** (como el forwarder), con calentamiento
-descartado. Dos corridas:
+300,000 typed events (4 fields), batches of 5,000, **one batch in flight** (like the forwarder), warm-up discarded. Two
+runs:
 
-| cuerpo | ACK | registros/s | MB/s en el cable | bytes/registro | ACK p50 ms | ACK p99 ms |
+| body | ACK | records/s | MB/s on the wire | bytes/record | ACK p50 ms | ACK p99 ms |
 |---|---|---:|---:|---:|---:|---:|
-| jsonl+gzip | FsyncConfirmed | 195 277 / 191 984 | 5,7 | 29,2 | 13,9 / 14,8 | 48,9 / 43,7 |
-| jsonl | FsyncConfirmed | 179 028 / 181 828 | 42 | 233,4 | 14,9 / 14,0 | 66,7 / 45,3 |
-| jsonl+gzip | WrittenToOs | 216 728 / 215 191 | 6,3 | 29,2 | 12,3 / 12,6 | 42,8 / 39,8 |
-| jsonl | WrittenToOs | 208 701 / 216 242 | 49 | 233,4 | 13,1 / 12,2 | 49,1 / 40,8 |
+| jsonl+gzip | FsyncConfirmed | 195,277 / 191,984 | 5.7 | 29.2 | 13.9 / 14.8 | 48.9 / 43.7 |
+| jsonl | FsyncConfirmed | 179,028 / 181,828 | 42 | 233.4 | 14.9 / 14.0 | 66.7 / 45.3 |
+| jsonl+gzip | WrittenToOs | 216,728 / 215,191 | 6.3 | 29.2 | 12.3 / 12.6 | 42.8 / 39.8 |
+| jsonl | WrittenToOs | 208,701 / 216,242 | 49 | 233.4 | 13.1 / 12.2 | 49.1 / 40.8 |
 
-Lectura:
-- **gzip conviene**: el tráfico baja 8× (29 frente a 233 bytes por registro) sin coste medible de throughput.
-- Pedir fsync al servidor cuesta ~10 % de throughput con lotes de 5 000. El *group commit* lo amortiza cuando hay
-  varios productores, pero eso **no se midió**.
-- El techo de ~200k registros/s con un lote en vuelo lo marca la codificación y decodificación JSONL más el viaje de
-  ida y vuelta, no el disco. Las mejoras pendientes serían un cuerpo binario `.llog` (el campo `body_encoding` ya lo
-  admite) y varios lotes en vuelo por productor (exigiría reordenar en el servidor).
-- **No medido**: red real con latencia y pérdidas a nivel TCP, TLS, memoria del servidor aislada bajo carga
-  (los productores concurrentes están en §3), y la lectura incremental del segmento activo en el forwarder. Hoy el forwarder relee los
-  bloques del segmento abierto en cada sondeo; con segmentos activos grandes y tasas altas eso costará CPU.
+Reading:
+- **gzip pays off**: traffic drops 8× (29 vs 233 bytes per record) with no measurable throughput cost.
+- Asking the server for fsync costs ~10 % of throughput with batches of 5,000. *Group commit* amortizes it when there
+  are several producers (measured in §3).
+- The ~200k records/s ceiling with one batch in flight is set by JSONL encoding and decoding plus the round trip, not by
+  the disk. The improvements were a binary `.llog` body (done: §5) and several batches in flight per producer (it would
+  require reordering on the server; not done).
+- **Not measured**: a real network with latency and TCP-level loss, TLS, and isolated server memory under load
+  (concurrent producers are in §3). The forwarder's incremental read of the active segment has since been implemented
+  (`StoreTail`).
 
-## 3. Muchos productores a la vez (18-nov-2026, segunda medición)
+## 3. Many producers at once (2026-11-18, second measurement)
 
-`benchmarks … -- ingest --affinity FF --records 320000 --producers 1,4,16,64 --batch 1000`: P productores con ids
-distintos y un lote en vuelo cada uno, el mismo volumen total, gzip y ACK fsync. Los envelopes se codifican antes de
-medir, así que se mide el collector (transporte, decodificación, deduplicación y group commit), no los clientes.
-Cada corrida comprueba que el servidor guardó exactamente todos los registros. Proceso fijado a **8 CPUs lógicas**
-(ver la nota sobre el equipo). Dos corridas:
+`benchmarks … -- ingest --affinity FF --records 320000 --producers 1,4,16,64 --batch 1000`: P producers with distinct ids
+and one batch in flight each, the same total volume, gzip and fsync ACK. Envelopes are encoded before measuring, so
+this measures the collector (transport, decoding, deduplication and group commit), not the clients. Each run checks
+that the server stored exactly every record. The process is pinned to **8 logical CPUs** (see the note about the
+machine). Two runs:
 
-| productores | registros/s | ACK p50 ms | ACK p99 ms | ACK máx ms | lotes por fsync | memoria pico del proceso MiB |
+| producers | records/s | ACK p50 ms | ACK p99 ms | ACK max ms | batches per fsync | process peak memory MiB |
 |---:|---:|---:|---:|---:|---:|---:|
-| 1 | 215 227 / 233 859 | 4,0 / 3,8 | 30,4 / 16,2 | 46 / 22 | 1,0 | 359 / 333 |
-| 4 | **575 861 / 636 266** | 6,1 / 5,7 | 28,9 / 24,6 | 47 / 37 | 1,3 / 1,2 | 360 / 336 |
-| 16 | 443 889 / 437 860 | 33,4 / 34,0 | 75,5 / 77,6 | 96 / 94 | 5,8 / 5,6 | 403 / 387 |
-| 64 | 347 390 / 373 267 | 165,6 / 174,3 | 287,5 / 284,1 | 288 / 284 | 22,9 / 26,7 | 507 / 482 |
+| 1 | 215,227 / 233,859 | 4.0 / 3.8 | 30.4 / 16.2 | 46 / 22 | 1.0 | 359 / 333 |
+| 4 | **575,861 / 636,266** | 6.1 / 5.7 | 28.9 / 24.6 | 47 / 37 | 1.3 / 1.2 | 360 / 336 |
+| 16 | 443,889 / 437,860 | 33.4 / 34.0 | 75.5 / 77.6 | 96 / 94 | 5.8 / 5.6 | 403 / 387 |
+| 64 | 347,390 / 373,267 | 165.6 / 174.3 | 287.5 / 284.1 | 288 / 284 | 22.9 / 26.7 | 507 / 482 |
 
-Lectura:
-- **El group commit funciona**: con 64 productores, cada fsync confirma 23–27 lotes.
-- **Pico con 4 productores** (~600k registros/s). Con más, el total baja y la latencia del ACK crece casi en
-  proporción (cola en el único hilo escritor). Clientes y servidor comparten las 8 CPUs: no se separó cuánto es CPU de
-  decodificación y cuánto es el escritor. Siguiente paso: perfilar el collector solo y paralelizar la decodificación
-  y el envolvente de procedencia fuera del hilo escritor.
-- La memoria pico incluye los envelopes precodificados y los registros de origen del propio benchmark, no solo el
-  servidor.
+Reading:
+- **Group commit works**: with 64 producers, each fsync confirms 23–27 batches.
+- **Peak with 4 producers** (~600k records/s). With more, the total drops and ACK latency grows almost proportionally
+  (queueing on the single writer thread). Clients and server share the 8 CPUs, so the split between decoding CPU and
+  the writer was not separated. Next step at the time: profile the collector alone and move decoding and the provenance
+  wrapper off the writer thread (done: §5).
+- Peak memory includes the benchmark's own pre-encoded envelopes and source records, not only the server.
 
-### Nota sobre el equipo de referencia (afecta a todas las mediciones con muchos hilos)
+### Note about the reference machine (affects every measurement with many threads)
 
-Con 16 o más hilos ocupados, el proceso del benchmark se cayó de forma aleatoria: violación de segmento, *stack
-overflow* dentro de `DateTimeOffset.TryParse` y excepciones imposibles dentro del parser JSON de .NET. Un **programa de
-control sin código de LatticeLog** (gzip + JSON + fechas, `tools/platform-stress`: `dotnet run -c Release --project tools/platform-stress -- 16 30`) reproduce lo mismo con 16 hilos, y
-funciona sin errores con 1, 4 y 8 hilos (decenas de millones de líneas comprobadas).
+With 16 or more busy threads, the benchmark process crashed at random: segmentation faults, a *stack overflow* inside
+`DateTimeOffset.TryParse` and impossible exceptions inside the .NET JSON parser. A **control program with no LatticeLog
+code** (gzip + JSON + dates, `tools/platform-stress`: `dotnet run -c Release --project tools/platform-stress -- 16 30`)
+reproduces the same with 16 threads, and runs without errors with 1, 4 and 8 threads (tens of millions of lines
+checked).
 
-El equipo tiene un Intel Core i9-14900KF con **microcódigo 0x11D** y BIOS F4 del 11-09-2023 (Gigabyte Z790 AORUS
-ELITE X WIFI7). Es anterior a las actualizaciones con las que Intel corrigió la inestabilidad de los Core de 13.ª/14.ª
-generación (0x125 en adelante). Es la explicación más probable, **pero no está demostrada**.
+The machine has an Intel Core i9-14900KF with **microcode 0x11D** and BIOS F4 from 2023-09-11 (Gigabyte Z790 AORUS
+ELITE X WIFI7). That predates the updates with which Intel fixed the instability of 13th/14th-generation Core CPUs
+(0x125 onwards). It is the most likely explanation, **but it is not proven**.
 
-Recomendación al propietario:
-1. Actualizar la BIOS a la última versión del fabricante, que trae el microcódigo corregido.
-2. Repetir el control.
-3. Si sigue fallando, considerar la garantía extendida de Intel para ese problema.
+Recommendation to the owner:
+1. Update the BIOS to the manufacturer's latest version, which ships the fixed microcode.
+2. Repeat the control.
+3. If it still fails, consider Intel's extended warranty for this issue.
 
-Hasta entonces, las mediciones de esta máquina con muchos hilos se hacen fijando 8 CPUs, y los resultados con más
-concurrencia deben repetirse en otro equipo o en CI.
+Until then, many-thread measurements on this machine are taken with a pinned CPU set, and results with more
+concurrency have to be repeated on another machine or in CI.
 
-## 4. Productores y lectores a la vez (P17-T16)
+## 4. Producers and readers at once (P17-T16)
 
-`benchmarks … -- ingest --records 320000 --producers 4,16 --batch 1000 --readers 0|4`, con el proceso fijado a **4
-CPUs lógicas** (con 8 seguía apareciendo la inestabilidad del equipo de §3: una `AccessViolationException` y
-`NullReferenceException` dentro de bucles de .NET; con 4 CPUs, 0 fallos en todas las corridas). Cada lector alterna
-una búsqueda por atributo sin índice que la pode y una agregación por evento sobre el namespace que se está
-escribiendo. *Errata (18-nov-2026)*: el filtro estaba mal escrito (`attributes.quantity` en vez de `attr.quantity`)
-y no devolvía resultados. El coste medido sigue siendo el de recorrer todo el namespace, que es lo que se quería
-medir, pero esas búsquedas no devolvían eventos. Dos corridas por configuración:
+`benchmarks … -- ingest --records 320000 --producers 4,16 --batch 1000 --readers 0|4`, with the process pinned to **4
+logical CPUs** (with 8, the instability from §3 still showed up: an `AccessViolationException` and a
+`NullReferenceException` inside .NET loops; with 4 CPUs, 0 failures across all runs). Each reader alternates an
+attribute search that no index can prune and an aggregation by event over the namespace being written.
+*Erratum (2026-11-18)*: the filter was written wrongly (`attributes.quantity` instead of `attr.quantity`) and returned
+no results. The measured cost is still that of walking the whole namespace, which is what was meant to be measured, but
+those searches returned no events. `attributes.` is now accepted as an alias. Two runs per configuration:
 
-| productores | lectores | registros/s ingeridos | ACK p50 ms | ACK p99 ms | consultas | consulta p50 ms | consulta p99 ms |
+| producers | readers | ingested records/s | ACK p50 ms | ACK p99 ms | queries | query p50 ms | query p99 ms |
 |---:|---:|---:|---:|---:|---:|---:|---:|
-| 4 | 0 | 290 895 / 287 102 | 12,1 / 12,7 | 43,8 / 38,0 | — | — | — |
-| 16 | 0 | 383 780 / 372 944 | 41,2 / 37,9 | 78,4 / 102,5 | — | — | — |
-| 4 | 4 | 135 393 / 127 753 | 23,4 / 25,0 | 78,8 / 95,0 | 42 / 44 | 174 / 156 | 865 / 1 066 |
-| 16 | 4 | 168 041 / 202 484 | 71,7 / 71,3 | 278,6 / 167,4 | 23 / 29 | 270 / 167 | 845 / 741 |
+| 4 | 0 | 290,895 / 287,102 | 12.1 / 12.7 | 43.8 / 38.0 | — | — | — |
+| 16 | 0 | 383,780 / 372,944 | 41.2 / 37.9 | 78.4 / 102.5 | — | — | — |
+| 4 | 4 | 135,393 / 127,753 | 23.4 / 25.0 | 78.8 / 95.0 | 42 / 44 | 174 / 156 | 865 / 1,066 |
+| 16 | 4 | 168,041 / 202,484 | 71.7 / 71.3 | 278.6 / 167.4 | 23 / 29 | 270 / 167 | 845 / 741 |
 
-Lectura:
-- Las lecturas no bloquean la ingestión (todas las consultas y todos los ACK terminaron), pero **compiten por CPU**:
-  con 4 CPUs y 2 consultas a la vez (el valor por defecto, la mitad de las CPUs) el throughput de ingestión baja a la
-  mitad. Si la ingestión es prioritaria, `QueryLimits.MaxConcurrentQueries = 1`. No hay todavía prioridades de CPU
-  entre ambos caminos.
-- Las consultas usadas recorren todo el namespace (sin poda por índice) mientras crece hasta 320 000 registros; las
-  consultas por tiempo o severidad se podan por índice y son mucho más baratas (`reports/baseline-v1.md` §3).
-- Esta prueba encontró un fallo real: errores inesperados de lectura salían como 500 sin rastro. Desde ahora se
-  reportan por `ServerOptions.Diagnostics` (tipo, mensaje y pila en el servidor; al cliente solo tipo y mensaje).
+Reading:
+- Reads do not block ingestion (every query and every ACK completed), but they **compete for CPU**: with 4 CPUs and 2
+  concurrent queries (the default, half the CPUs), ingestion throughput halves. If ingestion takes priority, set
+  `QueryLimits.MaxConcurrentQueries = 1`. There are no CPU priorities between the two paths yet.
+- The queries used walk the whole namespace (no index pruning) while it grows to 320,000 records; time or severity
+  queries are pruned by index and are much cheaper (`reports/baseline-v1.md` §3).
+- This test found a real bug: unexpected read errors came out as 500s with no trace. They are now reported through
+  `ServerOptions.Diagnostics` (type, message and stack trace on the server; only type and message to the client).
 
-## 5. Cuerpo binario frente a JSONL (18-nov-2026)
+## 5. Binary body vs JSONL (2026-11-18)
 
-Mismo benchmark que §3 (envelopes precodificados, gzip, ACK fsync, lotes de 1 000), proceso fijado a **4 CPUs**,
-`--encoding 1` (JSONL) frente a `--encoding 2` (minisegmento binario: catálogo + Lattice-S). Dos corridas:
+The same benchmark as §3 (pre-encoded envelopes, gzip, fsync ACK, batches of 1,000), process pinned to **4 CPUs**,
+`--encoding 1` (JSONL) vs `--encoding 2` (binary mini segment: catalog + Lattice-S). Two runs:
 
-| productores | JSONL registros/s | binario registros/s | binario ACK p50 ms | binario ACK p99 ms | lotes por fsync (binario) |
+| producers | JSONL records/s | binary records/s | binary ACK p50 ms | binary ACK p99 ms | batches per fsync (binary) |
 |---:|---:|---:|---:|---:|---:|
-| 1 | 234 615 / 232 327 | **561 249 / 470 147** | 1,6 / 2,1 | 2,9 / 3,4 | 1,0 |
-| 4 | 512 920 / 517 415 | **1 155 975 / 1 153 816** | 3,0 / 3,1 | 14,0 / 13,2 | 2,0 |
-| 16 | 422 723 / 432 953 | **1 450 214 / 1 454 228** | 10,4 / 10,5 | 19,0 / 28,2 | 7,8 |
+| 1 | 234,615 / 232,327 | **561,249 / 470,147** | 1.6 / 2.1 | 2.9 / 3.4 | 1.0 |
+| 4 | 512,920 / 517,415 | **1,155,975 / 1,153,816** | 3.0 / 3.1 | 14.0 / 13.2 | 2.0 |
+| 16 | 422,723 / 432,953 | **1,450,214 / 1,454,228** | 10.4 / 10.5 | 19.0 / 28.2 | 7.8 |
 
-Lectura:
-- **2,0–3,4× más throughput** y menos memoria (≈240 MiB frente a 345–400 MiB de pico del proceso). La decodificación
-  JSONL dominaba el coste del servidor. Con el cuerpo binario, el techo de 16 productores ya no baja respecto a 4.
-- La precodificación oculta el coste del cliente. Codificar en binario también es más barato que en JSONL, pero no
-  se midió por separado.
-- Sigue siendo una máquina con 4 CPUs y problemas de estabilidad (§3): hay que repetirlo en hardware estable.
+Reading:
+- **2.0–3.4× more throughput** and less memory (≈240 MiB vs a 345–400 MiB process peak). JSONL decoding dominated the
+  server's cost. With the binary body, the 16-producer ceiling no longer drops relative to 4.
+- Pre-encoding hides the client's cost. Encoding to binary is also cheaper than to JSONL, but that was not measured
+  separately.
+- It is still a 4-CPU run on a machine with stability problems (§3): to be repeated on stable hardware.

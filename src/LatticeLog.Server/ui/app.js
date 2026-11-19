@@ -33,7 +33,7 @@ async function loadNamespaces() {
     sel.appendChild(o);
   }
   if (namespaces.includes(state.ns)) sel.value = state.ns; else state.ns = sel.value;
-  status(namespaces.length ? `${namespaces.length} namespace(s)` : "sin namespaces con datos");
+  status(namespaces.length ? `${namespaces.length} namespace(s)` : "no namespaces with data");
 }
 
 async function search(more = false) {
@@ -54,9 +54,9 @@ async function search(more = false) {
     const c = res.coverage;
     state.cursor = c.next_cursor || null;
     $("more").hidden = !state.cursor;
-    $("coverage").textContent = `${tbody.rows.length} evento(s)` + (c.truncated ? " · hay más" : "") +
-      (c.partial_results ? ` · PARCIAL: ${c.partial_reason}` : "") + (c.storage_issues ? ` · ${c.storage_issues} problema(s) de almacenamiento` : "") +
-      ` · ${res.stats.segments_scanned}/${res.stats.segments_total} segmentos · ${res.stats.elapsed_ms} ms`;
+    $("coverage").textContent = `${tbody.rows.length} event(s)` + (c.truncated ? " · more available" : "") +
+      (c.partial_results ? ` · PARTIAL: ${c.partial_reason}` : "") + (c.storage_issues ? ` · ${c.storage_issues} storage issue(s)` : "") +
+      ` · ${res.stats.segments_scanned}/${res.stats.segments_total} segments · ${res.stats.elapsed_ms} ms`;
   } catch (err) { $("coverage").textContent = String(err.message); }
 }
 
@@ -69,7 +69,7 @@ function showEvent(e) {
   traceButton.onclick = async () => {
     try {
       const doc = await api(`/v1/traces/${encodeURIComponent(e.trace_id)}`);
-      $("detail-title").textContent = `traza ${e.trace_id}`;
+      $("detail-title").textContent = `trace ${e.trace_id}`;
       $("detail-json").textContent = JSON.stringify(doc, null, 2);
     } catch (err) { $("detail-json").textContent = String(err.message); }
   };
@@ -99,7 +99,7 @@ async function catalog() {
     const res = await api("/v1/catalog");
     for (const s of res.segments) {
       const tr = document.createElement("tr");
-      cell(tr, s.id); cell(tr, s.sealed ? "sí" : "activo"); cell(tr, s.records); cell(tr, s.first_seq ? `${s.first_seq}–${s.last_seq}` : "");
+      cell(tr, s.id); cell(tr, s.sealed ? "yes" : "active"); cell(tr, s.records); cell(tr, s.first_seq ? `${s.first_seq}–${s.last_seq}` : "");
       cell(tr, s.min_time); cell(tr, s.max_time); cell(tr, s.bytes?.toLocaleString());
       tbody.appendChild(tr);
     }

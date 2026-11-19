@@ -1,35 +1,35 @@
-# PHASE-17-REVIEW — Servidor de consultas, catálogo y multiusuario (Server v1.0)
+# PHASE-17-REVIEW — Query server, catalog and multi-tenancy (Server v1.0)
 
-- Estado: **CONDITIONAL** (servidor de un nodo con namespaces, roles, API de lectura completa y probada,
-  administración en línea; faltan imagen Docker construida, TLS entre máquinas y validación en otro hardware)
-- Fecha: 2026-11-18
-- Entregables: `src/LatticeLog.Server` (`LatticeServer`), `src/LatticeLog.ServerHost` (`latticelog-server`),
+- Status: **CONDITIONAL** (single-node server with namespaces, roles, a complete and tested read API, and online
+  administration; missing a built Docker image, TLS between machines and validation on other hardware)
+- Date: 2026-11-18
+- Deliverables: `src/LatticeLog.Server` (`LatticeServer`), `src/LatticeLog.ServerHost` (`latticelog-server`),
   `specs/server-api.md`, `deploy/Dockerfile`, `docs/deploy/single-node.md`, `tests/LatticeLog.Tests/ServerApiTests.cs`,
   `ConcurrentReadTests.cs`, `reports/ingest-v1.md` §3–§4
 
-| tarea | estado | evidencia |
+| task | status | evidence |
 |---|---|---|
-| T01 tenant/project/environment | hecho | namespaces `tenant[/project[/env]]`, un almacén por namespace; aislamiento probado |
-| T02 metadatos separados y transaccionales | parcial | por namespace: STORE.json + MANIFEST.jsonl (journal con CRC y fsync) + footers; no hay plano de control global |
-| T03 catálogo | parcial | `GET /v1/catalog` (segmentos, rangos, servicios, problemas del manifest) y `/v1/schema`; sin estado de compactación en línea |
-| T04 endpoints | hecho | ingest, search, event, related, trace, stats, overview, error groups, context pack, schema, export, catalog |
-| T05 authn/authz | hecho | tokens con scopes `ingest`/`read`/`admin` y namespaces; 401/403 probados |
-| T06 cuotas | parcial | ingesta: registros/s por token; lectura: concurrencia por token y global, timeout, registros escaneados; sin cuotas de bytes por tenant |
-| T07 cursores firmados | hecho | HMAC-SHA256 + caducidad, ligados a namespace y token; manipulación, préstamo y caducidad probados |
-| T08 lecturas separadas de ingestión | hecho | semáforo de consultas en el thread pool frente a hilos escritores dedicados; competencia de CPU medida (§4) |
-| T09 snapshots y compactación | documentado | snapshot por petición; cursores por secuencia estable; la compactación retira segmentos vía manifest |
-| T10 datos recientes y compactados | hecho | un único planificador sobre segmentos sellados y el activo |
-| T11 llegada frente a evento | hecho | `observed_time` = llegada al servidor salvo que el productor la fije; documentado y probado |
-| T12 administración (retención, compactación, reindexado) | hecho | `POST /v1/admin/retention\|compact\|verify\|erase\|backup` sin parar la ingestión, auditados (`ServerApiTests.Online_retention_compaction_and_verify_keep_dedup_and_are_audited`); el reindexado no es necesario (índices por segmento) |
-| T13 migraciones de metadatos | no aplica aún | formato de metadatos v1 único; la versión de STORE.json se comprueba al abrir |
-| T14 Docker y health | parcial | `deploy/Dockerfile` (chiseled, no root, configuración por env y secretos) **no construido**; `/v1/health` con detalle para admin |
-| T15 guía de una máquina | hecho | `docs/deploy/single-node.md` |
-| T16 carga productores + lectores | hecho en esta máquina | `reports/ingest-v1.md` §4 (4 CPUs por la inestabilidad del equipo) |
+| T01 tenant/project/environment | done | namespaces `tenant[/project[/env]]`, one store per namespace; isolation tested |
+| T02 separate, transactional metadata | partial | per namespace: STORE.json + MANIFEST.jsonl (journal with CRC and fsync) + footers; no global control plane |
+| T03 catalog | partial | `GET /v1/catalog` (segments, ranges, services, manifest problems) and `/v1/schema`; no online compaction state |
+| T04 endpoints | done | ingest, search, event, related, trace, stats, overview, error groups, context pack, schema, export, catalog |
+| T05 authn/authz | done | tokens with `ingest`/`read`/`admin` scopes and namespaces; 401/403 tested |
+| T06 quotas | partial | ingestion: records/s per token; reads: per-token and global concurrency, timeout, scanned records; no per-tenant byte quotas |
+| T07 signed cursors | done | HMAC-SHA256 + expiry, bound to namespace and token; tampering, borrowing and expiry tested |
+| T08 reads separated from ingestion | done | query semaphore on the thread pool vs dedicated writer threads; CPU competition measured (§4) |
+| T09 snapshots and compaction | documented | per-request snapshot; cursors by stable sequence; compaction retires segments through the manifest |
+| T10 recent and compacted data | done | a single planner over sealed segments and the active one |
+| T11 arrival vs event time | done | `observed_time` = arrival at the server unless the producer sets it; documented and tested |
+| T12 administration (retention, compaction, reindexing) | done | `POST /v1/admin/retention\|compact\|verify\|erase\|backup` without stopping ingestion, audited (`ServerApiTests.Online_retention_compaction_and_verify_keep_dedup_and_are_audited`); reindexing is not needed (per-segment indexes) |
+| T13 metadata migrations | not applicable yet | a single v1 metadata format; the STORE.json version is checked on open |
+| T14 Docker and health | partial | `deploy/Dockerfile` (chiseled, non-root, configuration through env and secrets) **not built**; `/v1/health` with admin details |
+| T15 single-machine guide | done | `docs/deploy/single-node.md` |
+| T16 producers + readers load | done on this machine | `reports/ingest-v1.md` §4 (4 CPUs because of the machine's instability) |
 
-- Gate Server v1.0 ("múltiples fuentes ingestan y consultan de forma segura, con persistencia recuperable y sin
-  exigir clúster"): **cumplido en loopback**. Falta TLS probado, red real, la imagen construida y repetir la carga en
-  hardware estable.
-- **Hallazgo de plataforma**: el equipo de referencia (i9-14900KF, microcódigo 0x11D, BIOS de 2023) corrompe memoria
-  bajo carga en muchos núcleos, también en un programa de control sin LatticeLog (`tools/platform-stress`). Hasta que
-  se actualice la BIOS, las mediciones con concurrencia se hacen con CPUs limitadas y no son generalizables.
-- Decisión: avanzar con los pendientes listados. Antes de afirmar rendimiento hay que repetir en otra máquina o en CI.
+- Server v1.0 gate ("multiple sources ingest and query safely, with recoverable persistence and without requiring a
+  cluster"): **met on loopback**. Missing: tested TLS, a real network, the built image and repeating the load on stable
+  hardware.
+- **Platform finding**: the reference machine (i9-14900KF, microcode 0x11D, 2023 BIOS) corrupts memory under load on
+  many cores, also in a control program without LatticeLog (`tools/platform-stress`). Until the BIOS is updated,
+  concurrency measurements are taken with a limited CPU set and do not generalize.
+- Decision: proceed with the listed open items. Repeat on another machine or in CI before making performance claims.

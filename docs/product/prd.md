@@ -1,57 +1,58 @@
 # LatticeLog — PRD v0.1 (P00)
 
-Versión 0.1 · 18-nov-2026 · Estado: borrador para revisión. Los umbrales son **objetivos/hipótesis**, no resultados.
+Version 0.1 · 2026-11-18 · Status: draft for review. Thresholds are **targets/hypotheses**, not results.
 
-## 1. Requisitos funcionales (motor local, M1–M3)
-| id | requisito | estado |
+## 1. Functional requirements (local engine, M1–M3)
+| id | requirement | status |
 |---|---|---|
-| F1 | Eventos tipados declarados con atributos; validación en compilación de ids, nombres, placeholders, tipos y cambios de esquema. | implementado (`LatticeLog.Generator`) |
-| F2 | API de texto libre y excepciones con coste documentado. | implementado (`LoggerExtensions`) |
-| F3 | Contexto inmutable (scopes, operaciones) y captura de `Activity`. | implementado |
-| F4 | Persistencia local `.llog` con modos Fast/Balanced/Durable y ACK verificable. | implementado |
-| F5 | Recuperación tras crash sin interpretar bytes incompletos; `verify`/`repair`. | implementado |
-| F6 | Consultas tipadas con índices, cursores, EXPLAIN y agregaciones. | implementado |
-| F7 | Evidencias: overview, trace, related, error groups, Context Pack con presupuesto y cobertura. | implementado |
-| F8 | Exportación sin pérdida (JSONL de intercambio) y OTLP/JSON con informe de pérdidas; importación JSONL/texto/OTLP. | implementado |
-| F9 | CLI completa y MCP de solo lectura. | implementado (alpha) |
-| F10 | Bridge `Microsoft.Extensions.Logging`. | **pendiente** (P03-T11) |
-| F11 | Servidor, multi-tenant, RBAC, clúster, tiers, UI, SaaS. | no iniciado (P16+) |
+| F1 | Typed events declared with attributes; compile-time validation of ids, names, placeholders, types and schema changes. | implemented (`LatticeLog.Generator`) |
+| F2 | Free-text and exception API with a documented cost. | implemented (`LoggerExtensions`) |
+| F3 | Immutable context (scopes, operations) and `Activity` capture. | implemented |
+| F4 | Local `.llog` persistence with Fast/Balanced/Durable modes and a verifiable ACK. | implemented |
+| F5 | Crash recovery without interpreting incomplete bytes; `verify`/`repair`. | implemented |
+| F6 | Typed queries with indexes, cursors, EXPLAIN and aggregations. | implemented |
+| F7 | Evidence: overview, trace, related, error groups, Context Pack with budget and coverage. | implemented |
+| F8 | Lossless export (exchange JSONL) and OTLP/JSON with a loss report; JSONL/text/OTLP import. | implemented |
+| F9 | Full CLI and read-only MCP. | implemented (alpha) |
+| F10 | `Microsoft.Extensions.Logging` bridge. | implemented (`LatticeLog.Extensions.Logging`) |
+| F11 | Server: multi-tenancy, scoped tokens, online admin, replication, web console. | implemented as a single node (P16–P24, alpha) |
+| F12 | Cluster, storage tiers. | not started (P19–P20) |
 
-## 2. Modos de durabilidad (P00-T07)
-Definidos normativamente en `specs/durability.md`. Resumen: `Fast` = aceptado en memoria; `Balanced` (por defecto) =
-escrito al SO por lote, fsync periódico (1 s); `Durable` = fsync por lote antes de confirmar. Saturación configurable:
-bloquear (con timeout), descartar con contador o lanzar excepción.
+## 2. Durability modes (P00-T07)
+Defined normatively in `specs/durability.md`. Summary: `Fast` = accepted in memory; `Balanced` (default) = written to
+the OS per batch, periodic fsync (1 s); `Durable` = fsync per batch before acknowledging. Configurable saturation
+behaviour: block (with a timeout), drop with a counter, or throw.
 
-## 3. "Sin pérdida" (P00-T06)
-- **Structured-exact**: tipos, valores, nulos, orden de atributos, duplicados, NaN, −0.0, escalas decimales y strings
-  con surrogates no emparejados se reconstruyen exactamente (pruebas de propiedades y golden files).
-- **Raw byte-exact**: la importación de texto conserva los bytes de cada línea, el `\r` y la ausencia de salto final.
-- Excepción documentada: claves/nombres con surrogates no emparejados se sanean a U+FFFD y el registro se marca `lossy_import`.
+## 3. "Lossless" (P00-T06)
+- **Structured-exact**: types, values, nulls, attribute order, duplicates, NaN, −0.0, decimal scales and strings with
+  unpaired surrogates are rebuilt exactly (property tests and golden files).
+- **Raw byte-exact**: text import keeps each line's bytes, the `\r` and a missing final newline.
+- Documented exception: keys/names with unpaired surrogates are sanitized to U+FFFD and the record is flagged
+  `lossy_import`.
 
-## 4. Configuración (P00-T08)
-Precedencia propuesta: valores por defecto < archivo de configuración < variables de entorno < código explícito.
-La configuración remota (servidor) **no** podrá cambiar durabilidad ni redacción de forma silenciosa: todo cambio se
-registra. Hoy solo existe configuración por código (`LatticeLoggerOptions`, `StoreWriterOptions`) con validación y
-mensajes accionables.
+## 4. Configuration (P00-T08)
+Proposed precedence: defaults < configuration file < environment variables < explicit code. Remote (server)
+configuration will **not** be able to change durability or redaction silently: every change is recorded. Today only
+code configuration exists (`LatticeLoggerOptions`, `StoreWriterOptions`), with validation and actionable messages.
 
-## 5. Plataformas (P00-T09)
-.NET 10 LTS (soporte de Microsoft hasta nov-2028). Objetivo: Windows/Linux/macOS en x64 y ARM64. **Probado hasta
-ahora: solo Windows 11 x64** (esta máquina). El formato es independiente del lenguaje (lector Python incluido).
+## 5. Platforms (P00-T09)
+.NET 10 LTS (Microsoft support until Nov 2028). Target: Windows/Linux/macOS on x64 and ARM64. CI runs on Linux, macOS
+and Windows x64; ARM64 is not tested yet. The format is language-independent (a Python reader is included).
 
-## 6. Versiones y compatibilidad (P00-T10)
-SemVer por paquete. Formato `.llog`: lectores 1.x leerán todos los archivos 0.1+ mediante golden files congelados;
-ventana de compatibilidad objetivo N-2 versiones menores; deprecaciones con aviso de una versión menor y exportador
-funcional (`latticelog export --format llog-jsonl`).
+## 6. Versions and compatibility (P00-T10)
+SemVer per package. `.llog` format: 1.x readers will read every 0.1+ file, checked with frozen golden files; target
+compatibility window of N-2 minor versions; deprecations announced one minor version ahead, with a working exporter
+(`latticelog export --format llog-jsonl`). See `docs/compatibility.md`.
 
-## 7. Criterios go/no-go (P00-T12)
-| decisión | go si… | si no |
+## 7. Go/no-go criteria (P00-T12)
+| decision | go if… | otherwise |
 |---|---|---|
-| Lattice-S en producción | ahorro neto vs binario simple en ≥3 cargas repetitivas sin regresión de lectura >20 % | simplificar códec |
-| Lattice-C | ahorro neto positivo en cargas con contexto rico | usar contexto solo como índice |
-| Lattice-P | cota optimista de ahorro ≥5 % sobre S+deflate en cargas relevantes | archivar P (no construir) |
-| Clúster (P19) | límite medido del servidor single-node insuficiente para clientes reales | mantener single-node |
-| SaaS (P25) | márgenes y seguridad aceptables en piloto | no lanzar SaaS público |
+| Lattice-S in production | net savings vs plain binary on ≥3 repetitive workloads with no read regression >20 % | simplify the codec |
+| Lattice-C | positive net savings on context-rich workloads | use context only as an index |
+| Lattice-P | optimistic savings bound ≥5 % over S+deflate on relevant workloads | archive P (do not build) |
+| Cluster (P19) | the measured single-node limit is insufficient for real users | stay single-node |
+| SaaS (P25) | — | not applicable: the project is free and MIT-licensed, with no SaaS |
 
-## 8. Presupuesto y recorte de alcance (P00-T15)
-Sin datos de presupuesto ni equipo en este repositorio: **pendiente de decisión del responsable**. Regla de recorte:
-priorizar según §8.6 del plan maestro (contrato, fidelidad, lector, durabilidad, seguridad básica antes que escala/comercial).
+## 8. Scope cuts (P00-T15)
+Scope rule: prioritize according to §8.6 of the master plan (contract, fidelity, reader, durability and basic security
+before scale).

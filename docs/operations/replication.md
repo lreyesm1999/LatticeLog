@@ -1,50 +1,49 @@
-# Replicación entre servidores (P19, alcance actual)
+# Replication between servers (P19, current scope)
 
-Estado a 18-nov-2026. Lo que hay es **replicación asíncrona primario → réplica con failover manual de los
-productores**. No es un clúster: no hay sharding, ni elección de líder, ni consenso, ni failover automático.
+Status on 2026-11-18. What exists is **asynchronous primary → replica replication with manual producer failover**.
+It is not a cluster: there is no sharding, leader election, consensus or automatic failover.
 
-## Cómo funciona
+## How it works
 
-- El primario arranca con `--replicate-to https://replica:7400` y `LATTICELOG_REPLICA_TOKEN` (un token `ingest` válido
-  en la réplica para los namespaces replicados).
-- Por cada namespace del primario corre un `Forwarder` (el mismo componente que usan las aplicaciones) que lee el
-  almacén del namespace y lo envía al mismo namespace de la réplica con el protocolo de ingestión v1. Los namespaces
-  nuevos se descubren cada 2 s.
-- El cursor de cada namespace se guarda junto al almacén del primario. Tras un reinicio del primario se reanuda
-  donde quedó; la réplica deduplica lo reenviado.
-- **Procedencia**: la réplica guarda cada registro con dos capas de contexto `ingest` (la del primario y la del
-  productor original). Con eso la réplica aprende hasta qué secuencia ha recibido de cada productor original, y lo
-  conserva entre reinicios (`INGEST-CHECKPOINT.json`, campo `upstream`).
+- The primary starts with `--replicate-to https://replica:7400` and `LATTICELOG_REPLICA_TOKEN` (an `ingest` token
+  valid on the replica for the replicated namespaces).
+- For each namespace on the primary, a `Forwarder` (the same component applications use) reads the namespace's store
+  and sends it to the same namespace on the replica with ingest protocol v1. New namespaces are discovered every 2 s.
+- Each namespace's cursor is stored next to the primary's store. After a primary restart it resumes where it left off;
+  the replica deduplicates whatever is resent.
+- **Provenance**: the replica stores each record with two `ingest` context layers (the primary's and the original
+  producer's). From that the replica learns up to which sequence it has received from each original producer, and keeps
+  it across restarts (`INGEST-CHECKPOINT.json`, field `upstream`).
 
-## Garantías
+## Guarantees
 
-| situación | resultado |
+| situation | result |
 |---|---|
-| El primario confirma un lote a un productor | **No** espera a la réplica (asíncrona). Lo confirmado y aún no replicado está solo en el primario y en el spool del productor. |
-| El primario cae y los productores pasan a la réplica | El productor reenvía desde su cursor (o desde el principio si lo perdió); la réplica descarta lo que ya tenía del primario y guarda el resto. **Nada duplicado, nada perdido** mientras el spool del productor conserve los datos. Probado en `ReplicationTests`. |
-| La réplica cae | El primario sigue aceptando; el lag crece y se recupera al volver. |
-| Borrado de privacidad (`/v1/admin/erase`) | **No se replica**. Hay que lanzarlo también en la réplica. |
-| Retención / compactación | Cada servidor aplica la suya. |
+| The primary acknowledges a batch to a producer | It does **not** wait for the replica (asynchronous). What is acknowledged but not yet replicated lives only on the primary and in the producer's spool. |
+| The primary fails and producers switch to the replica | The producer resends from its cursor (or from the start if it lost it); the replica drops what it already had from the primary and stores the rest. **Nothing duplicated, nothing lost** as long as the producer's spool still holds the data. Tested in `ReplicationTests`. |
+| The replica fails | The primary keeps accepting; the lag grows and recovers when the replica returns. |
+| Privacy erasure (`/v1/admin/erase`) | **Not replicated**. It has to be run on the replica too. |
+| Retention / compaction | Each server applies its own. |
 
-## Supervisión
+## Monitoring
 
-- `GET /v1/health` (token admin) incluye el estado por namespace: secuencia replicada, estado del forwarder y último
+- `GET /v1/health` (admin token) includes the status per namespace: replicated sequence, forwarder state and last
   error.
-- `latticelog_replication_lag_records{namespace=…}` en `/metrics`. Alerta sugerida: lag > 0 sostenido 5 min, o
-  creciendo durante 15 min.
+- `latticelog_replication_lag_records{namespace=…}` in `/metrics`. Suggested alert: lag > 0 for 5 min, or growing for
+  15 min.
 
-## Failover manual (runbook)
+## Manual failover (runbook)
 
-1. Confirmar que el primario no vuelve pronto (si vuelve, no hay nada que hacer: se reanuda solo).
-2. Cambiar el endpoint de los productores a la réplica (DNS o configuración). Sus `Forwarder` reenvían lo que les
-   falte confirmar; la réplica deduplica.
-3. Lo que el primario confirmó pero no llegó a replicar **solo se recupera** si sigue en los spools de los productores.
-   Por eso la retención local de los productores debe cubrir al menos el tiempo de detección + cambio.
-4. Cuando el antiguo primario vuelva, **no** arrancarlo como primario a la vez: hoy no hay fencing. Arrancarlo como
-   réplica vacía (o tras copiar el almacén de la nueva primaria) y apuntar la replicación en el otro sentido.
+1. Confirm that the primary is not coming back soon (if it does, there is nothing to do: it resumes on its own).
+2. Point the producers at the replica (DNS or configuration). Their `Forwarder`s resend whatever is still
+   unacknowledged; the replica deduplicates.
+3. What the primary acknowledged but never replicated is **only recoverable** if it is still in the producers' spools.
+   That is why the producers' local retention must cover at least the detection + switch time.
+4. When the old primary comes back, do **not** start it as a primary at the same time: there is no fencing today. Start
+   it as an empty replica (or after copying the new primary's store) and point replication the other way.
 
-## Lo que falta para hablar de clúster (P19/P20)
+## What is missing before this can be called a cluster (P19/P20)
 
-Fencing/épocas (T05), modelo de consistencia con ACK de réplica (T06–T07), shards y router (T02–T03), movimiento de
-shards (T10), pruebas de partición y split-brain (T14), escalado medido a N nodos (T15), object storage por niveles
-(P20). Ninguno está hecho; el plan pide antes medir los límites de un nodo (T01), y eso necesita hardware estable.
+Fencing/epochs (T05), a consistency model with replica ACKs (T06–T07), shards and a router (T02–T03), shard movement
+(T10), partition and split-brain tests (T14), measured scaling to N nodes (T15), tiered object storage (P20). None of
+it is done; the plan first asks to measure single-node limits (T01), which needs stable hardware.

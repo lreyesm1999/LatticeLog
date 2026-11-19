@@ -1,6 +1,6 @@
-# PHASE-28-REVIEW — Mantenimiento y evolución
+# PHASE-28-REVIEW — Maintenance and evolution
 
-- Estado: **NOT STARTED** (fase posterior al lanzamiento)
-- Fecha: 2026-11-18
-- Entregable preparado: `docs/release/maintenance-policy.md` (borrador: runtimes soportados, ventana de lectura de
-  formatos, regresiones y CVEs).
+- Status: **NOT STARTED** (a phase that comes after the launch)
+- Date: 2026-11-18
+- Prepared deliverable: `docs/release/maintenance-policy.md` (draft: supported runtimes, format read window,
+  regressions and CVEs).

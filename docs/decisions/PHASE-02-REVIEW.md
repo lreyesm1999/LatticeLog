@@ -1,15 +1,15 @@
-# PHASE-02-REVIEW — Laboratorio, datasets y baselines (I+D)
+# PHASE-02-REVIEW — Lab, datasets and baselines (R&D)
 
-- Estado: **CONDITIONAL**
-- Fecha y versión/commit: 2026-11-18 · 0.1.0-alpha.1 (working tree, sin commits)
-- PRs e issues cerrados: ninguno (no existe repositorio remoto ni tracker; IDs de tarea según docs/PLAN-MAESTRO.md)
-- Entregables verificados: research/LatticeLog.Lab (8 cargas deterministas, baselines JSONL/gzip/zstd/LZ4), scripts/reproduce.*, reports/baseline-v1.md
-- Evidencia de tests: round trip SHA-256 en todas las filas; consultas consistentes en 3 métodos
-- Evidencia de benchmarks: 100k eventos × 8 cargas × 3 reps, una máquina
-- Seguridad/compatibilidad: sin datos sensibles en el repo
-- Hipótesis aceptadas/refutadas: baselines medidos y reproducibles en la misma máquina
-- Actualización 18-nov-2026: T01 hecho con Loghub-2.0 (14 conjuntos, `reports/loghub2-v1.md`): importación de texto byte a byte verificada pero 1,5–2,7× mayor que zstd-3; modelo tipado −25 % frente a CSV+zstd-3 (14/14), +17 % frente a CSV+zstd-19
-- Limitaciones abiertas: T02 datos reales propios no disponibles; T07 escala 10M/100M; T08 reproductor a tasa variable; T10 CLP; T15 intervalos de confianza/control térmico; T17 evaluación AI externa; G2 exige ejecución en otra máquina
-- ADRs nuevas: ver docs/decisions/ADR-*.md
-- Riesgos residuales: R14, R20
-- Decisión: avanzar; repetir en Linux/segunda máquina antes de afirmaciones públicas
+- Status: **CONDITIONAL**
+- Date and version: 2026-11-18 · 0.1.0-alpha.1
+- PRs and issues closed: none (tasks are tracked by ID in docs/MASTER-PLAN.md)
+- Verified deliverables: research/LatticeLog.Lab (8 deterministic workloads, JSONL/gzip/zstd/LZ4 baselines), scripts/reproduce.*, reports/baseline-v1.md
+- Test evidence: SHA-256 round trip on every row; queries consistent across 3 methods
+- Benchmark evidence: 100k events × 8 workloads × 3 reps, one machine
+- Security/compatibility: no sensitive data in the repository
+- Hypotheses accepted/refuted: baselines measured and reproducible on the same machine
+- Update 2026-11-18: T01 done with Loghub-2.0 (14 datasets, `reports/loghub2-v1.md`): byte-exact text import verified but 1.5–2.7× larger than zstd-3; typed model −25 % vs CSV+zstd-3 (14/14), +17 % vs CSV+zstd-19
+- Open limitations: T02 no real data of our own; T07 10M/100M scale; T08 variable-rate replayer; T10 CLP; T15 confidence intervals/thermal control; T17 external AI evaluation; G2 requires a run on another machine
+- New ADRs: see docs/decisions/ADR-*.md
+- Residual risks: R14, R20
+- Decision: proceed; repeat on Linux/a second machine before public claims

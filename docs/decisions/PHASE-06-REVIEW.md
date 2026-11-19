@@ -1,14 +1,14 @@
-# PHASE-06-REVIEW — Lector, reconstrucción exacta y compatibilidad
+# PHASE-06-REVIEW — Reader, exact reconstruction and compatibility
 
-- Estado: **PASS**
-- Fecha y versión/commit: 2026-11-18 · 0.1.0-alpha.1 (working tree, sin commits)
-- PRs e issues cerrados: ninguno (no existe repositorio remoto ni tracker; IDs de tarea según docs/PLAN-MAESTRO.md)
-- Entregables verificados: SegmentReader/StoreReader (streaming, acceso aleatorio, resync), CLI verify/repair
-- Evidencia de tests: propiedades round-trip 6 códecs × 6 semillas; 300 casos de fuzzing por bit-flip sin registros corruptos devueltos; lectura parcial con conteo de perdidos; golden files
-- Evidencia de benchmarks: full scan .llog 4–9× más rápido que JSONL+zstd+parse
-- Seguridad/compatibilidad: entradas malformadas → errores explícitos
-- Hipótesis aceptadas/refutadas: G6: 100 % round-trip y golden files; ninguna falla silenciosa detectada
-- Limitaciones abiertas: fuzzing guiado por cobertura (SharpFuzz) pendiente; T11 throughput del lector medido solo indirectamente
-- ADRs nuevas: ver docs/decisions/ADR-*.md
-- Riesgos residuales: R05
-- Decisión: avanzar
+- Status: **PASS**
+- Date and version: 2026-11-18 · 0.1.0-alpha.1
+- PRs and issues closed: none (tasks are tracked by ID in docs/MASTER-PLAN.md)
+- Verified deliverables: SegmentReader/StoreReader (streaming, random access, resync), CLI verify/repair
+- Test evidence: round-trip properties for 6 codecs × 6 seeds; 300 bit-flip fuzzing cases with no corrupt records returned; partial reads with a lost-record count; golden files
+- Benchmark evidence: .llog full scan 4–9× faster than JSONL+zstd+parse
+- Security/compatibility: malformed input → explicit errors
+- Hypotheses accepted/refuted: G6: 100 % round trip and golden files; no silent failure found
+- Open limitations: coverage-guided fuzzing (SharpFuzz) pending; T11 reader throughput measured only indirectly
+- New ADRs: see docs/decisions/ADR-*.md
+- Residual risks: R05
+- Decision: proceed

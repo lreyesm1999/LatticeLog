@@ -2,7 +2,7 @@
 version: 1
 synthetic:
   generator: research/LatticeLog.Lab/Workloads.cs
-  license: same as repository (pending decision)
+  license: MIT (same as the repository)
   deterministic: true          # identical records for (workload, events, seed)
   workloads:
     - {name: http-api,           seed: 1, ground_truth: "traces with HTTP 500 + NullReferenceException"}

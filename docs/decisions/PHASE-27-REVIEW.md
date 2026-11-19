@@ -1,9 +1,10 @@
-# PHASE-27-REVIEW — Lanzamiento, documentación y soporte
+# PHASE-27-REVIEW — Launch, documentation and support
 
-- Estado: **CONDITIONAL** (repositorio público con licencia MIT y documentación completa; faltan CI ejecutado,
-  paquetes publicados y canales de soporte)
-- Fecha: 2026-11-18
-- Entregables: `LICENSE` (MIT), `README.md`, `docs/release/launch-plan.md`, `docs/release/rc-checklist.md`,
-  `docs/compatibility.md`, `CHANGELOG.md`, guías de despliegue y operación, especificaciones (`specs/`).
-- Pendiente: CI en verde en GitHub Actions, canal privado de vulnerabilidades (T09), guías de migración (T03),
-  demo (T05), benchmarks repetidos en hardware estable (T06), paquetes en NuGet/PyPI/Packagist (T13).
+- Status: **CONDITIONAL** (public repository under the MIT license with complete documentation in English; packages
+  not published)
+- Date: 2026-11-18
+- Deliverables: `LICENSE` (MIT), `README.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md` with private
+  vulnerability reporting, issue forms, PR template, `docs/release/launch-plan.md`, `docs/release/rc-checklist.md`,
+  `docs/compatibility.md`, `CHANGELOG.md`, deployment and operations guides, specifications (`specs/`).
+- Open: migration guides (T03), demo (T05), benchmarks repeated on stable hardware (T06), packages on
+  NuGet/PyPI/Packagist (T13).

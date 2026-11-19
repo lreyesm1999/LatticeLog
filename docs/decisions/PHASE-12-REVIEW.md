@@ -1,14 +1,14 @@
-# PHASE-12-REVIEW — Lectura AI-friendly sin IA: evidencias
+# PHASE-12-REVIEW — AI-friendly reading without AI: evidence
 
-- Estado: **CONDITIONAL**
-- Fecha y versión/commit: 2026-11-18 · 0.1.0-alpha.1 (working tree, sin commits)
-- PRs e issues cerrados: ninguno (no existe repositorio remoto ni tracker; IDs de tarea según docs/PLAN-MAESTRO.md)
-- Entregables verificados: LatticeLog.Evidence (overview, trace, related, error groups, Context Pack, schema; JSON y Markdown), specs/evidence-protocol.md
-- Evidencia de tests: EvidenceAndInteropTests: ground truth de incidente recuperado, presupuesto, determinismo byte a byte, redacción, fences seguros
-- Evidencia de benchmarks: pack de traza: 3 eventos/1,3 KB
-- Seguridad/compatibilidad: texto no confiable etiquetado; redacción en todas las salidas
-- Hipótesis aceptadas/refutadas: salidas deterministas con cobertura explícita
-- Limitaciones abiertas: T17–T19 benchmark externo con IA (tokens, recall, falsos diagnósticos) no ejecutado: requiere modelo externo y revisión humana; T12 contexto de código no implementado
-- ADRs nuevas: ver docs/decisions/ADR-*.md
-- Riesgos residuales: R18
-- Decisión: avanzar; ejecutar evaluación externa antes de afirmar ventajas
+- Status: **CONDITIONAL**
+- Date and version: 2026-11-18 · 0.1.0-alpha.1
+- PRs and issues closed: none (tasks are tracked by ID in docs/MASTER-PLAN.md)
+- Verified deliverables: LatticeLog.Evidence (overview, trace, related, error groups, Context Pack, schema; JSON and Markdown), specs/evidence-protocol.md
+- Test evidence: EvidenceAndInteropTests: incident ground truth recovered, budget, byte-for-byte determinism, redaction, safe fences
+- Benchmark evidence: trace pack: 3 events/1.3 KB
+- Security/compatibility: untrusted text labelled; redaction in every output
+- Hypotheses accepted/refuted: deterministic outputs with explicit coverage
+- Open limitations: T17–T19 external AI benchmark (tokens, recall, false diagnoses) not run: it needs an external model and human review; T12 code context not implemented
+- New ADRs: see docs/decisions/ADR-*.md
+- Residual risks: R18
+- Decision: proceed; run the external evaluation before claiming advantages

@@ -1,14 +1,14 @@
-# PHASE-11-REVIEW — Índices, consultas y recuperación selectiva
+# PHASE-11-REVIEW — Indexes, queries and selective retrieval
 
-- Estado: **PASS**
-- Fecha y versión/commit: 2026-11-18 · 0.1.0-alpha.1 (working tree, sin commits)
-- PRs e issues cerrados: ninguno (no existe repositorio remoto ni tracker; IDs de tarea según docs/PLAN-MAESTRO.md)
-- Entregables verificados: LatticeLog.Query: DSL tipado, poda por tiempo/severidad/evento/servicio/bloom/seq, cursores, EXPLAIN, agregaciones desde índices
-- Evidencia de tests: 15 consultas idénticas a oráculo full-scan; paginación asc/desc exacta; agregación por índice = escaneo
-- Evidencia de benchmarks: time-range 20–40× vs full scan
-- Seguridad/compatibilidad: límites de longitud/profundidad/tiempo/escaneo
-- Hipótesis aceptadas/refutadas: G11 cumplido
-- Limitaciones abiertas: T07 filtros Xor no evaluados; T09 búsqueda de texto con índice (hoy escaneo); bloom por bloque para trace
-- ADRs nuevas: ver docs/decisions/ADR-*.md
-- Riesgos residuales: R11
-- Decisión: avanzar
+- Status: **PASS**
+- Date and version: 2026-11-18 · 0.1.0-alpha.1
+- PRs and issues closed: none (tasks are tracked by ID in docs/MASTER-PLAN.md)
+- Verified deliverables: LatticeLog.Query: typed DSL, pruning by time/severity/event/service/bloom/sequence, cursors, EXPLAIN, aggregations from indexes
+- Test evidence: 15 queries identical to a full-scan oracle; exact asc/desc pagination; index aggregation = scan
+- Benchmark evidence: time range 20–40× faster than a full scan
+- Security/compatibility: limits on length/depth/time/scan
+- Hypotheses accepted/refuted: G11 met
+- Open limitations: T07 Xor filters not evaluated; T09 indexed text search (a scan today); per-block bloom for traces
+- New ADRs: see docs/decisions/ADR-*.md
+- Residual risks: R11
+- Decision: proceed

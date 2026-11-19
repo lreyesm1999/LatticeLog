@@ -1,60 +1,60 @@
-# ROADMAP
+# Roadmap
 
-Actualizado 2026-11-18. Fuente de verdad del estado por fase; detalle en `docs/decisions/PHASE-XX-REVIEW.md`.
-Estados: PASS · CONDITIONAL (gate cumplido con pendientes explícitos) · NOT PASSED · NOT STARTED.
+Updated 2026-11-18. This is the source of truth for the status of each phase; details are in
+`docs/decisions/PHASE-XX-REVIEW.md`.
+Statuses: PASS · CONDITIONAL (gate met with explicit open items) · NOT PASSED · NOT STARTED · N/A.
 
-| fase | título | estado |
+| phase | title | status |
 |---|---|---|
-| P00 | Visión, alcance, requisitos y gobierno | CONDITIONAL |
-| P01 | Modelo semántico de eventos y contratos | PASS |
-| P02 | Laboratorio, datasets y baselines (I+D) | CONDITIONAL |
-| P03 | SDK .NET y generador de eventos | CONDITIONAL |
-| P04 | Especificación binaria .llog v0.x | PASS |
-| P05 | Pipeline de ingestión, WAL y escritura duradera | CONDITIONAL |
-| P06 | Lector, reconstrucción exacta y compatibilidad | PASS |
-| P07 | Lattice-S: codificación estructural (I+D) | PASS |
-| P08 | Lattice-C: herencia de contexto (I+D) | CONDITIONAL |
-| P09 | Lattice-P: predicción (I+D) | PASS (resultado negativo) |
-| P10 | Planificador adaptativo y compactación | CONDITIONAL |
-| P11 | Índices, consultas y recuperación selectiva | PASS |
-| P12 | Lectura AI-friendly sin IA: evidencias | CONDITIONAL |
-| P13 | Interoperabilidad OpenTelemetry e importadores | CONDITIONAL |
-| P14 | SDK .NET listo para producción (Local v1.0) | NOT PASSED |
-| P15 | CLI y herramientas locales | CONDITIONAL |
-| P16 | Protocolo de ingestión remota y collector | CONDITIONAL (cuerpo binario, multi-productor; falta red real y TLS probado) |
-| P17 | Servidor de consultas y multiusuario | CONDITIONAL (admin en línea y retención hechas; falta imagen construida y otro hardware) |
-| P18 | Seguridad, privacidad y auditabilidad | NOT PASSED (auditoría, borrado, freno, cabeceras; falta cifrado en reposo y pentest) |
-| P19 | Escalabilidad horizontal y replicación | NOT PASSED (réplica asíncrona + failover manual; sin clúster) |
-| P20 | Almacenamiento por niveles y object storage | NOT STARTED |
-| P21 | SDKs en otros lenguajes | CONDITIONAL (Python y PHP; Java/Go/Node fuera de alcance por ahora) |
-| P22 | Adaptador MCP de solo lectura | CONDITIONAL |
-| P23 | Consola web | CONDITIONAL (consola mínima segura; sin usuarios ni E2E en navegador) |
-| P24 | Operación, SRE, backup y DR | CONDITIONAL (métricas, backup verificado, runbooks; sin ensayos reales) |
-| P25 | Producto comercial, licencias y SaaS | NO APLICA (decisión: proyecto gratuito con licencia MIT; `docs/product/commercial-decisions.md`) |
-| P26 | Calidad, caos y certificación interna | NOT PASSED (prácticas activas; sin CI ni hardware estable) |
-| P27 | Lanzamiento, documentación y soporte | CONDITIONAL (repositorio público con licencia MIT; faltan CI ejecutado y paquetes) |
-| P28 | Mantenimiento y evolución | NOT STARTED (política en borrador) |
+| P00 | Vision, scope, requirements and governance | CONDITIONAL |
+| P01 | Semantic event model and contracts | PASS |
+| P02 | Lab, datasets and baselines (R&D) | CONDITIONAL |
+| P03 | .NET SDK and event generator | CONDITIONAL |
+| P04 | `.llog` v0.x binary specification | PASS |
+| P05 | Ingestion pipeline, WAL and durable writes | CONDITIONAL |
+| P06 | Reader, exact reconstruction and compatibility | PASS |
+| P07 | Lattice-S: structural encoding (R&D) | PASS |
+| P08 | Lattice-C: context inheritance (R&D) | CONDITIONAL |
+| P09 | Lattice-P: prediction (R&D) | PASS (negative result) |
+| P10 | Adaptive planner and compaction | CONDITIONAL |
+| P11 | Indexes, queries and selective retrieval | PASS |
+| P12 | AI-friendly reading without AI: evidence | CONDITIONAL |
+| P13 | OpenTelemetry interoperability and importers | CONDITIONAL |
+| P14 | Production-ready .NET SDK (Local v1.0) | NOT PASSED |
+| P15 | CLI and local tools | CONDITIONAL |
+| P16 | Remote ingestion protocol and collector | CONDITIONAL (binary body, multi-producer; real network and TLS not yet tested) |
+| P17 | Query server and multi-tenancy | CONDITIONAL (online admin and retention done; image not built, other hardware pending) |
+| P18 | Security, privacy and auditability | NOT PASSED (audit, erasure, brake, headers; no encryption at rest or pentest) |
+| P19 | Horizontal scalability and replication | NOT PASSED (async replica + manual failover; no cluster) |
+| P20 | Tiered storage and object storage | NOT STARTED |
+| P21 | SDKs in other languages | CONDITIONAL (Python and PHP; Java/Go/Node out of scope for now) |
+| P22 | Read-only MCP adapter | CONDITIONAL |
+| P23 | Web console | CONDITIONAL (minimal, secure console; no user testing or browser E2E) |
+| P24 | Operations, SRE, backup and DR | CONDITIONAL (metrics, verified backup, runbooks; no real drills) |
+| P25 | Commercial product, licensing and SaaS | N/A (decision: free project under the MIT license; `docs/product/commercial-decisions.md`) |
+| P26 | Quality, chaos and internal certification | NOT PASSED (practices in place; stable hardware missing) |
+| P27 | Launch, documentation and support | CONDITIONAL (public repository under MIT; packages not published) |
+| P28 | Maintenance and evolution | NOT STARTED (policy drafted) |
 
 ## Current
-- Cerrar pendientes de M1/M3 para Local v1.0 (P14). Hecho el 18-nov-2026: pruebas de caída con proceso real, anillo
-  y pool en la ruta habilitada (56 ns / 5 B), análisis de trimming/AOT activo y limpio, paquetes NuGet locales,
-  benchmark de latencia a tasa fija. Falta: CI Linux/macOS/ARM64 + Native AOT (requiere remoto), causa de los
-  repetir la medición de latencia en otro disco y en Linux (causa de los bloqueos ya identificada y mitigada),
-  firma, N-1 y RC (`docs/decisions/PHASE-14-REVIEW.md`).
-- ~~Mitigar P04-R1~~ hecho en el formato 0.2 (copia comprimida de catálogos en el footer).
+- Close the M1/M3 items for Local v1.0 (P14). Done on 2026-11-18: real-process crash tests, ring and pool on the
+  enabled path (56 ns / 5 B), trimming/AOT analysis active and clean, local NuGet packages, fixed-rate latency
+  benchmark. Open: ARM64 CI, repeating the latency measurement on another disk and on Linux (the stall cause is
+  identified and mitigated), signing, N-1 and RC (`docs/decisions/PHASE-14-REVIEW.md`).
+- ~~Mitigate P04-R1~~ done in format 0.2 (compressed catalog copy in the footer).
 
 ## Next
-- Pendientes de P16–P17: red real y TLS probados entre máquinas, imagen Docker construida.
-- P18: cifrado en reposo, canal de vulnerabilidades, pentest externo (`docs/security/pentest-scope.md`).
-- P24: restaurar un backup en otra máquina y ejecutar los runbooks.
-- **Plataforma**: el equipo de referencia corrompe memoria bajo carga multinúcleo (BIOS/microcódigo antiguos); repetir las mediciones en hardware estable.
-- Evaluación externa AI-friendly (P12-T17..T19) con modelo externo y revisión humana.
-- Datasets reales propios en el laboratorio (Loghub-2.0 ya medido: `reports/loghub2-v1.md`).
+- P16–P17 open items: real network and TLS tested between machines, Docker image built.
+- P18: encryption at rest, external pentest (`docs/security/pentest-scope.md`).
+- P24: restore a backup on another machine and run the runbooks.
+- **Platform**: the reference machine corrupts memory under all-core load (old BIOS/microcode); repeat the measurements
+  on stable hardware.
+- External AI-friendly evaluation (P12-T17..T19) with an external model and human review.
+- Real datasets of our own in the lab (Loghub-2.0 already measured: `reports/loghub2-v1.md`).
 
 ## Later
-- P19 clúster (tras medir el límite de un nodo en hardware estable), P20 tiers/object storage, SDKs Java/Go/Node,
-  P23 consola completa con usuarios, P25–P27 comercial y lanzamiento (tras las decisiones bloqueadas).
+- P19 cluster (after measuring single-node limits on stable hardware), P20 tiers/object storage, Java/Go/Node SDKs,
+  P23 full console with user testing, P27 packages and stable release.
 
-## Blocked (requieren decisión o recursos humanos)
-- Marca "LatticeLog", dominios (P00-T14, P27-T11): verificación jurídica.
-- Presupuesto/equipo (P00-T15), entrevistas con usuarios (P23-T01, P25-T02), pentest (P18-T16).
+## Blocked (needs people or resources)
+- User interviews (P23-T01), pentest (P18-T16).

@@ -1,94 +1,95 @@
-# Operación de `latticelog-server` (P24)
+# Operating `latticelog-server` (P24)
 
-Estado a 18-nov-2026, un nodo (más réplica opcional). Complementa `docs/deploy/single-node.md`.
+Status on 2026-11-18: a single node (plus an optional replica). Complements `docs/deploy/single-node.md`.
 
-## SLI y objetivos iniciales (P24-T01)
+## SLIs and initial targets (P24-T01)
 
-Objetivos de partida para un nodo; hay que revisarlos con datos reales y en hardware estable.
+Starting targets for one node; they have to be revisited with real data and on stable hardware.
 
-| SLI | medida | objetivo inicial |
+| SLI | measure | initial target |
 |---|---|---|
-| Disponibilidad de ingestión | % de `POST /v1/ingest` respondidos con 2xx o 409, sin contar los 429 por cuota | 99,9 % mensual |
-| Latencia de ACK | p99 del ACK `fsync` por lote de 5 000 | < 250 ms |
-| Durabilidad | lotes confirmados y no legibles tras una caída | 0 |
-| Búsqueda | p95 de `/v1/search` sobre las últimas 24 h, ≤ 100 resultados | < 2 s |
-| Lag de réplica | `latticelog_replication_lag_records` | 0 en régimen; < 60 s de datos tras un pico |
-| Restauración | tiempo de restaurar un backup verificado | < 30 min por cada 100 GB (sin medir aún) |
+| Ingestion availability | % of `POST /v1/ingest` answered with 2xx or 409, excluding quota 429s | 99.9 % monthly |
+| ACK latency | p99 of the `fsync` ACK per 5,000-record batch | < 250 ms |
+| Durability | acknowledged batches that are unreadable after a crash | 0 |
+| Search | p95 of `/v1/search` over the last 24 h, ≤ 100 results | < 2 s |
+| Replica lag | `latticelog_replication_lag_records` | 0 in steady state; < 60 s of data after a spike |
+| Restore | time to restore a verified backup | < 30 min per 100 GB (not measured yet) |
 
-## Métricas y alertas (P24-T02..T04)
+## Metrics and alerts (P24-T02..T04)
 
-Hay que rascar `/metrics` con un token admin (`Authorization: Bearer …`) cada 15–30 s. El servidor no escribe sus
-propios logs en sus almacenes, así que no hay bucles.
+Scrape `/metrics` with an admin token (`Authorization: Bearer …`) every 15–30 s. The server does not write its own logs
+into its stores, so there are no feedback loops.
 
-| alerta | condición | acción |
+| alert | condition | action |
 |---|---|---|
-| Namespace en fallo | `latticelog_ingest_failed == 1` | El namespace rechaza escrituras tras un error de disco. Ver *Disco lleno o error de E/S*. |
-| Cola saturada | `latticelog_ingest_queue_depth` > 80 % de la capacidad durante 5 min | Mirar CPU y disco; bajar `MaxConcurrentQueries` si las consultas compiten; repartir namespaces. |
-| Ingestión parada | `rate(latticelog_ingest_records_stored_total[10m]) == 0` con productores conocidos | Comprobar red y tokens (los 401 aparecen en el audit log como `auth.*`). |
-| Réplica atrasada | lag > 0 durante 5 min y creciendo | Ver estado en `/v1/health`; comprobar la réplica y el token de réplica. |
-| Auditoría perdiendo eventos | `increase(latticelog_audit_events_dropped_total[5m]) > 0` | Disco lento o lleno en `data/audit`. |
-| Disco | espacio libre < 15 % (exportador del sistema) | Retención (`/v1/admin/retention`) o ampliar disco. El escritor se niega a escribir por debajo de `MinFreeDiskBytes`. |
-| Fuerza bruta | muchos `auth.*` con `unauthorized` en el audit log | El freno (429 por IP) ya actúa; investigar el origen. |
+| Failed namespace | `latticelog_ingest_failed == 1` | The namespace refuses writes after a disk error. See *Disk full or I/O error*. |
+| Saturated queue | `latticelog_ingest_queue_depth` > 80 % of capacity for 5 min | Check CPU and disk; lower `MaxConcurrentQueries` if queries compete; spread namespaces. |
+| Ingestion stopped | `rate(latticelog_ingest_records_stored_total[10m]) == 0` with known producers | Check the network and tokens (401s show up in the audit log as `auth.*`). |
+| Replica behind | lag > 0 for 5 min and growing | Check the status in `/v1/health`; check the replica and the replica token. |
+| Audit losing events | `increase(latticelog_audit_events_dropped_total[5m]) > 0` | Slow or full disk under `data/audit`. |
+| Disk | free space < 15 % (system exporter) | Retention (`/v1/admin/retention`) or a larger disk. The writer refuses to write below `MinFreeDiskBytes`. |
+| Brute force | many `auth.*` entries with `unauthorized` in the audit log | The brake (429 per IP) is already acting; investigate the source. |
 
-## Backup y restauración (P24-T05, T06)
+## Backup and restore (P24-T05, T06)
 
-- **En caliente**: `POST /v1/admin/backup?ns=<namespace>` (requiere `--backup-dir`) o, en la máquina,
-  `latticelog backup <data>/ns/<dir> <destino>`. Los segmentos sellados se copian tal cual; el activo, hasta su último
-  bloque completo. La copia se verifica leyéndola (`verified: true`). Lo escrito después del backup no está en él.
-- Incluye también `server.key` (firma de cursores; sin ella los cursores emitidos dejan de valer, nada más) y el
-  fichero de tokens.
-- **Restaurar**: servidor parado → copiar el directorio del backup a `data/ns/<dir>` → arrancar. La recuperación sella
-  el segmento activo copiado y reconstruye la deduplicación desde los datos, así que los productores reenvían lo
-  posterior al backup sin duplicados (si aún lo tienen en su spool).
-- **Ensayo**: restaurar periódicamente en otra máquina y ejecutar `latticelog verify`. Probado en
-  `BackupTests` (copia mientras el escritor sigue escribiendo, restauración y escritura posterior). **No ensayado en
-  infraestructura nueva** (P24-T06 pendiente).
-- **RPO/RTO**: sin réplica, el RPO es el intervalo entre backups, salvo lo que siga en los spools de los productores.
-  Con réplica, el RPO es el lag de réplica en el momento del fallo. El RTO depende del tamaño y no está medido.
+- **Hot**: `POST /v1/admin/backup?ns=<namespace>` (requires `--backup-dir`) or, on the machine,
+  `latticelog backup <data>/ns/<dir> <destination>`. Sealed segments are copied as they are; the active one up to its
+  last complete block. The copy is verified by reading it (`verified: true`). Whatever is written after the backup is
+  not in it.
+- Also keep `server.key` (cursor signing; without it, issued cursors stop being valid, nothing more) and the tokens
+  file.
+- **Restore**: stop the server → copy the backup directory to `data/ns/<dir>` → start. Recovery seals the copied active
+  segment and rebuilds deduplication from the data, so producers resend whatever came after the backup without
+  duplicates (if they still have it in their spool).
+- **Drill**: periodically restore on another machine and run `latticelog verify`. Tested in `BackupTests` (copy while
+  the writer keeps writing, restore and write afterwards). **Not drilled on new infrastructure yet** (P24-T06 open).
+- **RPO/RTO**: without a replica, the RPO is the interval between backups, except for what is still in the producers'
+  spools. With a replica, the RPO is the replica lag at the moment of failure. The RTO depends on size and is not
+  measured.
 
 ## Runbooks (P24-T09)
 
-### Disco lleno o error de E/S
-1. `latticelog_ingest_failed == 1` o 503 en ingestión. Los productores retienen en su spool.
-2. Liberar espacio: retención en seco (`dry_run=true`) para ver qué se borraría, luego real. No borrar ficheros a mano.
-3. Reiniciar el servidor: la recuperación revisa cada namespace y el namespace vuelve a aceptar.
+### Disk full or I/O error
+1. `latticelog_ingest_failed == 1` or 503s on ingestion. Producers keep data in their spool.
+2. Free space: a retention dry run (`dry_run=true`) to see what would be deleted, then the real run. Do not delete files
+   by hand.
+3. Restart the server: recovery checks every namespace and the namespace accepts writes again.
 
-### Corrupción
-1. `POST /v1/admin/verify?ns=…` o `latticelog verify`. Las consultas ya informan `storage_issues` en la cobertura.
-2. Un segmento con bloques corruptos se sigue leyendo hasta el daño; no se repara en sitio. Restaurar ese segmento
-   desde un backup o la réplica con el servidor parado.
+### Corruption
+1. `POST /v1/admin/verify?ns=…` or `latticelog verify`. Queries already report `storage_issues` in their coverage.
+2. A segment with corrupt blocks is still read up to the damage; it is not repaired in place. Restore that segment from
+   a backup or the replica with the server stopped.
 
-### Servidor caído
-1. Arrancar de nuevo; la recuperación es automática (sella el segmento activo y reconstruye la deduplicación).
-2. Si no arranca: revisar el log de diagnóstico en stderr. Con réplica, seguir el failover de
+### Server down
+1. Start it again; recovery is automatic (it seals the active segment and rebuilds deduplication).
+2. If it does not start: check the diagnostic log on stderr. With a replica, follow the failover in
    `docs/operations/replication.md`.
 
-### Token comprometido
-1. Quitarlo del fichero de tokens (se recarga sin reiniciar). Emitir uno nuevo.
-2. Buscar en el audit log las acciones de ese `token` desde la fecha sospechosa.
-3. Si era admin o tenía lectura amplia: rotar `server.key` (invalida los cursores) y valorar si hay obligación de
-   notificar.
+### Compromised token
+1. Remove it from the tokens file (reloaded without a restart). Issue a new one.
+2. Search the audit log for that `token`'s actions since the suspected date.
+3. If it was an admin token or had broad read access: rotate `server.key` (invalidates cursors) and assess whether
+   there is an obligation to notify.
 
-### Privacidad: solicitud de borrado
-1. `POST /v1/admin/erase?ns=…&where=…&dry_run=true` para contar; después sin `dry_run`.
-2. Repetir en la réplica. Los backups anteriores **siguen conteniendo** los datos: o se borran según su propia
-   caducidad, o se restauran, se borra y se vuelve a hacer el backup. Los spools de los productores caducan con su
-   retención local.
-3. El audit log guarda el filtro usado: puede contener el dato personal. Tratarlo en consecuencia.
+### Privacy: erasure request
+1. `POST /v1/admin/erase?ns=…&where=…&dry_run=true` to count; then without `dry_run`.
+2. Repeat on the replica. Earlier backups **still contain** the data: either they are deleted when they expire, or they
+   are restored, erased and backed up again. Producer spools expire with their local retention.
+3. The audit log keeps the filter used, which may contain the personal data. Handle it accordingly.
 
-### Actualización y vuelta atrás (P24-T10, T11)
-1. Backup de cada namespace. Parar, sustituir el binario o la imagen y arrancar.
-2. Vuelta atrás: el formato `.llog` de la misma mayor se lee en ambos sentidos (`docs/compatibility.md`). Un segmento
-   escrito por la versión nueva con una función opcional nueva lo lee la anterior de forma secuencial. Si la nota de la
-   versión dice lo contrario, restaurar el backup.
+### Upgrade and rollback (P24-T10, T11)
+1. Back up every namespace. Stop, replace the binary or image, and start.
+2. Rollback: the `.llog` format of the same major is readable in both directions (`docs/compatibility.md`). A segment
+   written by the new version with a new optional feature is read sequentially by the previous one. If the release
+   notes say otherwise, restore the backup.
 
-## Capacidad (P24-T16)
+## Capacity (P24-T16)
 
-Medido solo en la máquina de referencia y con 4 CPUs (`reports/ingest-v1.md`): con cuerpo binario, de 470k a 561k
-registros/s con 1 productor, 1,15M con 4 y 1,45M con 16. Con lectores a la vez, la ingestión baja aproximadamente a
-la mitad. Estas cifras **no son una guía de dimensionamiento** hasta repetirlas en hardware estable.
+Measured only on the reference machine with 4 CPUs (`reports/ingest-v1.md`): with the binary body, 470k–561k records/s
+with 1 producer, 1.15M with 4 and 1.45M with 16. With concurrent readers, ingestion drops to roughly half. These figures
+are **not a sizing guide** until they are repeated on stable hardware.
 
-## Pendiente
+## Open
 
-Dashboards listos para importar (T03), canary/rolling (T10), simulacros (T12), costes (T13), guardias y comunicación
-(T14), Kubernetes (T15), DR regional (T08).
+Ready-to-import dashboards (T03), canary/rolling deployments (T10), drills (T12), costs (T13), on-call and
+communication (T14), Kubernetes (T15), regional DR (T08).

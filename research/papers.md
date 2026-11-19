@@ -1,19 +1,19 @@
-# Referencias de investigación (P02, §10 del plan)
+# Research references (P02, master plan §10)
 
-Estado de revisión: **no se han leído ni reproducido** en este repositorio; las URLs proceden del plan maestro y deben
-verificarse. Ningún resultado de estas publicaciones se usa como objetivo de LatticeLog.
+Review status: **not read or reproduced** in this repository; the URLs come from the master plan and must be
+verified. No result from these publications is used as a LatticeLog target.
 
-| # | trabajo | año | idea relevante | reproducido | notas |
+| # | work | year | relevant idea | reproduced | notes |
 |---|---|---|---|---|---|
-| 1 | NanoLog (USENIX ATC) | 2018 | mover formateo a compilación/post-proceso | no | inspira el generador de eventos tipados |
-| 2 | CLP (OSDI) | 2021 | compresión lossless con búsqueda sobre logs compactados | no | candidato a baseline (P02-T10), revisar licencia |
-| 3 | μSlope (OSDI) | 2024 | compresión de logs semiestructurados | no | |
-| 4 | LogCrisp (USENIX ATC) | 2025 | consultas vectorizadas y patrones | no | |
-| 5 | Tracezip (ISSTA) | 2025 | redundancia de spans | no | relevante para Lattice-C |
-| 6 | LogPrism (arXiv 2601.17482) | 2026 | correlación estructura/variables | no | |
-| 7 | OpenTelemetry Logs Data Model | — | modelo semántico | aplicado | `specs/otel-mapping.md` |
-| 8 | OTel semantic conventions for events | — | nombres/atributos | parcialmente | `exception.*`, `service.*` |
-| 9–10 | Model Context Protocol 2026-07-28 / tools | 2026 | interfaz de herramientas | **no verificado** | el adaptador negocia 2025-xx; actualizar (P22-T01) |
-| 11 | .NET support policy | — | .NET 10 LTS | aplicado | ADR-0001 |
+| 1 | NanoLog (USENIX ATC) | 2018 | move formatting to compile time / post-processing | no | inspires the typed event generator |
+| 2 | CLP (OSDI) | 2021 | lossless compression with search over compressed logs | no | baseline candidate (P02-T10), check the license |
+| 3 | μSlope (OSDI) | 2024 | compression of semi-structured logs | no | |
+| 4 | LogCrisp (USENIX ATC) | 2025 | vectorized queries and patterns | no | |
+| 5 | Tracezip (ISSTA) | 2025 | span redundancy | no | relevant to Lattice-C |
+| 6 | LogPrism (arXiv 2601.17482) | 2026 | structure/variable correlation | no | |
+| 7 | OpenTelemetry Logs Data Model | — | semantic model | applied | `specs/otel-mapping.md` |
+| 8 | OTel semantic conventions for events | — | names/attributes | partially | `exception.*`, `service.*` |
+| 9–10 | Model Context Protocol 2026-07-28 / tools | 2026 | tool interface | **not verified** | the adapter negotiates 2025-xx; update (P22-T01) |
+| 11 | .NET support policy | — | .NET 10 LTS | applied | ADR-0001 |
 
-Antes de afirmar originalidad o redactar patentes: revisión bibliográfica completa (R15).
+Before claiming originality or drafting patents: a full literature review (R15).

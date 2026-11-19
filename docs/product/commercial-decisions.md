@@ -1,24 +1,24 @@
-# Licencia y modelo del proyecto (P25)
+# License and project model (P25)
 
-**Decidido el 18-nov-2026**: LatticeLog es gratuito y abierto, con licencia **MIT** para todo el repositorio. No hay
-ediciones de pago, SaaS ni facturación previstos.
+**Decided on 2026-11-18**: LatticeLog is free and open, under the **MIT** license for the whole repository. No paid
+editions, SaaS or billing are planned.
 
-## Por qué MIT
+## Why MIT
 
-- Es lo que pidió el responsable: un proyecto gratis para cualquiera, como sus otros repositorios públicos.
-- Es la licencia más corta y conocida. Cualquiera puede usarlo, modificarlo y redistribuirlo, también en proyectos
-  comerciales, siempre que mantenga el aviso de copyright.
-- Es compatible con todas las dependencias (K4os.Compression.LZ4, ZstdSharp y BenchmarkDotNet son MIT; xUnit es
-  Apache-2.0, solo en pruebas).
-- Protege la promesa de portabilidad: el formato `.llog`, su especificación y el lector independiente
-  (`tools/pyllog`) se pueden reutilizar sin restricciones.
+- It is what the owner asked for: a project that is free for everyone, like their other public repositories.
+- It is the shortest and best-known license. Anyone can use, modify and redistribute the code, in commercial projects
+  too, as long as the copyright notice is kept.
+- It is compatible with every dependency (K4os.Compression.LZ4, ZstdSharp and BenchmarkDotNet are MIT; xUnit is
+  Apache-2.0 and only used in tests).
+- It protects the portability promise: the `.llog` format, its specification and the independent reader
+  (`tools/pyllog`) can be reused without restrictions.
 
-## Alternativa considerada
+## Alternative considered
 
-**Apache-2.0** añade una concesión explícita de patentes y exige anotar los cambios. Sería preferible si colaboraran
-empresas con patentes en juego. Para un proyecto personal gratuito, MIT es más simple.
+**Apache-2.0** adds an explicit patent grant and requires changes to be noted. It would be preferable if companies with
+patents at stake contributed. For a free personal project, MIT is simpler.
 
-## Lo que el código ya garantiza a quien lo use
+## What the code already guarantees to its users
 
-Exportación completa sin pérdida (`GET /v1/export`, `latticelog export`), borrado verificable (`/v1/admin/erase`,
-con sus límites sobre backups y réplica) y formato documentado con lector independiente.
+Complete lossless export (`GET /v1/export`, `latticelog export`), verifiable erasure (`/v1/admin/erase`, with its
+limits regarding backups and replicas) and a documented format with an independent reader.

@@ -1,26 +1,26 @@
-# PHASE-19-REVIEW — Escalabilidad horizontal y replicación
+# PHASE-19-REVIEW — Horizontal scalability and replication
 
-- Estado: **NOT PASSED** (réplica asíncrona y failover manual hechos; no hay clúster)
-- Fecha: 2026-11-18
-- Entregables: `src/LatticeLog.Server/Replication.cs`, seguimiento de procedencia upstream en `IngestService`,
-  `--replicate-to` en `latticelog-server`, `tests/LatticeLog.Tests/ReplicationTests.cs`,
+- Status: **NOT PASSED** (asynchronous replica and manual failover done; there is no cluster)
+- Date: 2026-11-18
+- Deliverables: `src/LatticeLog.Server/Replication.cs`, upstream provenance tracking in `IngestService`,
+  `--replicate-to` in `latticelog-server`, `tests/LatticeLog.Tests/ReplicationTests.cs`,
   `docs/operations/replication.md`
 
-| tarea | estado | evidencia |
+| task | status | evidence |
 |---|---|---|
-| T01 límites de un nodo | parcial | `reports/ingest-v1.md` con 4 CPUs; el equipo no es estable para medir el límite real |
-| T02–T04 shards, router, control plane | no hecho | — |
-| T05 líder/época/fencing | no hecho | documentado como riesgo: nada impide dos primarios a la vez |
-| T06 consistencia | documentado | asíncrona: el ACK no espera a la réplica |
-| T07 replicación | hecho (asíncrona) | un `Forwarder` por namespace; cursor persistente; lag en `/metrics` y `/v1/health` |
-| T08 duplicados tras failover | hecho | la réplica aprende las secuencias del productor original desde la procedencia y las conserva tras reiniciar; probado: nada duplicado ni perdido al reenviar a la réplica |
-| T09 snapshots y reconstrucción | parcial | backup en caliente verificado (P24); índices y catálogo se reconstruyen desde segmentos (P11) |
-| T10–T12 movimiento de shards, cuotas por nodo | no hecho | — |
-| T13 resultados parciales | hecho en un nodo | `partial_results` y `storage_issues` en la cobertura |
-| T14 particiones, split-brain | no hecho | solo se probó la caída del primario |
-| T15 escalado 1/3/5/N | no hecho | — |
-| T16 topologías y runbook | hecho para primario+réplica | `docs/operations/replication.md` |
+| T01 single-node limits | partial | `reports/ingest-v1.md` with 4 CPUs; the machine is not stable enough to measure the real limit |
+| T02–T04 shards, router, control plane | not done | — |
+| T05 leader/epoch/fencing | not done | documented as a risk: nothing prevents two primaries at once |
+| T06 consistency | documented | asynchronous: the ACK does not wait for the replica |
+| T07 replication | done (asynchronous) | one `Forwarder` per namespace; persistent cursor; lag in `/metrics` and `/v1/health` |
+| T08 duplicates after failover | done | the replica learns the original producer's sequences from provenance and keeps them across restarts; tested: nothing duplicated or lost when resending to the replica |
+| T09 snapshots and rebuild | partial | verified hot backup (P24); indexes and catalog are rebuilt from segments (P11) |
+| T10–T12 shard movement, per-node quotas | not done | — |
+| T13 partial results | done on one node | `partial_results` and `storage_issues` in the coverage |
+| T14 partitions, split-brain | not done | only a primary crash was tested |
+| T15 scaling 1/3/5/N | not done | — |
+| T16 topologies and runbook | done for primary + replica | `docs/operations/replication.md` |
 
-- Gate G19 ("ningún fallo de nodo conduce a confirmaciones falsas…; escalado horizontal medido"): la parte de
-  confirmaciones falsas se cumple para primario+réplica (el ACK nunca afirma replicación); el escalado no existe.
-- Decisión: no construir clúster antes de medir el límite de un nodo en hardware estable (T01).
+- Gate G19 ("no node failure leads to false confirmations…; horizontal scaling measured"): the false-confirmation part
+  is met for primary + replica (the ACK never claims replication); scaling does not exist.
+- Decision: do not build a cluster before measuring single-node limits on stable hardware (T01).

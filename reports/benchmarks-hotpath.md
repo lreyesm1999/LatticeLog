@@ -1,60 +1,60 @@
 # Producer hot path — BenchmarkDotNet (P03-T06, P03-T15)
 
-Fecha: 18-nov-2026 · `benchmarks/LatticeLog.Benchmarks` · BenchmarkDotNet 0.15.8, toolchain in-process, 5 warmup +
-15 iteraciones · Intel Core i9-14900KF, Windows 11 10.0.26300, .NET 10.0.15 x64 RyuJIT (x86-64-v3).
-Sink nulo (sin E/S): mide productor + cola + hilo escritor (redacción incluida), no el disco.
+Date: 2026-11-18 · `benchmarks/LatticeLog.Benchmarks` · BenchmarkDotNet 0.15.8, in-process toolchain, 5 warmup +
+15 iterations · Intel Core i9-14900KF, Windows 11 10.0.26300, .NET 10.0.15 x64 RyuJIT (x86-64-v3).
+Null sink (no I/O): measures producer + queue + writer thread (redaction included), not the disk.
 
-| caso | corrida 1 (antes del cache de redacción) | corrida 2 (después) | asignado/op |
+| case | run 1 (before the redaction cache) | run 2 (after) | allocated/op |
 |---|---:|---:|---:|
-| evento tipado, nivel deshabilitado | 1.79 ns | 1.29 ns | 0 B |
-| MEL `LoggerMessage` deshabilitado (referencia) | 0.69 ns | 0.13 ns | 0 B |
-| evento tipado habilitado (4 campos) | 315 ns | 185 ns | 414–422 B |
-| texto libre + 2 atributos habilitado | 178 ns | 335 ns | 339–347 B |
+| typed event, level disabled | 1.79 ns | 1.29 ns | 0 B |
+| MEL `LoggerMessage` disabled (reference) | 0.69 ns | 0.13 ns | 0 B |
+| typed event enabled (4 fields) | 315 ns | 185 ns | 414–422 B |
+| free text + 2 attributes enabled | 178 ns | 335 ns | 339–347 B |
 
-Contadores del hilo escritor en la corrida (bucle cerrado, sin límite de tasa):
+Writer-thread counters during the run (closed loop, no rate limit):
 
-| caso | aceptados | escritos | descartados por saturación |
+| case | accepted | written | dropped by saturation |
 |---|---:|---:|---:|
-| tipado, corrida 1 | 7.9 M | 3.9 M | 16.3 M |
-| texto libre, corrida 1 | 12.1 M | 8.1 M | 12.0 M |
-| tipado, corrida 2 | 18.7 M | 14.7 M | 29.5 M |
-| texto libre, corrida 2 | 48.2 M | 46.4 M | **0** |
+| typed, run 1 | 7.9 M | 3.9 M | 16.3 M |
+| free text, run 1 | 12.1 M | 8.1 M | 12.0 M |
+| typed, run 2 | 18.7 M | 14.7 M | 29.5 M |
+| free text, run 2 | 48.2 M | 46.4 M | **0** |
 
-Interpretación:
-- **Ruta deshabilitada**: 0 asignaciones, 1,3–1,8 ns. Cumple el objetivo (< 5 ns) pero es más lenta que MEL
-  (dispatch por interfaz `ILatticeLogger.IsEnabled`). Mejora posible: exponer el nivel mínimo como campo para que el
-  código generado compare sin llamada virtual.
-- **Ruta habilitada**: 185–335 ns y ~340–420 B por evento (registro + array de atributos + nodos de la cola). La
-  varianza entre corridas es grande porque el resultado mezcla el coste del productor con la dinámica de saturación:
-  cuando la cola se llena, descartar es más barato que encolar; cuando el escritor mantiene el ritmo, los objetos
-  sobreviven más y se promueven a Gen1/Gen2. **No cumple aún** un objetivo razonable de < 100 ns / < 200 B.
-- **Hallazgo y corrección**: el hilo escritor comparaba cada clave contra ~15 patrones sensibles en cada registro. El
-  cache por clave (`RedactionPolicy.IsSensitiveKey`) eliminó los descartes en el caso de texto libre (0 de 48 M).
-- Toda pérdida quedó contada (`DroppedSaturation`); ningún descarte fue silencioso.
+Interpretation:
+- **Disabled path**: 0 allocations, 1.3–1.8 ns. Meets the target (< 5 ns) but is slower than MEL (interface dispatch on
+  `ILatticeLogger.IsEnabled`). Possible improvement: expose the minimum level as a field so the generated code compares
+  without a virtual call.
+- **Enabled path**: 185–335 ns and ~340–420 B per event (record + attribute array + queue nodes). Variance between runs
+  is large because the result mixes the producer's cost with saturation dynamics: when the queue is full, dropping is
+  cheaper than enqueuing; when the writer keeps up, objects live longer and are promoted to Gen1/Gen2. It does **not
+  yet meet** a reasonable target of < 100 ns / < 200 B.
+- **Finding and fix**: the writer thread compared every key against ~15 sensitive patterns on every record. A per-key
+  cache (`RedactionPolicy.IsSensitiveKey`) removed the drops in the free-text case (0 of 48 M).
+- Every loss was counted (`DroppedSaturation`); no drop was silent.
 
-## Actualización P14 (18-nov-2026, misma máquina y configuración)
+## P14 update (2026-11-18, same machine and configuration)
 
-Tres cambios, medidos uno a uno con el mismo benchmark (`--filter '*Enabled*'`, sink nulo):
+Three changes, measured one at a time with the same benchmark (`--filter '*Enabled*'`, null sink):
 
-| paso | tipado (4 campos) | asignado | texto libre + 2 atributos | asignado |
+| step | typed (4 fields) | allocated | free text + 2 attributes | allocated |
 |---|---:|---:|---:|---:|
-| antes (cola `ConcurrentQueue` + `SortedSet` de tickets) | 189 ns | 417 B | 252 ns | 340 B |
-| 1. anillo acotado preasignado (`BoundedRing`, posición = ticket) | 80 ns | 488 B | 68 ns | 280 B |
-| 2. redacción sin enumerador (bucle por índice + caché de sensibilidad del descriptor) | 75 ns | 360 B | 67 ns | 280 B |
-| 3. pool de registros (`LogRecordPool`) para eventos generados y API de texto libre | **56 ns** | **5 B** | **63 ns** | **105 B** |
+| before (`ConcurrentQueue` + a `SortedSet` of tickets) | 189 ns | 417 B | 252 ns | 340 B |
+| 1. preallocated bounded ring (`BoundedRing`, position = ticket) | 80 ns | 488 B | 68 ns | 280 B |
+| 2. enumerator-free redaction (index loop + per-descriptor sensitivity cache) | 75 ns | 360 B | 67 ns | 280 B |
+| 3. record pool (`LogRecordPool`) for generated events and the free-text API | **56 ns** | **5 B** | **63 ns** | **105 B** |
 
-Corrida final con los 4 casos: evento deshabilitado 1,12 ns / 0 B; MEL deshabilitado 0,12 ns; tipado habilitado
-55,6 ns / 5 B (Gen0 0,0003 por 1000 operaciones); texto libre 63,1 ns / 105 B (el array `params` de quien llama).
+Final run with all 4 cases: disabled event 1.12 ns / 0 B; disabled MEL 0.12 ns; enabled typed 55.6 ns / 5 B (Gen0
+0.0003 per 1000 operations); free text 63.1 ns / 105 B (the caller's `params` array).
 
-Lectura honesta:
-- El paso 1 subió las asignaciones medidas del tipado (417 → 488 B) aunque bajó el tiempo a menos de la mitad: antes
-  dos tercios de los registros se **descartaban** por saturación y nunca llegaban al hilo escritor, así que lo que
-  éste asignaba no se contaba entero. Con el anillo el escritor ya no se queda atrás (**0 descartes** en 193 M
-  registros) y su coste aparece completo. Eso destapó el paso 2: `RedactionPolicy.Apply` recorría `IReadOnlyList`
-  con `foreach`, un enumerador por atributo y registro.
-- El pool solo recicla un registro cuando el sink declara `IRecordSink.RetainsRecords = false` (`StoreWriter` lo
-  hace); cualquier otro sink o logger simplemente deja los registros al GC. Los arrays de atributos que pasa quien
-  llama nunca se limpian ni se reutilizan (prueba `Pooled_records_are_recycled_without_corrupting_persisted_data`).
-- Objetivo propuesto en la versión anterior (< 100 ns / < 200 B en la ruta habilitada): **cumplido** en ambos casos.
-- Limitaciones: un hilo productor, sink nulo, una máquina Windows. El coste con disco real y bajo carga sostenida
-  está en `reports/latency-v1.md`. Pendiente: Linux y ARM64.
+An honest reading:
+- Step 1 raised the measured allocations of the typed case (417 → 488 B) even though it more than halved the time:
+  before, two thirds of the records were **dropped** by saturation and never reached the writer thread, so what the
+  writer allocated was not fully counted. With the ring the writer no longer falls behind (**0 drops** in 193 M
+  records) and its full cost shows up. That uncovered step 2: `RedactionPolicy.Apply` iterated an `IReadOnlyList` with
+  `foreach`, one enumerator per attribute and record.
+- The pool only recycles a record when the sink declares `IRecordSink.RetainsRecords = false` (`StoreWriter` does);
+  any other sink or logger simply leaves records to the GC. Attribute arrays passed by the caller are never cleared or
+  reused (test `Pooled_records_are_recycled_without_corrupting_persisted_data`).
+- Target proposed in the previous version (< 100 ns / < 200 B on the enabled path): **met** in both cases.
+- Limitations: one producer thread, null sink, one Windows machine. The cost with a real disk under sustained load is in
+  `reports/latency-v1.md`. Open: Linux and ARM64.

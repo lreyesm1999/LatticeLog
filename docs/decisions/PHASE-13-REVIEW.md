@@ -1,14 +1,14 @@
-# PHASE-13-REVIEW — Interoperabilidad OpenTelemetry e importadores
+# PHASE-13-REVIEW — OpenTelemetry interoperability and importers
 
-- Estado: **CONDITIONAL**
-- Fecha y versión/commit: 2026-11-18 · 0.1.0-alpha.1 (working tree, sin commits)
-- PRs e issues cerrados: ninguno (no existe repositorio remoto ni tracker; IDs de tarea según docs/PLAN-MAESTRO.md)
-- Entregables verificados: OTLP/JSON export/import con LossReport, JSONL estructurado (CLEF/pino), texto byte-exacto, JSONL de intercambio sin pérdida, bridge MEL
-- Evidencia de tests: round trips OTLP, byte-exact de texto con bytes inválidos, importador JSONL
-- Evidencia de benchmarks: n/a
-- Seguridad/compatibilidad: límites en el receptor
-- Hipótesis aceptadas/refutadas: exportación completa para abandonar el formato: sí
-- Limitaciones abiertas: T03/T04 transporte OTLP gRPC/HTTP; T08 Serilog/NLog; T11 Collector/Kubernetes; T13 cookbook de migración
-- ADRs nuevas: ver docs/decisions/ADR-*.md
-- Riesgos residuales: R19
-- Decisión: avanzar
+- Status: **CONDITIONAL**
+- Date and version: 2026-11-18 · 0.1.0-alpha.1
+- PRs and issues closed: none (tasks are tracked by ID in docs/MASTER-PLAN.md)
+- Verified deliverables: OTLP/JSON export/import with a LossReport, structured JSONL (CLEF/pino), byte-exact text, lossless exchange JSONL, MEL bridge
+- Test evidence: OTLP round trips, byte-exact text with invalid bytes, JSONL importer
+- Benchmark evidence: n/a
+- Security/compatibility: limits in the receiver
+- Hypotheses accepted/refuted: a complete export to leave the format: yes
+- Open limitations: T03/T04 OTLP gRPC/HTTP transport; T08 Serilog/NLog; T11 Collector/Kubernetes; T13 migration cookbook
+- New ADRs: see docs/decisions/ADR-*.md
+- Residual risks: R19
+- Decision: proceed

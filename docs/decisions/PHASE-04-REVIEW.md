@@ -1,14 +1,14 @@
-# PHASE-04-REVIEW — Especificación binaria .llog v0.x
+# PHASE-04-REVIEW — `.llog` v0.x binary specification
 
-- Estado: **PASS** (actualizado: formato 0.2)
-- Fecha y versión/commit: 2026-11-18 · 0.1.0-alpha.1 (working tree, sin commits)
-- PRs e issues cerrados: ninguno (no existe repositorio remoto ni tracker; IDs de tarea según docs/PLAN-MAESTRO.md)
-- Entregables verificados: specs/llog-format-v0.md (v0.2), tests/GoldenFiles/v0.1 (congelado) y v0.2 (actual), tools/pyllog/llog.py
-- Evidencia de tests: GoldenFileTests (v0.1 y v0.2); lector Python independiente: 12/12 variantes OK, 4/4 corrupciones detectadas; en v0.2 un bit invertido en el bloque de esquemas pierde 0 de 27 registros (en v0.1 perdía 27 de 27)
-- Evidencia de benchmarks: n/a
-- Seguridad/compatibilidad: límites anti-bomba y anti-corrupción
-- Hipótesis aceptadas/refutadas: G4 cumplido: un segundo parser independiente interpreta los golden files solo con la especificación
-- Limitaciones abiertas: P04-R1 **mitigado en 0.2** (copia de catálogos en el footer; bloques de catálogo comprimidos); los segmentos no sellados siguen dependiendo de sus bloques de catálogo hasta sellarse. T15 migración: definida (protocolo de compactación) pero no ejercida entre versiones reales; los archivos 0.1 se leen sin migrar.
-- ADRs nuevas: ver docs/decisions/ADR-*.md
-- Riesgos residuales: R07, R19
-- Decisión: avanzar
+- Status: **PASS (updated: format 0.2)**
+- Date and version: 2026-11-18 · 0.1.0-alpha.1
+- PRs and issues closed: none (tasks are tracked by ID in docs/MASTER-PLAN.md)
+- Verified deliverables: specs/llog-format-v0.md (v0.2), tests/GoldenFiles/v0.1 (frozen) and v0.2 (current), tools/pyllog/llog.py
+- Test evidence: GoldenFileTests (v0.1 and v0.2); independent Python reader: 12/12 variants OK, 4/4 corruptions detected; in v0.2 a flipped bit in the schema block loses 0 of 27 records (v0.1 lost 27 of 27)
+- Benchmark evidence: n/a
+- Security/compatibility: anti-bomb and anti-corruption limits
+- Hypotheses accepted/refuted: G4 met: a second, independent parser interprets the golden files using only the specification
+- Open limitations: P04-R1 **mitigated in 0.2** (catalog copy in the footer; compressed catalog blocks); unsealed segments still depend on their catalog blocks until sealed. T15 migration: defined (compaction protocol) but not exercised between real versions; 0.1 files are read without migration.
+- New ADRs: see docs/decisions/ADR-*.md
+- Residual risks: R07, R19
+- Decision: proceed

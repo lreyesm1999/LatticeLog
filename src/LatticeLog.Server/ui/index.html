@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -10,44 +10,44 @@
 <header>
   <strong>LatticeLog</strong>
   <form id="auth" autocomplete="off">
-    <input id="token" type="password" placeholder="token de lectura" aria-label="Token">
+    <input id="token" type="password" placeholder="read token" aria-label="Token">
     <select id="ns" aria-label="Namespace"></select>
-    <button type="submit">Conectar</button>
+    <button type="submit">Connect</button>
   </form>
   <span id="status" role="status"></span>
 </header>
 <nav>
-  <button data-view="search" class="active">Búsqueda</button>
-  <button data-view="stats">Estadísticas</button>
-  <button data-view="catalog">Catálogo</button>
+  <button data-view="search" class="active">Search</button>
+  <button data-view="stats">Stats</button>
+  <button data-view="catalog">Catalog</button>
 </nav>
 <main>
   <section id="view-search">
     <form id="query">
-      <input id="where" placeholder="level >= ERROR AND service = 'orders-api'" aria-label="Filtro">
-      <input id="since" placeholder="desde (15m, 2h, RFC 3339)" aria-label="Desde" value="24h">
-      <select id="order" aria-label="Orden"><option value="desc">más recientes</option><option value="asc">más antiguos</option></select>
-      <button type="submit">Buscar</button>
+      <input id="where" placeholder="level >= ERROR AND service = 'orders-api'" aria-label="Filter">
+      <input id="since" placeholder="since (15m, 2h, RFC 3339)" aria-label="Since" value="24h">
+      <select id="order" aria-label="Order"><option value="desc">newest first</option><option value="asc">oldest first</option></select>
+      <button type="submit">Search</button>
     </form>
     <p id="coverage"></p>
-    <table id="events"><thead><tr><th>hora</th><th>nivel</th><th>servicio</th><th>evento</th><th>mensaje</th></tr></thead><tbody></tbody></table>
-    <button id="more" hidden>Más</button>
+    <table id="events"><thead><tr><th>time</th><th>level</th><th>service</th><th>event</th><th>message</th></tr></thead><tbody></tbody></table>
+    <button id="more" hidden>More</button>
   </section>
   <section id="view-stats" hidden>
     <form id="statsform">
-      <select id="by"><option>event</option><option>level</option><option>service</option></select>
-      <input id="statswhere" placeholder="filtro opcional">
-      <button type="submit">Agrupar</button>
+      <select id="by" aria-label="Group by"><option>event</option><option>level</option><option>service</option></select>
+      <input id="statswhere" placeholder="optional filter" aria-label="Filter">
+      <button type="submit">Group</button>
     </form>
     <div id="bars"></div>
   </section>
   <section id="view-catalog" hidden>
-    <table id="segments"><thead><tr><th>segmento</th><th>sellado</th><th>registros</th><th>secuencias</th><th>desde</th><th>hasta</th><th>bytes</th></tr></thead><tbody></tbody></table>
+    <table id="segments"><thead><tr><th>segment</th><th>sealed</th><th>records</th><th>sequences</th><th>from</th><th>to</th><th>bytes</th></tr></thead><tbody></tbody></table>
   </section>
   <aside id="detail" hidden>
-    <button id="close" aria-label="Cerrar">×</button>
+    <button id="close" aria-label="Close">×</button>
     <h2 id="detail-title"></h2>
-    <button id="show-trace" hidden>Ver traza</button>
+    <button id="show-trace" hidden>Show trace</button>
     <pre id="detail-json"></pre>
   </aside>
 </main>

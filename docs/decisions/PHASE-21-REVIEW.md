@@ -1,29 +1,29 @@
-# PHASE-21-REVIEW — SDKs en otros lenguajes (alcance acordado: Python y PHP)
+# PHASE-21-REVIEW — SDKs in other languages (agreed scope: Python and PHP)
 
-- Estado: **CONDITIONAL** (Python y PHP hechos y probados de extremo a extremo; Java, Go y Node fuera del alcance
-  acordado; sin paquetes publicados)
-- Fecha: 2026-11-18
-- Entregables: `sdks/python/` (`latticelog`), `sdks/php/` (`latticelog/latticelog`), `tests/sdk/python_smoke.py`,
+- Status: **CONDITIONAL** (Python and PHP built and tested end to end; Java, Go and Node outside the agreed scope;
+  no packages published)
+- Date: 2026-11-18
+- Deliverables: `sdks/python/` (`latticelog`), `sdks/php/` (`latticelog/latticelog`), `tests/sdk/python_smoke.py`,
   `tests/sdk/php_smoke.php`, `tests/LatticeLog.Tests/SdkTests.cs`
 
-| tarea | estado | evidencia |
+| task | status | evidence |
 |---|---|---|
-| T01 arquitectura | hecho | clientes de transporte: spool JSONL duradero + protocolo v1 JSONL; sin escritor `.llog` nativo (no justificado) |
-| T02 protocolo y contract tests | parcial | `specs/ingest-protocol.md`; los SDKs se prueban contra el servidor real (deduplicación, reenvío, tipos) |
-| T03 test vectors | parcial | valores sin pérdida (`$u64`, `$f64bits`, `$bytes`, `$ts`, `$uuid`, `$dec`, mapas, surrogates sueltos) comprobados por ida y vuelta en `SdkTests` |
-| T04–T07 Java, Go | fuera de alcance | — |
-| T08 Python con `logging` | hecho | `LatticeLogHandler`; envío en hilo de fondo con backoff y jitter |
-| T09 multiproceso y shutdown en Python | documentado | un proceso por spool; envío pendiente al salir |
-| T10–T11 Node | fuera de alcance | — |
-| PHP (añadido) | hecho | spool compartido entre procesos con `flock` (6 procesos probados), envío al terminar la petición tras `fastcgi_finish_request`, `bin/latticelog-ship.php` para cron |
-| T12 mismo modelo | hecho | severidades, scopes/operación, trace context y tipos equivalentes al SDK .NET |
-| T13 TLS, auth, reintentos | hecho | HTTPS con verificación por defecto, bearer token, reintentos idempotentes por (productor, secuencia) |
-| T14 paquetes publicados | no hecho | licencia MIT ya declarada; faltan cuentas en PyPI/Packagist |
-| T15 N-1/N-2 | no aplica aún | primera versión |
-| T16 ejemplos de microservicios mixtos | no hecho | — |
-| T17 sobrecarga frente a logging base | no medido | — |
-| T18 mantenimiento por runtime | hecho | `docs/release/maintenance-policy.md` (Python 3.10+, PHP 8.1+) |
+| T01 architecture | done | transport clients: durable JSONL spool + protocol v1 JSONL; no native `.llog` writer (not justified) |
+| T02 protocol and contract tests | partial | `specs/ingest-protocol.md`; the SDKs are tested against the real server (deduplication, resend, types) |
+| T03 test vectors | partial | lossless values (`$u64`, `$f64bits`, `$bytes`, `$ts`, `$uuid`, `$dec`, maps, lone surrogates) checked by round trip in `SdkTests` |
+| T04–T07 Java, Go | out of scope | — |
+| T08 Python with `logging` | done | `LatticeLogHandler`; background shipping with backoff and jitter |
+| T09 Python multiprocessing and shutdown | documented | one process per spool; pending shipping on exit |
+| T10–T11 Node | out of scope | — |
+| PHP (added) | done | spool shared across processes with `flock` (6 processes tested), shipping at the end of the request after `fastcgi_finish_request`, `bin/latticelog-ship.php` for cron |
+| T12 same model | done | severities, scopes/operations, trace context and types equivalent to the .NET SDK |
+| T13 TLS, auth, retries | done | HTTPS with verification by default, bearer token, idempotent retries by (producer, sequence) |
+| T14 published packages | not done | MIT license already declared; PyPI/Packagist accounts missing |
+| T15 N-1/N-2 | not applicable yet | first version |
+| T16 mixed microservice examples | not done | — |
+| T17 overhead vs the ecosystem's base logging | not measured | — |
+| T18 maintenance per runtime | done | `docs/release/maintenance-policy.md` (Python 3.10+, PHP 8.1+) |
 
-- Las pruebas de SDK se omiten si `python`/`php` no están instalados; en esta máquina se ejecutaron.
-- Gate G21: contract tests y semántica de reintento/autenticación cumplidos para Python y PHP; la lectura del formato
-  sigue siendo independiente del productor.
+- The SDK tests are skipped when `python`/`php` are not installed; they run locally and in CI.
+- Gate G21: contract tests and retry/authentication semantics met for Python and PHP; reading the format stays
+  independent of the producer.
