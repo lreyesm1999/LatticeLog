@@ -26,7 +26,7 @@ Cryptography: no home-made encryption. Encryption at rest and TLS are delegated 
 
 | asset / surface | threat | implemented control | open |
 |---|---|---|---|
-| Credentials | token theft in transit | TLS required off loopback (the server does not start on plain HTTP without an explicit option) | optional mTLS; end-to-end TLS test |
+| Credentials | token theft in transit | TLS required off loopback (the server does not start on plain HTTP without an explicit option) | optional mTLS (end-to-end TLS is tested: `TlsTests`, container smoke test) |
 | Credentials | theft of the tokens file | only SHA-256 hashes are stored; constant-time comparison | expiring tokens; secret-manager integration |
 | Credentials | brute force | limit of 20 failures per IP per minute (429), audited | distributed lockout (not applicable on one node) |
 | Authorization | cross-tenant access | isolated namespaces (one store per namespace), `ingest`/`read`/`admin` scopes, names validated against path traversal | penetration testing |
@@ -42,6 +42,6 @@ Cryptography: no home-made encryption. Encryption at rest and TLS are delegated 
 | Backups | writes to arbitrary paths; inconsistent copy | the destination is set by the operator (`--backup-dir`), never the client; the copy is verified by reading it | backup encryption |
 | Replica | exposed replica token; unencrypted data in transit | token only through the environment; HTTPS off loopback, as for ingestion | fencing between primaries |
 | Error responses | leaking internal information | the client only gets a type and a message, never a stack trace; details go to `Diagnostics` | — |
-| Supply chain | server dependencies | only the ASP.NET Core framework; *chiseled* image with no shell and a non-root user | image scanning |
+| Supply chain | server dependencies | only the ASP.NET Core framework; *chiseled* image with no shell and a non-root user; Trivy scan in CI fails on fixable HIGH/CRITICAL | signed images |
 
 External review: the proposed pentest scope is in `docs/security/pentest-scope.md`. **No pentest has been done.**

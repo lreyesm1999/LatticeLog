@@ -17,8 +17,9 @@ Status on 2026-11-18. An RC is published only when **every** blocking box is che
 - [x] Real crash, retention, deduplication-after-restart and lossy-network tests.
 - [x] Trimming/AOT analysis active and warning-free under `src/`.
 - [x] SBOM generated and vulnerable packages checked (CI `security` job).
-- [ ] TLS tested end to end (Kestrel with a real certificate) and a real network between machines.
-- [ ] Docker image built, scanned and started (`deploy/Dockerfile`).
+- [x] TLS tested end to end with a real certificate (`TlsTests` on three OSes; the container smoke test over HTTPS).
+- [ ] A real network between two machines (CI only covers one host).
+- [x] Docker image built, scanned (Trivy, no fixable HIGH/CRITICAL) and started in CI (`deploy/smoke-test.sh`).
 - [ ] Signed packages and SourceLink pointing at the public repository.
 - [ ] External security review (pentest) of the server: see `docs/security/pentest-scope.md`.
 - [ ] User documentation reviewed by someone who did not write it.

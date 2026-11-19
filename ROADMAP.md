@@ -22,8 +22,8 @@ Statuses: PASS · CONDITIONAL (gate met with explicit open items) · NOT PASSED 
 | P13 | OpenTelemetry interoperability and importers | CONDITIONAL |
 | P14 | Production-ready .NET SDK (Local v1.0) | NOT PASSED |
 | P15 | CLI and local tools | CONDITIONAL |
-| P16 | Remote ingestion protocol and collector | CONDITIONAL (binary body, multi-producer; real network and TLS not yet tested) |
-| P17 | Query server and multi-tenancy | CONDITIONAL (online admin and retention done; image not built, other hardware pending) |
+| P16 | Remote ingestion protocol and collector | CONDITIONAL (binary body, multi-producer, TLS tested end to end; real network between machines pending) |
+| P17 | Query server and multi-tenancy | CONDITIONAL (online admin, retention, Docker image built and smoke-tested in CI; other hardware pending) |
 | P18 | Security, privacy and auditability | NOT PASSED (audit, erasure, brake, headers; no encryption at rest or pentest) |
 | P19 | Horizontal scalability and replication | NOT PASSED (async replica + manual failover; no cluster) |
 | P20 | Tiered storage and object storage | NOT STARTED |
@@ -44,7 +44,7 @@ Statuses: PASS · CONDITIONAL (gate met with explicit open items) · NOT PASSED 
 - ~~Mitigate P04-R1~~ done in format 0.2 (compressed catalog copy in the footer).
 
 ## Next
-- P16–P17 open items: real network and TLS tested between machines, Docker image built.
+- P16–P17 open items: a real network between machines; publishing the image to a registry.
 - P18: encryption at rest, external pentest (`docs/security/pentest-scope.md`).
 - P24: restore a backup on another machine and run the runbooks.
 - **Platform**: the reference machine corrupts memory under all-core load (old BIOS/microcode); repeat the measurements

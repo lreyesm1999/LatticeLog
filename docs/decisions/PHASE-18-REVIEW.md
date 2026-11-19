@@ -12,7 +12,7 @@
 | T01 threat modeling | partial | local engine + server table (ingestion, reads, admin, console, replica); cloud not covered |
 | T02 data classification and capture policies | partial | `RedactionPolicy` (sensitive keys redacted in outputs and in the .NET SDK); no per-tenant configurable per-field `never-log`/`hash` |
 | T03 producer-side redaction | partial | .NET SDK (`LatticeLoggerOptions`); the Python/PHP SDKs do not redact |
-| T04 TLS and encryption at rest | partial | TLS required off loopback (not tested with a real certificate between machines); **no encryption at rest** (delegated to the OS's encrypted disk) |
+| T04 TLS and encryption at rest | partial | TLS required off loopback and tested end to end with a real certificate (`TlsTests`, container smoke test; not between two machines); **no encryption at rest** (delegated to the OS's encrypted disk) |
 | T05 keys | partial | secrets only through the environment; `server.key` with mode 0600 on Unix; no KMS |
 | T06 RBAC | partial | `ingest`/`read`/`admin` scopes × namespaces; no ABAC or per-field permissions |
 | T07 read-only access for tools | done | `read` scope, read-only MCP, expiring cursors; no time-limited tokens |

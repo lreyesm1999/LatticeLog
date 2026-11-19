@@ -60,4 +60,5 @@ README). If the server is unavailable, data waits on the application's disk, whi
 
 - Optional asynchronous replica with manual failover (`docs/operations/replication.md`); no cluster and no automatic
   failover. Without a replica, losing the disk loses whatever is not in a backup or in the producers' local stores.
-- The Docker image has not been built or tested in this project yet.
+- The Docker image is built, scanned and smoke-tested over HTTPS on every CI run (`deploy/smoke-test.sh`, which you
+  can also run locally). It is not published to a registry yet: build it from the repository.

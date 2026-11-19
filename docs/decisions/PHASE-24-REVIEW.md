@@ -21,7 +21,7 @@
 | T10–T12 canary, rollback, drills | partial | rollback described from format compatibility; no drills |
 | T13 costs | not done | — |
 | T14 on-call | not applicable | no team |
-| T15 on-prem/Docker/K8s | partial | binary and Dockerfile (not built); no Kubernetes |
+| T15 on-prem/Docker/K8s | partial | binary and a Docker image built, scanned and smoke-tested in CI; no Kubernetes |
 | T16 capacity | partial | figures with 4 CPUs, not generalizable |
 
 - Also: a middleware turns any uncaught exception into a JSON 500 and reports it through diagnostics.

@@ -1,7 +1,8 @@
 # PHASE-17-REVIEW — Query server, catalog and multi-tenancy (Server v1.0)
 
 - Status: **CONDITIONAL** (single-node server with namespaces, roles, a complete and tested read API, and online
-  administration; missing a built Docker image, TLS between machines and validation on other hardware)
+  administration, Docker image built and smoke-tested over HTTPS in CI; missing a real network between machines and
+  validation on other hardware)
 - Date: 2026-11-18
 - Deliverables: `src/LatticeLog.Server` (`LatticeServer`), `src/LatticeLog.ServerHost` (`latticelog-server`),
   `specs/server-api.md`, `deploy/Dockerfile`, `docs/deploy/single-node.md`, `tests/LatticeLog.Tests/ServerApiTests.cs`,
@@ -22,13 +23,13 @@
 | T11 arrival vs event time | done | `observed_time` = arrival at the server unless the producer sets it; documented and tested |
 | T12 administration (retention, compaction, reindexing) | done | `POST /v1/admin/retention\|compact\|verify\|erase\|backup` without stopping ingestion, audited (`ServerApiTests.Online_retention_compaction_and_verify_keep_dedup_and_are_audited`); reindexing is not needed (per-segment indexes) |
 | T13 metadata migrations | not applicable yet | a single v1 metadata format; the STORE.json version is checked on open |
-| T14 Docker and health | partial | `deploy/Dockerfile` (chiseled, non-root, configuration through env and secrets) **not built**; `/v1/health` with admin details |
+| T14 Docker and health | done | `deploy/Dockerfile` (chiseled, non-root, configuration through env and secrets) built, Trivy-scanned and smoke-tested in CI over HTTPS: ingestion with the Python SDK, queries, untrusted client refused, data kept across a restart (`deploy/smoke-test.sh`); `/v1/health` with admin details |
 | T15 single-machine guide | done | `docs/deploy/single-node.md` |
 | T16 producers + readers load | done on this machine | `reports/ingest-v1.md` §4 (4 CPUs because of the machine's instability) |
 
 - Server v1.0 gate ("multiple sources ingest and query safely, with recoverable persistence and without requiring a
-  cluster"): **met on loopback**. Missing: tested TLS, a real network, the built image and repeating the load on stable
-  hardware.
+  cluster"): **met on loopback and in a container over HTTPS**. Missing: a real network between machines and repeating
+  the load on stable hardware.
 - **Platform finding**: the reference machine (i9-14900KF, microcode 0x11D, 2023 BIOS) corrupts memory under load on
   many cores, also in a control program without LatticeLog (`tools/platform-stress`). Until the BIOS is updated,
   concurrency measurements are taken with a limited CPU set and do not generalize.

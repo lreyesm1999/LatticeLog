@@ -9,6 +9,11 @@
 - Two timing-sensitive tests made deterministic; whitespace formatting enforced in CI; community files, issue forms,
   PR template, CODEOWNERS and Dependabot.
 - All documentation translated to English.
+- **TLS tested end to end** (`TlsTests`, on Linux, macOS and Windows): forwarder and read API over HTTPS with a real
+  certificate; an untrusted client and plain HTTP are refused.
+- **Docker image built, scanned and smoke-tested in CI** (`container` job, `deploy/smoke-test.sh`): Trivy scan, health
+  over HTTPS, ingestion with the Python SDK, queries, non-root user, data kept across a restart. The Dockerfile now
+  gives `/data` to the non-root user (a fresh volume was not writable) and ignores `global.json` in the image build.
 - **Fixed (found by CI on macOS)**: a reader could open a segment that the writer had just created but not yet given
   its header, and `Aggregate` failed with `File shorter than header`. New segments are now staged as `*.llog.tmp` and
   renamed once the header is written; `Aggregate` and `GetBySequence` report an unreadable segment as a coverage issue
