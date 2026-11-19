@@ -77,7 +77,14 @@ public sealed class StoreTail : IDisposable
         {
             gap = batch[0].Sequence != after + 1;
             for (var i = 1; i < batch.Count; i++)
-                if (batch[i].Sequence != batch[i - 1].Sequence + 1) { batch.RemoveRange(i, batch.Count - i); break; }
+                if (batch[i].Sequence != batch[i - 1].Sequence + 1)
+                {
+                    // Return the dense run only, and forget the incremental position: it is already past the hole, so
+                    // continuing from it would skip whatever the next call should find there.
+                    batch.RemoveRange(i, batch.Count - i);
+                    Reset();
+                    break;
+                }
             _pendingAfter = batch[^1].Sequence;
         }
         else _pendingAfter = after;
@@ -134,6 +141,15 @@ public sealed class StoreTail : IDisposable
             if (previous is not null && id == previous.Id) continue; // just finished it
             chosen = id;
             break;
+        }
+        // Segments whose index cannot be read (a segment being sealed, or the active one) sort last. If the chosen
+        // segment does not continue the run, an older one of those holds the missing range: read it first instead of
+        // jumping ahead (seen on macOS, where a just-sealed segment's footer can be briefly unreadable).
+        if (chosen is { } c && reader.Indexes.GetValueOrDefault(c) is { HasRecords: true } ci && ci.FirstSequence > after + 1)
+        {
+            foreach (var id in reader.SegmentIds)
+                if (id < c && reader.Indexes.GetValueOrDefault(id) is null && (previous is null || id != previous.Id))
+                    if (id < chosen) chosen = id;
         }
         if (chosen is null) return true;
         try

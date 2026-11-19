@@ -96,4 +96,34 @@ public class StoreTailTests
         Assert.Equal(Enumerable.Range(1, 200).Concat(Enumerable.Range(301, 700)).Select(i => (ulong)i), collected);
         Assert.True(tail.FullScans >= 1);
     }
+
+    [Fact]
+    public void A_segment_with_an_unreadable_index_is_read_in_order_not_skipped()
+    {
+        // Segment 2's trailer is cut, so its index cannot be read and it sorts after the sealed segment 3. The tail must
+        // still go 1 → 2 → 3 without a gap or a full scan (CI on macOS hit this while segment 2 was being sealed).
+        var root = TestData.TempDir();
+        using (var w = StoreWriter.Open(root, new StoreWriterOptions { MinFreeDiskBytes = 0, SegmentMaxBytes = 1 }))
+            for (long n = 0; n < 300; n += 100) w.WriteBatch(Batch(n, 100)); // one sealed segment per batch
+        var segments = Directory.GetFiles(Path.Combine(root, StoreLayout.SegmentsDir), "*.llog").Order(StringComparer.Ordinal).ToArray();
+        Assert.True(segments.Length >= 3);
+        using (var fs = new FileStream(segments[1], FileMode.Open, FileAccess.Write))
+            fs.SetLength(fs.Length - Llog.TrailerSize);
+        var store = StoreReader.Open(root);
+        var cut = store.SegmentIds.Single(id => Path.GetFileName(store.SegmentPath(id)) == Path.GetFileName(segments[1]));
+        Assert.Null(store.Indexes[cut]); // unreadable index: sorts after the sealed segment 3
+
+        using var tail = new StoreTail(root);
+        var got = new List<long>();
+        ulong cursor = 0;
+        for (var poll = 0; poll < 20 && got.Count < 300; poll++)
+        {
+            var batch = tail.ReadAfter(cursor, 70, out var gap);
+            Assert.False(gap, $"gap after {cursor}: next run starts at {batch[0].Sequence} (full scans {tail.FullScans}: {tail.LastFullScanReason})");
+            got.AddRange(batch.Select(r => r.Attributes[0].Value.AsInt64()));
+            if (batch.Count > 0) cursor = batch[^1].Sequence;
+        }
+        Assert.Equal(Enumerable.Range(0, 300).Select(i => (long)i), got);
+        Assert.True(tail.FullScans == 0, $"unexpected full scan: {tail.LastFullScanReason}");
+    }
 }

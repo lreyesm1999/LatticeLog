@@ -16,6 +16,9 @@
 - **Fixed**: the incremental tail reader treated a frame that was briefly unreadable during a slow fsync as corruption
   after 50 polls and fell back to a full scan. The threshold is now a time (`StoreTail.StallTimeout`, 2 s, replacing
   `StallLimit`), and `StoreTail.LastFullScanReason` says why a full scan happened.
+- **Fixed**: when the tail reader moved to the next segment and a segment's index was briefly unreadable (being
+  sealed), it could jump to a later sealed segment and skip a range; the gap check then forced a full scan. It now
+  reads the older, still-unreadable segment first, and an internal discontinuity resets the incremental position.
 - Test stability: the token quota test runs with a frozen quota clock (an internal `ServerOptions.QuotaClock`) and the
   bucket arithmetic has its own fake-clock test; the crash test waits for the child's first acknowledgement before its
   random kill delay instead of assuming the process starts within 250 ms.
