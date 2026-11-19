@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using LatticeLog.Storage.Codecs;
 using LatticeLog.Storage.Format;
 
@@ -19,7 +20,7 @@ public sealed class StoreTail : IDisposable
         public long Position = Llog.FileHeaderSize;
         public bool Finished; // footer reached: the segment is sealed and fully read
         public long StallPosition = -1;
-        public int StallCount;
+        public long StallSince; // Stopwatch timestamp of the first failed read at StallPosition
         public void Dispose() => Stream.Dispose();
     }
 
@@ -28,14 +29,21 @@ public sealed class StoreTail : IDisposable
     private readonly Queue<LogRecord> _pending = new(); // decoded but not yet returned (call limit)
     private ulong _pendingAfter;
 
-    /// <summary>Polls a frame may stay incomplete while the file grows past it before it is treated as corruption.</summary>
-    public int StallLimit { get; init; } = 50;
+    /// <summary>
+    /// How long a frame may stay unreadable while the file has already grown past it before it is treated as
+    /// corruption. A concurrent reader can briefly see a file's new length before the written bytes (macOS shows this
+    /// while an fsync is in flight), so this is a time, not a poll count: a slow disk must not look like corruption.
+    /// </summary>
+    public TimeSpan StallTimeout { get; init; } = TimeSpan.FromSeconds(2);
 
     public StoreTail(string root) => _root = root;
 
     /// <summary>Statistics for tests and diagnostics.</summary>
     public long FramesRead { get; private set; }
     public long FullScans { get; private set; }
+    /// <summary>Why the last full scan happened (diagnostics); null when there was none.</summary>
+    public string? LastFullScanReason { get; private set; }
+    private string? _fallbackReason;
 
     /// <summary>
     /// Up to <paramref name="max"/> records with sequence &gt; <paramref name="after"/>, as a dense run.
@@ -48,11 +56,13 @@ public sealed class StoreTail : IDisposable
         // The incremental position is only valid when the caller continues exactly where the last answer ended. A
         // retry of an unacknowledged batch, a rewind or a jump re-reads from the segments instead.
         if (_pendingAfter != after) Reset();
+        _fallbackReason = null;
         if (!TryIncremental(after, max, batch))
         {
             // Fallback: full scan with resynchronization and reporting.
             Reset();
             FullScans++;
+            LastFullScanReason = _fallbackReason ?? "incremental read failed";
             batch = FullScan(after, max);
         }
         else if (batch.Count > 0 && batch[0].Sequence != after + 1)
@@ -60,6 +70,7 @@ public sealed class StoreTail : IDisposable
             // A gap makes the server accept missing records: never claim one on the incremental path alone.
             Reset();
             FullScans++;
+            LastFullScanReason = $"gap after {after}: incremental read started at {batch[0].Sequence}";
             batch = FullScan(after, max);
         }
         if (batch.Count > 0)
@@ -114,7 +125,7 @@ public sealed class StoreTail : IDisposable
         previous?.Dispose();
         StoreReader reader;
         try { reader = StoreReader.Open(_root); }
-        catch (IOException) { return false; }
+        catch (IOException ex) { _fallbackReason = "store catalog unreadable: " + ex.Message; return false; }
         ulong? chosen = null;
         foreach (var id in reader.SegmentIds) // ordered by first sequence, unsealed last
         {
@@ -130,7 +141,7 @@ public sealed class StoreTail : IDisposable
             var fs = new FileStream(reader.SegmentPath(chosen.Value), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1, FileOptions.SequentialScan);
             _seg = new Followed { Id = chosen.Value, Stream = fs };
         }
-        catch (FileNotFoundException) { return false; }
+        catch (FileNotFoundException) { _fallbackReason = $"segment {chosen} vanished"; return false; }
         return true;
     }
 
@@ -141,7 +152,7 @@ public sealed class StoreTail : IDisposable
         while (batch.Count < max)
         {
             long length;
-            try { length = s.Stream.Length; } catch (IOException) { return null; }
+            try { length = s.Stream.Length; } catch (IOException ex) { _fallbackReason = "segment length unreadable: " + ex.Message; return null; }
             if (length - s.Position < Llog.FrameHeaderSize) return true; // nothing new (or header still being written)
             s.Stream.Position = s.Position;
             s.Stream.ReadExactly(hb);
@@ -154,7 +165,7 @@ public sealed class StoreTail : IDisposable
             if (Checksum.Crc32(payload) != h.PayloadCrc) return Stall(s, length, s.Position + h.TotalLength);
             byte[] decoded;
             try { decoded = SegmentReader.Decompress(h, payload); }
-            catch (Exception ex) when (ex is LlogFormatException or InvalidDataException) { return null; }
+            catch (Exception ex) when (ex is LlogFormatException or InvalidDataException) { _fallbackReason = $"frame at {s.Position} of segment {s.Id} does not decompress: {ex.Message}"; return null; }
             try
             {
                 switch (h.Type)
@@ -174,10 +185,10 @@ public sealed class StoreTail : IDisposable
                         }
                 }
             }
-            catch (Exception ex) when (ex is LlogFormatException or OverflowException or ArgumentException) { return null; }
+            catch (Exception ex) when (ex is LlogFormatException or OverflowException or ArgumentException) { _fallbackReason = $"frame at {s.Position} of segment {s.Id} does not decode: {ex.Message}"; return null; }
             FramesRead++;
             s.Position += h.TotalLength;
-            s.StallCount = 0;
+            s.StallPosition = -1;
         }
         return true;
     }
@@ -188,9 +199,10 @@ public sealed class StoreTail : IDisposable
     /// </summary>
     private bool? Stall(Followed s, long length, long frameEnd)
     {
-        if (s.StallPosition != s.Position) { s.StallPosition = s.Position; s.StallCount = 0; }
-        s.StallCount++;
-        return length > frameEnd && s.StallCount >= StallLimit ? null : true;
+        if (s.StallPosition != s.Position) { s.StallPosition = s.Position; s.StallSince = Stopwatch.GetTimestamp(); }
+        if (length <= frameEnd || Stopwatch.GetElapsedTime(s.StallSince) < StallTimeout) return true;
+        _fallbackReason = $"frame at {s.Position} of segment {s.Id} unreadable for {StallTimeout.TotalSeconds:0.#} s while the file grew past it";
+        return null;
     }
 
     private List<LogRecord> FullScan(ulong after, int max)

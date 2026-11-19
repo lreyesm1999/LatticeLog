@@ -43,16 +43,32 @@ public sealed class SegmentWriter : IDisposable
     /// <summary>True after an I/O error; the segment must be sealed (best effort) and replaced.</summary>
     public bool Faulted { get; private set; }
 
-    public SegmentWriter(string path, ulong segmentId, SegmentWriterOptions? options = null)
+    /// <param name="publishAfterHeader">
+    /// Create the file as <c>path.tmp</c> and rename it to <paramref name="path"/> once the file header is written, so a
+    /// concurrent reader listing the directory never sees a segment shorter than its header. Used for live stores; a
+    /// leftover <c>*.llog.tmp</c> after a crash is removed by recovery.
+    /// </param>
+    public SegmentWriter(string path, ulong segmentId, SegmentWriterOptions? options = null, bool publishAfterHeader = false)
     {
         _options = options ?? new SegmentWriterOptions();
         Path = path;
         SegmentId = segmentId;
         CreatedUnixNanos = _options.CreatedUnixNanos ?? UnixTime.NowUnixNanos();
-        _handle = File.OpenHandle(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read, FileOptions.None);
         Span<byte> h = stackalloc byte[Llog.FileHeaderSize];
         new FileHeader(Llog.FormatMajor, Llog.FormatMinor, 0, Llog.OptionalFooterCatalog, segmentId, CreatedUnixNanos).Write(h);
-        RandomAccess.Write(_handle, h, 0);
+        if (publishAfterHeader)
+        {
+            var staging = path + ".tmp";
+            using (var tmp = File.OpenHandle(staging, FileMode.Create, FileAccess.Write, FileShare.None, FileOptions.None))
+                RandomAccess.Write(tmp, h, 0);
+            File.Move(staging, path, overwrite: false);
+            _handle = File.OpenHandle(path, FileMode.Open, FileAccess.Write, FileShare.Read, FileOptions.None);
+        }
+        else
+        {
+            _handle = File.OpenHandle(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read, FileOptions.None);
+            RandomAccess.Write(_handle, h, 0);
+        }
         Length = Llog.FileHeaderSize;
     }
 

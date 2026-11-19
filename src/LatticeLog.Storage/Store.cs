@@ -541,7 +541,7 @@ public sealed class StoreWriter : IRecordSink
     {
         var id = AllocateSegmentId();
         var path = StoreLayout.SegmentPath(_root, id);
-        var w = new SegmentWriter(path, id, _options.Segment);
+        var w = new SegmentWriter(path, id, _options.Segment, publishAfterHeader: true);
         _currentOpenedAt = UnixTime.NowUnixNanos();
         return w;
     }

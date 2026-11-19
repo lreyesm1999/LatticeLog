@@ -274,6 +274,7 @@ public sealed class QueryEngine(StoreReader store)
             SegmentReader reader;
             try { reader = SegmentReader.Open(Store.SegmentPath(id)); }
             catch (FileNotFoundException) { continue; } // deleted by retention/compaction after the snapshot
+            catch (Exception ex) when (ex is LlogFormatException or IOException) { report.Add(new ScanIssue(IssueKind.UnsupportedFile, Store.SegmentPath(id), 0, 0, ex.Message)); continue; }
             using var _ = reader;
             if (reader.Index is { } x)
             {
@@ -336,6 +337,7 @@ public sealed class QueryEngine(StoreReader store)
             SegmentReader reader;
             try { reader = SegmentReader.Open(Store.SegmentPath(id)); }
             catch (FileNotFoundException) { report.Add(new ScanIssue(IssueKind.Io, Store.SegmentPath(id), 0, 0, "segment removed by retention/compaction during the query")); continue; }
+            catch (Exception ex) when (ex is LlogFormatException or IOException) { report.Add(new ScanIssue(IssueKind.UnsupportedFile, Store.SegmentPath(id), 0, 0, ex.Message)); continue; }
             using var _ = reader;
             stats.SegmentsScanned++;
             foreach (var block in Blocks(reader, constraints, SortOrder.Ascending, report, stats))

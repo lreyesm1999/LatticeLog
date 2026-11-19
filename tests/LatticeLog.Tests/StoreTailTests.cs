@@ -45,7 +45,7 @@ public class StoreTailTests
         await writer;
         Assert.Equal(Enumerable.Range(0, total).Select(i => (long)i), got); // every record once, in order
         Assert.True(w.SegmentsSealed > 3, "test needs rotations");
-        Assert.Equal(0, tail.FullScans);
+        Assert.True(tail.FullScans == 0, $"unexpected full scan: {tail.LastFullScanReason}");
         Assert.InRange(tail.FramesRead, total / 100, total / 100 * 3); // each frame decoded about once (+ catalog frames)
     }
 
@@ -81,7 +81,7 @@ public class StoreTailTests
         bytes[third.Offset + Llog.FrameHeaderSize + 3] ^= 0xFF; // records 201..300 become unreadable
         File.WriteAllBytes(seg, bytes);
 
-        using var tail = new StoreTail(root) { StallLimit = 3 };
+        using var tail = new StoreTail(root) { StallTimeout = TimeSpan.Zero };
         var collected = new List<ulong>();
         ulong cursor = 0;
         var gaps = 0;

@@ -9,6 +9,13 @@
 - Two timing-sensitive tests made deterministic; whitespace formatting enforced in CI; community files, issue forms,
   PR template, CODEOWNERS and Dependabot.
 - All documentation translated to English.
+- **Fixed (found by CI on macOS)**: a reader could open a segment that the writer had just created but not yet given
+  its header, and `Aggregate` failed with `File shorter than header`. New segments are now staged as `*.llog.tmp` and
+  renamed once the header is written; `Aggregate` and `GetBySequence` report an unreadable segment as a coverage issue
+  like `Execute` already did.
+- **Fixed**: the incremental tail reader treated a frame that was briefly unreadable during a slow fsync as corruption
+  after 50 polls and fell back to a full scan. The threshold is now a time (`StoreTail.StallTimeout`, 2 s, replacing
+  `StallLimit`), and `StoreTail.LastFullScanReason` says why a full scan happened.
 
 ## Unreleased — operations, security, replication and SDKs (P17–P24)
 
