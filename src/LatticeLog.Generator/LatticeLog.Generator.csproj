@@ -23,6 +23,8 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
+    <!-- Pinned on purpose: a source generator must reference the OLDEST Roslyn it supports. Built against a newer
+         one, older SDK compilers cannot load it and [LatticeEvent] methods fail with CS8795. See .github/dependabot.yml. -->
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" PrivateAssets="all" />
   </ItemGroup>
 

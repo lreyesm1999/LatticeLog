@@ -7,8 +7,12 @@ updates:
     groups:
       test-tooling:
         patterns: ["xunit*", "Microsoft.NET.Test.Sdk", "coverlet*"]
-      roslyn:
-        patterns: ["Microsoft.CodeAnalysis*"]
+    ignore:
+      # Roslyn is pinned on purpose: the event source generator must be built against the OLDEST compiler it supports
+      # (4.8). Built against a newer Roslyn, older SDK compilers cannot load it, the generator silently does not run
+      # and every project using [LatticeEvent] fails with CS8795. Raise it deliberately, together with the minimum
+      # supported .NET SDK.
+      - dependency-name: "Microsoft.CodeAnalysis*"
     open-pull-requests-limit: 5
   - package-ecosystem: github-actions
     directory: /
