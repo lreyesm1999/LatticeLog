@@ -364,7 +364,7 @@ public static class StructuredJsonlImporter
         if (e.ValueKind != JsonValueKind.Object) throw new JsonException("Line is not a JSON object.");
         var r = new LogRecord { ObservedUnixNanos = importTime };
         var attrs = new List<LogAttribute>();
-        string? service = null, message = null, template = null;
+        string? service = null, message = null, template = null, eventText = null, eventKey = null;
         foreach (var p in e.EnumerateObject())
         {
             var k = p.Name;
@@ -375,14 +375,13 @@ public static class StructuredJsonlImporter
             if (Array.IndexOf(ExceptionKeys, k) >= 0 && r.Exception is null && p.Value.ValueKind == JsonValueKind.String)
             {
                 var text = p.Value.GetString()!;
-                var firstLine = text.Split('\n')[0];
-                var colon = firstLine.IndexOf(':');
-                r.Exception = new ExceptionInfo(colon > 0 ? firstLine[..colon].Trim() : "(unparsed)", colon > 0 ? firstLine[(colon + 1)..].Trim() : null, text, []);
+                var (type, msg) = ParseExceptionText(text);
+                r.Exception = new ExceptionInfo(type, msg, text, []);
                 continue;
             }
             if (Array.IndexOf(TraceKeys, k) >= 0 && r.TraceId.IsEmpty && TraceId.TryParse(p.Value.GetString()?.ToLowerInvariant(), out var tid)) { r.TraceId = tid; continue; }
             if (Array.IndexOf(SpanKeys, k) >= 0 && r.SpanId.IsEmpty && SpanId.TryParse(p.Value.GetString()?.ToLowerInvariant(), out var sid)) { r.SpanId = sid; continue; }
-            if (Array.IndexOf(EventKeys, k) >= 0 && r.EventName is null && p.Value.ValueKind == JsonValueKind.String) { r.EventName = p.Value.GetString(); continue; }
+            if (Array.IndexOf(EventKeys, k) >= 0 && eventText is null && p.Value.ValueKind == JsonValueKind.String) { eventText = p.Value.GetString(); eventKey = k; continue; }
             if (Array.IndexOf(ServiceKeys, k) >= 0 && service is null && p.Value.ValueKind == JsonValueKind.String) { service = p.Value.GetString(); continue; }
             attrs.Add(new LogAttribute(k, FromJson(p.Value)));
         }
@@ -392,11 +391,65 @@ public static class StructuredJsonlImporter
             attrs.Add(new LogAttribute("latticelog.import.time_missing", true));
             loss.Add("timestamp_missing_used_import_time");
         }
+        if (eventText is not null)
+        {
+            // structlog (and similar) put the human message under "event". Identifier-like values are event names
+            // ("bridge_emit_failed"); free text ("Heartbeat failed for group x") is the message, not a name.
+            if (LooksLikeEventName(eventText)) r.EventName = eventText;
+            else if (message is null) message = eventText;
+            else attrs.Add(new LogAttribute(eventKey!, eventText));
+        }
         if (template is not null) attrs.Add(new LogAttribute("message_template", template));
         if (message is not null) r.SetBody(Value.From(message));
         r.Attributes = attrs.ToArray();
         r.Context = ctx(service);
         return r;
+    }
+
+    /// <summary>True for identifier-like event names (letters, digits, <c>_ . : - /</c>, no spaces, at most 128 chars).</summary>
+    public static bool LooksLikeEventName(string s)
+    {
+        if (s.Length is 0 or > 128 || !(char.IsLetter(s[0]) || s[0] == '_')) return false;
+        foreach (var c in s)
+            if (!(char.IsLetterOrDigit(c) || c is '_' or '.' or ':' or '-' or '/')) return false;
+        return true;
+    }
+
+    /// <summary>
+    /// Splits a textual exception into (type, message). Python tracebacks name the exception on the first unindented
+    /// line after the last frame (<c>httpx.HTTPStatusError: …</c>); other runtimes (.NET, Java) put it on the first line.
+    /// </summary>
+    public static (string Type, string? Message) ParseExceptionText(string text)
+    {
+        var lines = text.Replace("\r\n", "\n").Split('\n');
+        if (lines[0].TrimStart().StartsWith("Traceback (most recent call last)", StringComparison.Ordinal))
+        {
+            var lastFrame = Array.FindLastIndex(lines, l => l.StartsWith("  File ", StringComparison.Ordinal));
+            var j = lastFrame + 1;
+            while (lastFrame >= 0 && j < lines.Length && (lines[j].Length == 0 || char.IsWhiteSpace(lines[j][0]))) j++;
+            if (lastFrame >= 0 && j < lines.Length)
+            {
+                var exLine = lines[j];
+                var colon = exLine.IndexOf(':');
+                var type = (colon > 0 ? exLine[..colon] : exLine).Trim();
+                if (IsDottedIdentifier(type))
+                {
+                    var msg = string.Join('\n', [colon > 0 ? exLine[(colon + 1)..].Trim() : "", .. lines[(j + 1)..]]).Trim();
+                    return (type, msg.Length == 0 ? null : msg);
+                }
+            }
+            return ("(unparsed)", null);
+        }
+        var firstLine = lines[0];
+        var c = firstLine.IndexOf(':');
+        return (c > 0 ? firstLine[..c].Trim() : "(unparsed)", c > 0 ? firstLine[(c + 1)..].Trim() : null);
+    }
+
+    private static bool IsDottedIdentifier(string s)
+    {
+        if (s.Length == 0 || !(char.IsLetter(s[0]) || s[0] == '_')) return false;
+        foreach (var c in s) if (!(char.IsLetterOrDigit(c) || c is '_' or '.')) return false;
+        return true;
     }
 
     private static Value FromJson(JsonElement v) => v.ValueKind switch

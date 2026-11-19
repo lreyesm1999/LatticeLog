@@ -225,4 +225,93 @@ public class EvidenceAndInteropTests
         Assert.True(recs[2].Flags.HasFlag(RecordFlags.LossyImport));
         Assert.Equal(1, loss.Items["unparseable_json_line_kept_as_text"]);
     }
+
+    private const string PythonTraceback =
+        "Traceback (most recent call last):\n  File \"bridge/sink.py\", line 49, in emit\n    resp.raise_for_status()\n" +
+        "    ~~~~~~~~~~~~~~~~~~~~~^^\nhttpx.HTTPStatusError: Server error '500 Internal Server Error' for url 'http://x/events'\n" +
+        "For more information check: https://example.test/500";
+
+    [Fact]
+    public void Structlog_event_key_is_a_name_only_when_identifier_like()
+    {
+        var tb = JsonSerializer.Serialize(PythonTraceback);
+        var lines = $$"""
+            {"platform_type": "position_closed", "event": "bridge_emit_failed", "level": "error", "timestamp": "2026-05-09T01:57:43.087437Z", "exception": {{tb}}}
+            {"event": "Heartbeat failed for group g1 because it is rebalancing", "logger": "aiokafka", "level": "warning", "timestamp": "2026-05-09T01:57:44Z"}
+            {"event": "free text here", "msg": "the message", "timestamp": "2026-05-09T01:57:45Z"}
+            """;
+        var loss = new LossReport();
+        var recs = StructuredJsonlImporter.Read(new MemoryStream(Encoding.UTF8.GetBytes(lines)), new StructuredJsonlImporter.Options(), loss, 5).ToList();
+        Assert.Equal("bridge_emit_failed", recs[0].EventName);
+        Assert.False(recs[0].HasBody);
+        Assert.Equal("httpx.HTTPStatusError", recs[0].Exception!.Type);
+        Assert.Equal("Server error '500 Internal Server Error' for url 'http://x/events'\nFor more information check: https://example.test/500", recs[0].Exception!.Message);
+        Assert.Equal(PythonTraceback, recs[0].Exception!.StackTrace);
+
+        Assert.Null(recs[1].EventName);
+        Assert.Equal("Heartbeat failed for group g1 because it is rebalancing", recs[1].Body.AsString());
+        Assert.Equal(Severity.Warn, recs[1].Severity);
+
+        Assert.Null(recs[2].EventName);
+        Assert.Equal("the message", recs[2].Body.AsString());
+        Assert.Equal("free text here", recs[2].Attributes.Single(a => a.Key == "event").Value.AsString());
+        Assert.Empty(loss.Items);
+    }
+
+    [Theory]
+    [InlineData("System.TimeoutException: Reservation timed out\n   at Orders.Place()", "System.TimeoutException", "Reservation timed out")]
+    [InlineData("Traceback (most recent call last):\n  File \"a.py\", line 1, in <module>\n    f()\nKeyboardInterrupt", "KeyboardInterrupt", null)]
+    [InlineData("Traceback (most recent call last):\n  garbage", "(unparsed)", null)]
+    [InlineData("no colon at all", "(unparsed)", null)]
+    public void Exception_text_is_split_into_type_and_message(string text, string type, string? message)
+    {
+        var (t, m) = StructuredJsonlImporter.ParseExceptionText(text);
+        Assert.Equal(type, t);
+        Assert.Equal(message, m);
+    }
+
+    [Fact]
+    public void Error_counts_are_exact_when_grouping_hits_the_candidate_limit()
+    {
+        var root = TestData.TempDir();
+        var t = 1_763_400_000_000_000_000L;
+        var records = new List<LogRecord>();
+        for (var i = 0; i < 250; i++)
+            records.Add(new LogRecord
+            {
+                TimestampUnixNanos = t + i,
+                Severity = i % 5 == 0 ? Severity.Info : Severity.Error,
+                EventName = "bridge_emit_failed",
+                Exception = new ExceptionInfo("httpx.HTTPStatusError", "Server error '500'", "stack", []),
+            });
+        using (var w = StoreWriter.Open(root)) w.WriteBatch(records);
+        var ev = new EvidenceService(QueryEngine.Open(root), new EvidenceOptions { MaxCandidates = 50 });
+
+        using var errors = JsonDocument.Parse(ev.ErrorGroups(new QueryRequest()).Json);
+        Assert.Equal(200, errors.RootElement.GetProperty("coverage").GetProperty("matched_events").GetInt64());
+        Assert.True(errors.RootElement.GetProperty("coverage").GetProperty("truncated").GetBoolean());
+        Assert.Contains("first 50 of 200", errors.RootElement.GetProperty("grouping_scope").GetString());
+
+        var overview = ev.Overview(new QueryRequest());
+        using var ov = JsonDocument.Parse(overview.Json);
+        Assert.Equal(200, ov.RootElement.GetProperty("summary").GetProperty("error_events").GetInt64());
+        Assert.Equal(50, ov.RootElement.GetProperty("summary").GetProperty("error_events_grouped").GetInt64());
+
+        // Groups without a body still say what they are: event, exception type and the exception message as sample.
+        var md = EvidenceService.ToMarkdown(overview);
+        Assert.Contains("`bridge_emit_failed` exception=`httpx.HTTPStatusError`", md);
+        Assert.Contains("Server error '500'", md);
+        Assert.DoesNotContain("```text\n  \n", md);
+    }
+
+    [Fact]
+    public void Explain_states_that_event_filters_skip_whole_segments_only()
+    {
+        var (root, _) = BuildIncidentStore();
+        var res = QueryEngine.Open(root).Execute(new QueryRequest { Where = "event = 'order.failed'", Limit = 1 });
+        Assert.Contains("events{order.failed}", res.Plan);
+        Assert.Contains("skip whole segments only", res.Plan);
+        var timeOnly = QueryEngine.Open(root).Execute(new QueryRequest { SinceUnixNanos = 1, Limit = 1 });
+        Assert.DoesNotContain("granularity", timeOnly.Plan);
+    }
 }

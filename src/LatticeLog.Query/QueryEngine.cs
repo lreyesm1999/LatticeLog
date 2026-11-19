@@ -258,6 +258,8 @@ public sealed class QueryEngine(StoreReader store)
         if (c.BeforeSequence is { } b) { sb.Append(" seq<").Append(b); any = true; }
         if (!any) sb.Append(" none (every segment is scanned)");
         sb.Append('\n');
+        if (c.MinSeverity is not null || c.Events is not null || c.Services is not null || c.BloomKeys.Count > 0)
+            sb.Append("granularity: severity/event/service/key filters skip whole segments only; blocks are skipped by time and sequence\n");
         return sb.ToString();
     }
 
