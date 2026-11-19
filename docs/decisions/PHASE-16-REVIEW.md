@@ -18,10 +18,10 @@
 | T05 ACK | done | the level actually reached (fsync/os) with group commit; duplicates also force the requested flush; replica ACK: N/A |
 | T06 retries | done | exponential backoff with full jitter and `Retry-After`; non-retryable errors reported |
 | T07 spool | done | the local store is the spool (durable, with a quota) |
-| T08 full spool | documented | local quota: write rejected and counted (`DroppedWriteError`), never deleted; no end-to-end test |
+| T08 full spool | done and tested | local quota: new batches refused and counted (`DroppedWriteError`), nothing deleted, the stored prefix still reaches the server (`IngestTests.A_full_producer_spool_refuses_new_records_keeps_the_stored_ones_and_ships_them`) |
 | T09 negotiation | done | `body_encoding` field + 415 with the accepted list; binary body (2) with automatic fallback to JSONL (1), tested |
 | T10 TLS/auth/rotation | done | hashed tokens and hot rotation tested; TLS with a real certificate tested end to end (`TlsTests`: forwarder and reads over HTTPS, untrusted client and plain HTTP refused; container smoke test over HTTPS); plain HTTP on a public address refused |
-| T11 quotas/backpressure | done | per-token 429 tested; queue-full 503 implemented but not tested; minimum rate limit (slowloris) |
+| T11 quotas/backpressure | done | per-token 429 tested; queue-full 503 with `Retry-After` tested, and the refused batches are stored exactly once on resend (`IngestTests.A_full_writer_queue_answers_503_with_retry_after_and_loses_nothing`); minimum rate limit (slowloris) |
 | T12 huge events/bombs | done and tested | limits on request, decompressed size, ratio, records and bytes per line |
 | T13 network tests | partial | request and response loss, delays, collector crash; no TCP-level loss or reordering (one batch in flight) |
 | T14 measurement | done (loopback) | ~180–217k records/s with JSONL, p50 ACK 12–15 ms per 5,000-record batch; binary body 2.0–3.4× faster |

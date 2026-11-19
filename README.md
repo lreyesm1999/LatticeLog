@@ -297,13 +297,13 @@ See the [single-node deployment guide](docs/deploy/single-node.md), the [operati
 
 ## Project Status
 
-**`0.1.0-alpha.1`**: functional, with 140 automated tests (including real-process crash tests, lossy networks, server restarts and end-to-end TLS) passing in CI on Windows, Linux and macOS. CI also builds, scans and smoke-tests the server's Docker image over HTTPS. Not production-hardened yet.
+**`0.1.0-alpha.1`**: functional, with 142 automated tests (including real-process crash tests, lossy networks, server restarts and end-to-end TLS) passing in CI on Windows x64, Linux x64, Linux ARM64 and macOS ARM64. CI also builds, scans and smoke-tests the server's Docker image over HTTPS, restores a backup on a different OS and CPU architecture, and runs CodeQL. Not production-hardened yet.
 
 | Works today | Not yet |
 |---|---|
 | Local engine, CLI (also Native AOT), MCP adapter | Cluster / sharding, object-storage tiers |
 | Single-node server with online admin, audit, metrics, console | Encryption at rest, external security review |
-| Async replication with manual failover | ARM64 CI, a published container image, tests across real machines |
+| Async replication with manual failover | A published container image, tests across real machines |
 | .NET, Python and PHP SDKs | Published and signed packages (NuGet, PyPI, Packagist) |
 
 The per-phase truth, including what did **not** pass, is in [`ROADMAP.md`](ROADMAP.md) and [`docs/decisions/`](docs/decisions). Changes are listed in [`CHANGELOG.md`](CHANGELOG.md).

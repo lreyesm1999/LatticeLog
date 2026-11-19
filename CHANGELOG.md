@@ -24,6 +24,14 @@
 - **Fixed**: when the tail reader moved to the next segment and a segment's index was briefly unreadable (being
   sealed), it could jump to a later sealed segment and skip a range; the gap check then forced a full scan. It now
   reads the older, still-unreadable segment first, and an internal discontinuity resets the incremental position.
+- **CI on ARM64** (Linux `ubuntu-24.04-arm`, in addition to macOS ARM64) and **CodeQL** static analysis (C#, Python,
+  JavaScript and workflows) on every PR, on `main` and weekly.
+- **Backup restore drill on every CI run**: a backup taken on Linux x64 is restored on Windows x64, macOS ARM64 and
+  Linux ARM64, verified, compared record by record with the source and written to.
+- New tests: a full writer queue answers 503 with `Retry-After` and the refused batches are stored exactly once on
+  resend; a full producer spool refuses and counts new records, deletes nothing and still ships what it stored.
+- Test stability: the replication test waits for the replica's deduplication cursor, which is published after the
+  shared flush, instead of its last sequence.
 - Test stability: the token quota test runs with a frozen quota clock (an internal `ServerOptions.QuotaClock`) and the
   bucket arithmetic has its own fake-clock test; the crash test waits for the child's first acknowledgement before its
   random kill delay instead of assuming the process starts within 250 ms.

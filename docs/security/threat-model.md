@@ -17,7 +17,7 @@ Cluster and cloud are **not** covered (they do not exist).
 | MCP / evidence | instruction injection through log text | text marked as untrusted, safe Markdown fences, no write tools | evaluation with real agents (P22-T13) |
 | MCP | path traversal | store fixed at startup, no path parameters | — |
 | Importers | huge inputs / deep nesting | limits on bytes, records, attributes and depth | importer fuzzing |
-| Dependencies | supply chain | minimal runtime dependencies (only `System.IO.Hashing`); Zstd/LZ4 only in the lab | SBOM and vulnerable-package check run in CI; SCA and secret scanning not yet |
+| Dependencies | supply chain | minimal runtime dependencies (only `System.IO.Hashing`); Zstd/LZ4 only in the lab | SBOM, vulnerable-package check, CodeQL and Dependabot run in CI; secret scanning with push protection on the repository |
 
 Cryptography: no home-made encryption. Encryption at rest and TLS are delegated to standard libraries and mechanisms
 (P18-T04).

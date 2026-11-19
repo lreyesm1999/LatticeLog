@@ -14,7 +14,7 @@
 | T03 dashboards | not done | — |
 | T04 alerts | done (defined) | runbook §Metrics and alerts |
 | T05 consistent backup | done | hot, valid prefix of the active segment, verified by reading the copy |
-| T06 restore on new infrastructure | partial | restore and subsequent writes tested on the same machine |
+| T06 restore on new infrastructure | done (CI) | every CI run backs up a store on Linux x64 and restores it on Windows x64, macOS ARM64 and Linux ARM64: verified, identical record by record to the source, and accepting new writes (`backup-drill-*` jobs); not yet on the user's own servers |
 | T07 RPO/RTO | partial | RPO described; RTO not measured |
 | T08 regional DR | not done | — |
 | T09 runbooks | done | full disk, corruption, crash, compromised token, privacy, upgrade |
@@ -25,5 +25,5 @@
 | T16 capacity | partial | figures with 4 CPUs, not generalizable |
 
 - Also: a middleware turns any uncaught exception into a JSON 500 and reports it through diagnostics.
-- Gate G24 ("restore tested, SLOs observable, runbooks executed"): the runbooks still have to be executed and a
-  restore done on another machine.
+- Gate G24 ("restore tested, SLOs observable, runbooks executed"): a restore on other machines runs in every CI build; the
+  runbooks still have to be executed on real infrastructure.

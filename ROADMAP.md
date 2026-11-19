@@ -39,14 +39,14 @@ Statuses: PASS · CONDITIONAL (gate met with explicit open items) · NOT PASSED 
 ## Current
 - Close the M1/M3 items for Local v1.0 (P14). Done on 2026-11-18: real-process crash tests, ring and pool on the
   enabled path (56 ns / 5 B), trimming/AOT analysis active and clean, local NuGet packages, fixed-rate latency
-  benchmark. Open: ARM64 CI, repeating the latency measurement on another disk and on Linux (the stall cause is
+  benchmark. Open: repeating the latency measurement on another disk and on Linux (the stall cause is
   identified and mitigated), signing, N-1 and RC (`docs/decisions/PHASE-14-REVIEW.md`).
 - ~~Mitigate P04-R1~~ done in format 0.2 (compressed catalog copy in the footer).
 
 ## Next
 - P16–P17 open items: a real network between machines; publishing the image to a registry.
 - P18: encryption at rest, external pentest (`docs/security/pentest-scope.md`).
-- P24: restore a backup on another machine and run the runbooks.
+- P24: run the runbooks on real infrastructure (restoring on another OS and CPU architecture already runs in CI).
 - **Platform**: the reference machine corrupts memory under all-core load (old BIOS/microcode); repeat the measurements
   on stable hardware.
 - External AI-friendly evaluation (P12-T17..T19) with an external model and human review.

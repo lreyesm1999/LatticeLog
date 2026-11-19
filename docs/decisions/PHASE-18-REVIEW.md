@@ -22,7 +22,7 @@
 | T11 tenant isolation | done | negative tests in `ServerApiTests` (403/404 per namespace, borrowed cursors) |
 | T12 retention and privacy erasure | done with limits | online retention and `erase`, tested (no trace left in the files; resends do not bring data back). Does not reach backups or the replica: documented |
 | T13 legal hold | not done | — |
-| T14 SAST/SCA/secret scanning/SBOM | partial | SBOM (CycloneDX) and vulnerable-package check run in CI; Dependabot enabled; no SAST or secret scanning yet |
+| T14 SAST/SCA/secret scanning/SBOM | done | CodeQL (C#, Python, JavaScript, workflows; `security-and-quality` queries) on every PR, on `main` and weekly; secret scanning with push protection enabled on the repository; SBOM (CycloneDX), vulnerable-package check, Trivy image scan and Dependabot |
 | T15 incident response | partial | compromised-token runbook; private vulnerability reporting enabled (`SECURITY.md`) |
 | T16 pentest | blocked | needs a third party; scope in `docs/security/pentest-scope.md` |
 | T17 legislation | blocked | needs specialized legal advice |
