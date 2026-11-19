@@ -13,6 +13,10 @@ updates:
       # and every project using [LatticeEvent] fails with CS8795. Raise it deliberately, together with the minimum
       # supported .NET SDK.
       - dependency-name: "Microsoft.CodeAnalysis*"
+      # LatticeLog.Extensions.Logging is a library for net10.0: it depends on the lowest Microsoft.Extensions version it
+      # needs, so apps are not forced onto a newer runtime's packages. Patch and minor updates are still proposed.
+      - dependency-name: "Microsoft.Extensions.*"
+        update-types: ["version-update:semver-major"]
     open-pull-requests-limit: 5
   - package-ecosystem: github-actions
     directory: /
