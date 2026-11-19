@@ -58,15 +58,18 @@ public class ReplicationTests
             Assert.True(await fwd.WaitForAsync(3_000, TimeSpan.FromSeconds(30)), fwd.LastError);
 
         var replicaStore = Path.Combine(replicaData, "ns", "acme~prod");
-        await WaitFor(() => File.Exists(Path.Combine(replicaStore, "STORE.json")) && replica.Ingest("acme/prod").LastSequence == 3_000, "replication");
+        var producer = StoreWriter.ReadStoreFile(local).StoreId;
+        // Wait on the deduplication cursor, not on LastSequence: a batch is visible in the store as soon as it is
+        // written, but its cursors (including those learned from upstream provenance) are published only after the
+        // shared flush, so on a slow fsync LastSequence can reach 3000 while the cursor still says 2800.
+        await WaitFor(() => File.Exists(Path.Combine(replicaStore, "STORE.json")) && replica.Ingest("acme/prod").CommittedThrough(producer) == 3_000, "replication");
+        Assert.Equal(3_000UL, replica.Ingest("acme/prod").LastSequence);
         Assert.Equal(Enumerable.Range(0, 3_000).Select(i => (long)i), Values(replicaStore));
         // Provenance: replica layer (primary store) over the primary layer (original producer) over the app's context.
-        var producer = StoreWriter.ReadStoreFile(local).StoreId;
         var sample = StoreReader.Open(replicaStore).ReadAll(new ScanReport()).First();
         Assert.Equal("ingest", sample.Context!.Name);
         Assert.Equal("ingest", sample.Context.Parent!.Name);
         Assert.Equal(producer, sample.Context.Parent.Attributes[0].Value.AsString());
-        Assert.Equal(3_000UL, replica.Ingest("acme/prod").CommittedThrough(producer)); // learned from upstream provenance
         // The replica stores a batch before its acknowledgement reaches the primary, so the primary's view can trail
         // by one batch for a moment: wait for it rather than sampling it once.
         await WaitFor(() => Assert.Single(primary.ReplicationStatus!).ReplicatedThrough == 3_000UL, "replication status");
