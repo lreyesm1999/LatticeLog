@@ -16,6 +16,11 @@ public sealed class UserConfig
     public List<string> Roots { get; } = [];
     public List<string> Allow { get; } = [];
     public string? DataDir { get; set; }
+    /// <summary>
+    /// Retention of the stores LatticeLog owns (Python indexes and migrated sources), applied by the background
+    /// service: key <c>*</c> is the default, other keys are source names. Originals and .NET stores are never touched.
+    /// </summary>
+    public Dictionary<string, RetentionSetting> Retention { get; } = new(StringComparer.OrdinalIgnoreCase);
     public string Path { get; }
 
     private UserConfig(string path) => Path = path;
@@ -43,6 +48,9 @@ public sealed class UserConfig
         foreach (var r in node["roots"] as JsonArray ?? []) if ((string?)r is { Length: > 0 } s) c.Roots.Add(s);
         foreach (var r in node["allow"] as JsonArray ?? []) if ((string?)r is { Length: > 0 } s) c.Allow.Add(s);
         c.DataDir = (string?)node["data_dir"];
+        if (node["retention"] is JsonObject ret)
+            foreach (var (name, v) in ret)
+                if (v is JsonObject o) c.Retention[name] = new RetentionSetting((string?)o["max_age"], (long?)o["max_mb"]);
         return c;
     }
 
@@ -57,8 +65,24 @@ public sealed class UserConfig
             ["allow"] = new JsonArray(Allow.Select(r => (JsonNode?)JsonValue.Create(r)).ToArray()),
         };
         if (DataDir is not null) node["data_dir"] = DataDir;
+        if (Retention.Count > 0)
+        {
+            var ret = new JsonObject();
+            foreach (var (name, r) in Retention.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+            {
+                var o = new JsonObject();
+                if (r.MaxAge is not null) o["max_age"] = r.MaxAge;
+                if (r.MaxMb is not null) o["max_mb"] = r.MaxMb;
+                ret[name] = o;
+            }
+            node["retention"] = ret;
+        }
         AtomicFile.WriteAllText(Path, node.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
     }
+
+    /// <summary>The retention that applies to a source: its own entry, else the <c>*</c> default, else none.</summary>
+    public RetentionSetting? RetentionFor(string source) =>
+        Retention.TryGetValue(source, out var r) ? r : Retention.TryGetValue("*", out var d) ? d : null;
 
     /// <summary>Adds a normalized folder to a list; false when it is already there.</summary>
     public static bool AddFolder(List<string> list, string folder)
@@ -73,6 +97,27 @@ public sealed class UserConfig
     {
         var full = PathPolicy.Normalize(folder);
         return list.RemoveAll(x => PathPolicy.SamePath(PathPolicy.Normalize(x), full)) > 0;
+    }
+}
+
+/// <summary>Retention for one source: maximum age (<c>30d</c>, <c>12h</c>) and/or maximum size in MiB.</summary>
+public sealed record RetentionSetting(string? MaxAge, long? MaxMb)
+{
+    public TimeSpan? MaxAgeSpan => MaxAge is null ? null : Durations.Parse(MaxAge);
+    public override string ToString() => string.Join(", ", new[] { MaxAge is null ? null : "max age " + MaxAge, MaxMb is null ? null : $"max {MaxMb} MiB" }.Where(x => x is not null));
+}
+
+public static class Durations
+{
+    /// <summary>Parses <c>90s</c>, <c>15m</c>, <c>2h</c>, <c>30d</c>.</summary>
+    public static TimeSpan Parse(string s)
+    {
+        if (s.Length >= 2 && double.TryParse(s.AsSpan(0, s.Length - 1), NumberStyles.Float, CultureInfo.InvariantCulture, out var n) && n > 0)
+        {
+            var unit = s[^1] switch { 's' => 1.0, 'm' => 60.0, 'h' => 3600.0, 'd' => 86400.0, _ => -1 };
+            if (unit > 0) return TimeSpan.FromSeconds(n * unit);
+        }
+        throw new FormatException($"'{s}' is not a duration like 90s, 15m, 2h or 30d.");
     }
 }
 

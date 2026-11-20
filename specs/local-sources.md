@@ -178,7 +178,7 @@ merges an entry into the client's configuration, keeping every other key:
 | cursor | user `~/.cursor/mcp.json` (default) or project `.cursor/mcp.json` | `mcpServers` |
 | vscode | project `.vscode/mcp.json` (default) or the user `Code/User/mcp.json` | `servers` (with `"type":"stdio"`) |
 
-The command is this build of `latticelog` (or `dotnet latticelog.dll`); `DOTNET_ROOT`, `LATTICELOG_CONFIG_DIR` and
+The command is this build of `latticelog` (or `dotnet latticelog.dll`); `DOTNET_ROOT` (framework-dependent builds only), `LATTICELOG_CONFIG_DIR` and
 `LATTICELOG_DATA_DIR` are passed in `env` when set. Clients that do not start servers in the project folder get
 `--project <dir>` when a `latticelog.toml` exists. An existing entry with the same name, or a file with comments
 (which a rewrite cannot keep), is changed only after the user answers `y` (or with `--yes`); without a terminal the
@@ -254,8 +254,105 @@ Format detection (first 64 lines / 256 KiB):
 - **Progress.** The MCP tool sends `notifications/progress` (bytes of new data, records) when the request carries a
   `progressToken`; the CLI prints it on stderr. `notifications/cancelled` (MCP) or Ctrl+C (CLI) stops between batches.
 - **follow=true** keeps the source updated: every refresh (CLI `sources`, MCP tool calls) imports new complete lines of
-  the registered patterns, without compaction.
+  the registered patterns, without compaction. With the background service (section 6) this happens every few
+  seconds, whether or not anyone is querying.
 
 Measured on a copy of a real 377,618,155-byte structlog file (1,762,702 lines): detected as structlog JSON, 1,762,702
 records imported, 0 unparsed, lossless mapping, 7,918,397 bytes after compaction, 7.1 s in total; a re-run imported 0
 records in 44 ms; the copy's SHA-256 was unchanged.
+
+## 6. Background service
+
+One process per user (and data folder) does the work that every MCP client used to do for itself. It runs as
+`latticelog service run`, is normally registered to start at logon, and is started on demand by the MCP shim.
+
+### What it owns
+
+- **Catalogs.** It opens the per-user catalog (roots from `config.json`) at start, and one catalog per
+  `latticelog.toml` that a client asks for. A project catalog is dropped after a day unused. A catalog is reopened when
+  `config.json` or its project file changes.
+- **All writes to LatticeLog's own stores.** These share one gate: refreshes (discovery, incremental indexing of Python
+  sources, followed migrations), maintenance and `migrate_logs`. The service therefore never contends with itself for
+  an index's writer lock, however many editors are connected.
+- **Background refresh**, every 5 s. Tool calls still refresh first when the last refresh is older than 2 s, as in
+  in-process mode, and wait at most 5 s for a refresh that is already running.
+- **Maintenance**, every 10 min. Indexes and migrated stores with more than 8 segments are compacted (`balanced`), and
+  retention is applied.
+- **Retention per source**, configured in `config.json` and set with `latticelog sources retention`:
+  `"retention": {"*": {"max_age": "30d"}, "legacy-app": {"max_mb": 500}}`. It applies only to the stores LatticeLog owns
+  (Python indexes and migrated sources), and it always keeps the newest segment so the checkpoint stays consistent.
+  Original log files and .NET stores (written by their applications) are never touched.
+
+### Transport
+
+The service listens on `127.0.0.1` only: port 7462 by default, or any free port when that one is taken. When it
+listens, it writes `<data>/service/service.json` with its pid, port and a random 256-bit token. On Unix the file has
+mode 0600; on Windows it inherits the user-only ACL of `%LOCALAPPDATA%`. The file is removed when the service stops. A
+lock file (`service.lock`, held exclusively) allows one service per data folder.
+
+One port carries two protocols, told apart by the first byte:
+
+- **Line protocol** (first byte `{`).
+  1. The client sends one JSON line:
+     `{"latticelog":"service/1","token":"…","op":"mcp|status|stop|ping|refresh|maintenance","project_dir":"…","config_dir":"…"}`.
+  2. The service answers one line: `{"ok":true,…}` or `{"ok":false,"error":"…","message":"…"}`. It refuses a wrong
+     token, or a config folder that differs from its own.
+  3. After `mcp`, the connection carries MCP JSON-RPC lines both ways. They are served by the same `McpServer` as
+     in-process mode, so tools, limits and results are the same. `list_sources` reports `"served_by":"service"` (or
+     `"in-process"`).
+- **HTTP** (`GET`/`HEAD`).
+  - `/ui` serves the web console.
+  - The read API the console uses treats each source as a namespace: `/v1/namespaces`, `/v1/search`,
+    `/v1/traces/{id}`, `/v1/stats`, `/v1/catalog`. `/v1/status` returns the status document.
+  - Every `/v1/*` route except `/v1/health` needs `Authorization: Bearer <token>`.
+  - The `Host` header must be `127.0.0.1`, `localhost` or `[::1]` with the service's port, which blocks DNS rebinding.
+    No CORS headers are sent.
+  - `latticelog service ui` prints `/ui#token=…`. The console moves the token from the fragment, which is never sent
+    to the server, into `sessionStorage`.
+
+### The MCP shim
+
+`latticelog mcp` reads the endpoint file and connects. When no service answers, it starts one and waits up to 15 s:
+
+- **Registered:** through the registration (`schtasks /Run`, `systemctl --user start`, `launchctl kickstart`).
+- **Not registered:** as a detached process. On Windows this is a ShellExecute that inherits no handles; on Unix,
+  `nohup` with `/dev/null` streams. The client's stdio pipes must not leak into a process that outlives the shim.
+
+When the service cannot be reached, the shim serves in-process and logs the reason on stderr. `--no-service` or
+`LATTICELOG_NO_SERVICE=1` forces in-process serving.
+
+If the service goes away mid-session, the shim keeps the client's session:
+
+1. It reconnects, or falls back to in-process.
+2. It replays `initialize` and `notifications/initialized`, and swallows the replayed answer.
+3. It resends the requests that were in flight, once. Every tool is safe to repeat: the read tools, and
+   `migrate_logs`, which is idempotent.
+
+When stdin closes, the shim answers the requests already sent before it exits.
+
+### Registration (per user, no administrator rights)
+
+| OS | method | what is written | start / stop |
+|---|---|---|---|
+| Windows | `task` (default) | Task Scheduler task `LatticeLog`: logon trigger for the user, `LeastPrivilege`, restart on failure; action `latticelogw.exe service run` | `schtasks /Run`; stop over the line protocol |
+| Windows | `run-key` | value `LatticeLog` under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` | started detached; stop over the line protocol |
+| Linux | `systemd` | `~/.config/systemd/user/latticelog.service` (`Restart=on-failure`), enabled | `systemctl --user start` |
+| macOS | `launchd` | `~/Library/LaunchAgents/dev.latticelog.service.plist` (`RunAtLoad`, `KeepAlive` on failure) | `launchctl bootstrap` / `kickstart` |
+
+`latticelogw.exe` is a copy of the executable with its PE subsystem field set to GUI (like `pythonw.exe`), so the
+service runs without a console window. `service install --dry-run` prints the plan and the files it would write, and
+changes nothing. `service uninstall` stops the service and removes the registration; the data folder stays.
+
+### Health
+
+`latticelog service status` (also `--format json` or `GET /v1/status`) shows:
+
+- pid, version, uptime, port and registration;
+- active and served MCP sessions;
+- last refresh and last maintenance;
+- disk use of the data folder, with indexes and migrated sources broken out;
+- per source: kind, records, bytes, last indexed time, last time new records arrived, last error, retention;
+- warnings and the last 50 errors.
+
+When the service is not running, the same command shows the sources as they are on disk, with the last indexed time
+taken from their checkpoints. The service log is `<data>/service/service.log`, rotated once at 5 MiB.

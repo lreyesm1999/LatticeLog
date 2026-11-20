@@ -7,6 +7,7 @@
     <ProjectReference Include="..\LatticeLog.OpenTelemetry\LatticeLog.OpenTelemetry.csproj" />
     <ProjectReference Include="..\LatticeLog.Mcp\LatticeLog.Mcp.csproj" />
     <ProjectReference Include="..\LatticeLog.Sources\LatticeLog.Sources.csproj" />
+    <ProjectReference Include="..\LatticeLog.Service\LatticeLog.Service.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

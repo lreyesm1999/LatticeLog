@@ -14,7 +14,7 @@ namespace LatticeLog.Tests;
 public class SourcesTests(ITestOutputHelper output)
 {
     /// <summary>An isolated per-user config + data folder + one registered root (no environment variables: tests run in parallel).</summary>
-    private sealed class Env
+    internal sealed class Env
     {
         public string Dir { get; } = TestData.TempDir();
         public string ConfigDir => Path.Combine(Dir, "config");
@@ -44,7 +44,7 @@ public class SourcesTests(ITestOutputHelper output)
 
     // ------------------------------------------------------------------ helpers: Python local-mode files written from C#
 
-    private static string PythonSource(string parent, string service, string? env = "dev")
+    internal static string PythonSource(string parent, string service, string? env = "dev")
     {
         var dir = Path.Combine(parent, service);
         Directory.CreateDirectory(dir);
@@ -53,7 +53,7 @@ public class SourcesTests(ITestOutputHelper output)
         return dir;
     }
 
-    private static string Rec(ulong seq, string service, int sev = 9, string? ev = null, string? body = null, string? exType = null, long t = 1_763_500_000_000_000_000)
+    internal static string Rec(ulong seq, string service, int sev = 9, string? ev = null, string? body = null, string? exType = null, long t = 1_763_500_000_000_000_000)
     {
         var ts = UnixTime.FormatRfc3339(t + (long)seq * 1_000_000);
         var sb = new StringBuilder($"{{\"type\":\"record\",\"seq\":\"{seq}\",\"time\":\"{ts}\",\"severity_number\":{sev}");
@@ -65,7 +65,7 @@ public class SourcesTests(ITestOutputHelper output)
         return sb.ToString();
     }
 
-    private static string StartFile(string sourceDir, string proc, ulong firstSeq, string service)
+    internal static string StartFile(string sourceDir, string proc, ulong firstSeq, string service)
     {
         var dir = Path.Combine(sourceDir, proc);
         Directory.CreateDirectory(dir);
@@ -75,9 +75,9 @@ public class SourcesTests(ITestOutputHelper output)
         return path;
     }
 
-    private static void Append(string path, string text) => File.AppendAllText(path, text, new UTF8Encoding(false));
+    internal static void Append(string path, string text) => File.AppendAllText(path, text, new UTF8Encoding(false));
 
-    private static long Count(SourceInfo s) => StoreReader.Open(s.StoreRoot).ReadAll(new ScanReport()).LongCount();
+    internal static long Count(SourceInfo s) => StoreReader.Open(s.StoreRoot).ReadAll(new ScanReport()).LongCount();
 
     private static JsonNode Call(McpServer server, string tool, JsonObject args, int id = 1)
     {

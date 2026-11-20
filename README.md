@@ -187,7 +187,72 @@ latticelog allow add D:/old-service/logs
 latticelog migrate "D:/old-service/logs/app.log*" --name legacy-app   # 378 MB structlog file -> 7.9 MB, 1,762,702 records
 ```
 
-The whole flow, scripted end to end: [`examples/developer-flow`](examples/developer-flow).
+The whole flow, scripted end to end: [`examples/developer-flow`](examples/developer-flow). To have it all start with
+your session and serve every editor from one background process, see [Install once](#install-once).
+
+---
+
+## Install once
+
+Like Redis or Ollama: install one file per user, connect your AI tools once, and from then on every service that
+writes LatticeLog format into its folder can be asked about **by name**. No .NET, no administrator rights, nothing
+system-wide, and nothing listens beyond `127.0.0.1`.
+
+**Windows (PowerShell).** Build the single-file executable once, or take `latticelog.exe` from the `latticelog-win-x64`
+CI artifact, then run `setup`. Building needs the .NET 10 SDK and Visual Studio 2022 Build Tools with *Desktop
+development with C++* (the native linker). Running needs neither.
+
+```powershell
+pwsh scripts/publish-aot.ps1                        # -> artifacts\aot\win-x64\latticelog.exe (Native AOT, one file)
+.\artifacts\aot\win-x64\latticelog.exe setup        # asks which MCP clients to configure
+# without questions: latticelog.exe setup --clients claude-desktop,claude-code --yes
+```
+
+**Linux / macOS.** Run `sh scripts/install.sh --build`, which needs the .NET 10 SDK plus clang (or the Xcode command
+line tools), or `sh scripts/install.sh ./latticelog` with a prebuilt binary.
+
+`setup` does three things and prints each one:
+
+1. **Copies the executable** to `%LOCALAPPDATA%\Programs\LatticeLog` (Linux/macOS: `~/.local/bin`) and adds that
+   folder to your user `PATH`.
+2. **Registers and starts the background service** for your user. On Windows it is a Task Scheduler task at logon (or
+   `--method run-key`); on Linux a systemd user unit; on macOS a launchd agent. The service owns the source catalog:
+   - indexes Python sources incrementally;
+   - follows migrations made with `follow=true`;
+   - compacts and applies retention to LatticeLog's own copies, never to your original files;
+   - serves every MCP client from one process, so several editors at once never contend for an index.
+3. **Adds a `latticelog` MCP server entry** to the clients you pick: Claude Desktop, Claude Code, Cursor, VS Code.
+   Existing config files are backed up first, and an existing entry is replaced only after you confirm.
+
+Then register the folder your services write into, and ask:
+
+```bash
+latticelog roots add C:/dev/my-services/logs   # once; services under it are found by name
+latticelog service status                      # sources, last indexed time, disk use, errors
+latticelog service ui --open                   # web console on 127.0.0.1 (the link carries the service token)
+```
+
+`latticelog mcp`, the command the clients run, is a thin shim. It forwards to the service and starts it when it isn't
+running. If the service cannot start, the shim serves in-process as before; `--no-service` forces that. If the service
+restarts mid-session, the shim reconnects and resends the requests that were in flight.
+
+| | |
+|---|---|
+| service control | `latticelog service status`, `start`, `stop`, `restart`, `install`, `uninstall`, `ui` |
+| retention | `latticelog sources retention '*' --max-age 30d` (default for all), `latticelog sources retention legacy-app --max-mb 500` |
+| service files | endpoint and log in `<data>/service/` (`%LOCALAPPDATA%\LatticeLog\service`, `~/.local/share/latticelog/service`) |
+
+**Uninstall.** Run `latticelog setup --uninstall`. It:
+
+- stops and unregisters the service;
+- removes the `latticelog` entry from the four clients' user configs, keeping a backup;
+- takes the folder off your `PATH`;
+- deletes the executable.
+
+Indexes and migrated sources stay in the data folder unless you add `--remove-data`. Your original log files are never
+touched. To remove only the service, run `latticelog service uninstall`.
+
+Design and protocol: [`specs/local-sources.md` §6](specs/local-sources.md#6-background-service).
 
 ---
 
@@ -361,6 +426,7 @@ src/
   LatticeLog.Cli                  latticelog CLI (also a dotnet tool, trimming/AOT-ready)
   LatticeLog.Sources              sources by name: roots, latticelog.toml, Python index, migration
   LatticeLog.Mcp                  MCP server (read tools over sources, opt-in migration)
+  LatticeLog.Service              per-user background service, MCP shim, registration (task/systemd/launchd)
   LatticeLog.OpenTelemetry        OTLP/JSON and importers
   LatticeLog.Extensions.Logging   Microsoft.Extensions.Logging bridge
 sdks/python  sdks/php            SDKs for other languages

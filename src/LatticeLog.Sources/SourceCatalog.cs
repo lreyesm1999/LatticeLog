@@ -52,15 +52,39 @@ public sealed class SourceCatalog
     public UserConfig Config { get; }
     public ProjectConfig? Project { get; }
     public string DataDir { get; }
+    /// <summary>Replaced as a whole by <see cref="Discover"/>: a reference read is a consistent snapshot.</summary>
     public IReadOnlyList<SourceInfo> Sources { get; private set; } = [];
-    public List<string> Warnings { get; } = [];
+    private readonly List<string> _warnings = [];
+    private readonly object _discoverLock = new();
+
+    /// <summary>Snapshot of the current warnings (discovery problems, indexing errors). Safe to read from any thread.</summary>
+    public IReadOnlyList<string> Warnings { get { lock (_warnings) return _warnings.ToList(); } }
+
+    public void AddWarning(string warning) { lock (_warnings) _warnings.Add(warning); }
     /// <summary>Single-store mode (<c>latticelog mcp &lt;dir&gt;</c>): no discovery, no migration.</summary>
     public bool IsSingleStore { get; }
+
+    private readonly DateTime _configStamp, _projectStamp;
 
     private SourceCatalog(UserConfig config, ProjectConfig? project, string dataDir, bool single)
     {
         Config = config; Project = project; DataDir = dataDir; IsSingleStore = single;
+        _configStamp = Stamp(config.Path);
+        _projectStamp = project is null ? default : Stamp(project.FilePath);
     }
+
+    private static DateTime Stamp(string file)
+    {
+        try { return File.Exists(file) ? File.GetLastWriteTimeUtc(file) : default; }
+        catch (IOException) { return default; }
+        catch (UnauthorizedAccessException) { return default; }
+    }
+
+    /// <summary>The options this catalog was opened with (a long-lived owner reopens it when <see cref="IsStale"/>).</summary>
+    public CatalogOptions? Options { get; private init; }
+
+    /// <summary>True when config.json or the project's latticelog.toml changed since this catalog was opened.</summary>
+    public bool IsStale => !IsSingleStore && (Stamp(Config.Path) != _configStamp || (Project is not null && Stamp(Project.FilePath) != _projectStamp));
 
     public static SourceCatalog Open(CatalogOptions? options = null)
     {
@@ -68,7 +92,7 @@ public sealed class SourceCatalog
         var config = UserConfig.Load(options.ConfigDir);
         ProjectConfig? project = null;
         if (options.SearchProject && ProjectConfig.Find(options.ProjectDir ?? Environment.CurrentDirectory) is { } f) project = ProjectConfig.Load(f);
-        var c = new SourceCatalog(config, project, config.EffectiveDataDir, single: false);
+        var c = new SourceCatalog(config, project, config.EffectiveDataDir, single: false) { Options = options };
         c.Discover();
         return c;
     }
@@ -115,10 +139,20 @@ public sealed class SourceCatalog
 
     // ------------------------------------------------------------------ discovery
 
+    /// <summary>Re-reads the roots and the data folder. Concurrent calls are serialized; readers keep the previous snapshot.</summary>
     public void Discover()
     {
-        Warnings.Clear();
         if (IsSingleStore) return;
+        lock (_discoverLock)
+        {
+            var warnings = new List<string>();
+            DiscoverInto(warnings);
+            lock (_warnings) { _warnings.Clear(); _warnings.AddRange(warnings); }
+        }
+    }
+
+    private void DiscoverInto(List<string> warnings)
+    {
         var found = new List<SourceInfo>();
         var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var data = PathPolicy.Normalize(DataDir);
@@ -128,24 +162,24 @@ public sealed class SourceCatalog
             foreach (var (name, path, env) in Project.Sources)
             {
                 var full = PathPolicy.Normalize(path);
-                if (Describe(full, name, env, "toml:" + Project.FilePath) is { } s) { if (seenPaths.Add(full)) found.Add(s); }
-                else Warnings.Add($"latticelog.toml source '{name}': '{full}' has no {ManifestFile} or {StoreLayout.StoreFile} (yet).");
+                if (Describe(full, name, env, "toml:" + Project.FilePath, warnings) is { } s) { if (seenPaths.Add(full)) found.Add(s); }
+                else warnings.Add($"latticelog.toml source '{name}': '{full}' has no {ManifestFile} or {StoreLayout.StoreFile} (yet).");
             }
         }
         var roots = Config.Roots.Select(r => ("root", r)).Concat((Project?.Roots ?? []).Select(r => ("toml-root", r)));
         foreach (var (kind, root) in roots)
         {
             var full = PathPolicy.Normalize(root);
-            if (!Directory.Exists(full)) { Warnings.Add($"root '{full}' does not exist."); continue; }
+            if (!Directory.Exists(full)) { warnings.Add($"root '{full}' does not exist."); continue; }
             var visited = 0;
             var queue = new Queue<(string Dir, int Depth)>();
             queue.Enqueue((full, 0));
             while (queue.Count > 0)
             {
                 var (dir, depth) = queue.Dequeue();
-                if (++visited > MaxDirsPerRoot) { Warnings.Add($"root '{full}': stopped after {MaxDirsPerRoot} folders."); break; }
+                if (++visited > MaxDirsPerRoot) { warnings.Add($"root '{full}': stopped after {MaxDirsPerRoot} folders."); break; }
                 if (PathPolicy.IsUnder(dir, data)) continue;
-                var s = Describe(dir, null, null, kind + ":" + full);
+                var s = Describe(dir, null, null, kind + ":" + full, warnings);
                 if (s is not null)
                 {
                     if (seenPaths.Add(dir)) found.Add(s);
@@ -166,15 +200,15 @@ public sealed class SourceCatalog
             }
         }
         found.AddRange(MigratedSources());
-        Sources = AssignUniqueNames(found);
+        Sources = AssignUniqueNames(found, warnings);
     }
 
-    private SourceInfo? Describe(string dir, string? name, string? env, string origin)
+    private SourceInfo? Describe(string dir, string? name, string? env, string origin, List<string> warnings)
     {
         if (File.Exists(System.IO.Path.Combine(dir, ManifestFile)) && !StoreLayout.IsStore(dir))
         {
             var m = ReadManifest(dir);
-            if (m is null) { Warnings.Add($"{System.IO.Path.Combine(dir, ManifestFile)}: unreadable manifest, skipped."); return null; }
+            if (m is null) { warnings.Add($"{System.IO.Path.Combine(dir, ManifestFile)}: unreadable manifest, skipped."); return null; }
             var index = IndexDir(dir, m.Service);
             return new SourceInfo
             {
@@ -222,7 +256,7 @@ public sealed class SourceCatalog
     }
 
     /// <summary>Collisions keep every source: later ones get <c>name@environment</c> or <c>name#2</c>.</summary>
-    private List<SourceInfo> AssignUniqueNames(List<SourceInfo> found)
+    private static List<SourceInfo> AssignUniqueNames(List<SourceInfo> found, List<string> warnings)
     {
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var result = new List<SourceInfo>();
@@ -238,7 +272,7 @@ public sealed class SourceCatalog
                     var i = 2;
                     while (!names.Add(alt = $"{name}#{i}")) i++;
                 }
-                Warnings.Add($"two sources are named '{name}': '{s.Path}' is listed as '{alt}'.");
+                warnings.Add($"two sources are named '{name}': '{s.Path}' is listed as '{alt}'.");
                 name = alt!;
             }
             result.Add(name == s.Name ? s : Copy(s, name));
@@ -297,7 +331,7 @@ public sealed class SourceCatalog
             catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException)
             {
                 outcomes.Add(new(s.Name, 0, ex.Message));
-                Warnings.Add($"{s.Name}: {ex.Message}");
+                AddWarning($"{s.Name}: {ex.Message}");
             }
         }
         return outcomes;
@@ -310,7 +344,7 @@ public sealed class SourceCatalog
         if (!Changed(s, files)) return 0;
         var res = IncrementalImporter.Run(s.StoreRoot, s.CheckpointPath!, files.Select(f => new InputFile(f, LogFormat.LatticeJsonl)).ToList(),
             new ImportRunOptions { DedupeProducerSequence = true }, ct);
-        foreach (var w in res.Warnings) Warnings.Add($"{s.Name}: {w}");
+        foreach (var w in res.Warnings) AddWarning($"{s.Name}: {w}");
         // Each refresh seals a small segment; keep the index compact.
         if (StoreReader.Open(s.StoreRoot).SegmentIds.Count > 32)
         {

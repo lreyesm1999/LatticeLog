@@ -2,6 +2,13 @@
 // textContent, never as HTML. The token lives only in sessionStorage of this tab.
 "use strict";
 const $ = (id) => document.getElementById(id);
+// "latticelog service ui" opens /ui#token=...: the fragment never reaches the server; it is moved to sessionStorage and
+// removed from the address bar.
+const hashToken = new URLSearchParams(location.hash.slice(1)).get("token");
+if (hashToken) {
+  sessionStorage.setItem("ll-token", hashToken);
+  history.replaceState(null, "", location.pathname + location.search);
+}
 const state = { token: sessionStorage.getItem("ll-token") || "", ns: sessionStorage.getItem("ll-ns") || "", cursor: null };
 
 async function api(path, params = {}) {

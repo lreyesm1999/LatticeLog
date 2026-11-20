@@ -2,6 +2,30 @@
 
 ## Unreleased — public repository under the MIT license
 
+- **Install once: background service and single-file install** ([`specs/local-sources.md` §6](specs/local-sources.md#6-background-service),
+  new library `LatticeLog.Service`, README "Install once"):
+  - `latticelog service run|start|stop|restart|status|install|uninstall|ui`: one per-user process on 127.0.0.1
+    (token-protected, endpoint file in the data folder) that owns the catalogs. It does background refresh and Python
+    indexing, follows `follow=true` migrations, and compacts and applies per-source retention
+    (`latticelog sources retention`) to LatticeLog's own stores only. All of its writes share one gate, so concurrent
+    editors no longer contend for index locks. Registration is per user, with no administrator rights: a Task
+    Scheduler logon task running a console-less copy (`latticelogw.exe`) or the Run key, a systemd user unit, or a
+    launchd agent.
+  - `latticelog mcp` is now a thin stdio shim to the service, which it starts when it is not running. It falls back to
+    in-process when the service cannot start (`--no-service` forces it). It survives a service restart by
+    reconnecting, replaying `initialize` and resending in-flight requests. Tools and results are unchanged;
+    `list_sources` adds `served_by`.
+  - `latticelog service status` shows sources, last indexed time, disk use and errors. `/ui` (the web console) and
+    `/v1/status` are served on loopback, with Host-header checks against DNS rebinding.
+  - `latticelog setup`: copies the Native AOT single-file executable to a per-user folder and onto `PATH`, registers
+    and starts the service, and runs `mcp install` for the chosen clients. `latticelog setup --uninstall` undoes it,
+    and `mcp uninstall` removes one entry. Scripts: `scripts/publish-aot.ps1`, `scripts/install.ps1`,
+    `scripts/install.sh`, `scripts/smoke-aot.ps1|.sh`.
+  - CI builds the AOT executable for win-x64 and linux-x64 and smoke-tests list_sources and get_error_groups with
+    dotnet removed from PATH, then again in containers without .NET (Windows Server Core, Debian).
+  - `StoreWriter.ApplyRetention(..., keepNewest)` and `SourceCatalog` thread safety (snapshot warnings, serialized
+    discovery) support the service.
+
 - **Developer flow: logs by service name** ([`specs/local-sources.md`](specs/local-sources.md), new library
   `LatticeLog.Sources`, example [`examples/developer-flow`](examples/developer-flow)):
   - Python **local mode** without a server: `latticelog.open(folder, service=..., environment=...)` writes official

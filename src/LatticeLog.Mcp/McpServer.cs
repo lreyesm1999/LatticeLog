@@ -35,30 +35,41 @@ public sealed class McpServer
 {
     public static readonly string[] SupportedProtocolVersions = ["2025-11-25", "2025-06-18", "2025-03-26"];
     private readonly SourceCatalog _catalog;
+    private readonly CatalogRefresher _refresher;
     private readonly McpLimits _limits;
     private int _calls;
     private long _bytes;
-    private DateTime _lastRefresh = DateTime.MinValue;
 
     public McpServer(string storeRoot, McpLimits? limits = null) : this(SourceCatalog.ForStore(storeRoot), limits) { }
 
     public McpServer(SourceCatalog catalog, McpLimits? limits = null)
+        : this(new CatalogRefresher(catalog, (limits ?? new McpLimits()).RefreshInterval), limits) { }
+
+    /// <param name="refresher">Shared with other sessions when one process (the background service) serves several clients.</param>
+    /// <param name="servedBy">Reported by list_sources: <c>in-process</c> or <c>service</c>.</param>
+    public McpServer(CatalogRefresher refresher, McpLimits? limits = null, string servedBy = "in-process")
     {
-        _catalog = catalog;
+        _refresher = refresher;
+        _catalog = refresher.Catalog;
         _limits = limits ?? new McpLimits();
+        ServedBy = servedBy;
     }
 
     public SourceCatalog Catalog => _catalog;
 
+    public string ServedBy { get; }
+
     public static int Run(string storeRoot, Stream input, Stream output, TextWriter log) => Run(SourceCatalog.ForStore(storeRoot), input, output, log);
 
+    public static int Run(SourceCatalog catalog, Stream input, Stream output, TextWriter log) => Run(new McpServer(catalog), input, output, log);
+
     /// <summary>
-    /// Serves until stdin closes. Requests run one at a time on this thread while a reader thread keeps reading, so
+    /// Serves until the input closes. Requests run one at a time on this thread while a reader thread keeps reading, so
     /// <c>notifications/cancelled</c> reaches a long migration (which then stops between batches).
     /// </summary>
-    public static int Run(SourceCatalog catalog, Stream input, Stream output, TextWriter log)
+    public static int Run(McpServer server, Stream input, Stream output, TextWriter log)
     {
-        var server = new McpServer(catalog);
+        var catalog = server.Catalog;
         using var reader = new StreamReader(input, new UTF8Encoding(false));
         using var writer = new StreamWriter(output, new UTF8Encoding(false)) { AutoFlush = true, NewLine = "\n" };
         var gate = new object();
@@ -247,7 +258,7 @@ public sealed class McpServer
         var progressToken = p["_meta"]?["progressToken"]?.DeepClone();
         try
         {
-            if (name is not ("preview_migration" or "migrate_logs")) RefreshIfDue(ct);
+            if (name is not ("preview_migration" or "migrate_logs")) _refresher.RefreshIfDue(ct: ct);
             var (json, isPartial, untrusted) = name switch
             {
                 "list_sources" => (ListSources(), false, false),
@@ -283,13 +294,6 @@ public sealed class McpServer
         }
     }
 
-    private void RefreshIfDue(CancellationToken ct)
-    {
-        if (_catalog.IsSingleStore || DateTime.UtcNow - _lastRefresh < _limits.RefreshInterval) return;
-        _catalog.Refresh(ct);
-        _lastRefresh = DateTime.UtcNow;
-    }
-
     private LogMigrator Migrator()
     {
         if (_catalog.IsSingleStore) throw new ArgumentException("Migration is not available when the server is bound to one store.");
@@ -298,10 +302,11 @@ public sealed class McpServer
 
     private string ListSources()
     {
-        _catalog.Discover();
+        _refresher.Discover();
         var o = new JsonObject
         {
             ["format"] = "latticelog.sources.v1",
+            ["served_by"] = ServedBy,
             ["sources"] = new JsonArray(_catalog.Sources.Select(s => (JsonNode?)SourceCatalog.Describe(s)).ToArray()),
         };
         if (!_catalog.IsSingleStore)
@@ -334,8 +339,10 @@ public sealed class McpServer
                 },
             }.ToJsonString());
         var follow = a["follow"] is { } f && f.GetValue<bool>();
-        var report = Migrator().Migrate(Str(a, "path"), Str(a, "source_name"), follow, progress, ct);
-        _lastRefresh = DateTime.MinValue;
+        var migrator = Migrator();
+        // Exclusive: a background refresh following this source must not hold its writer lock meanwhile.
+        var report = _refresher.Exclusive(() => migrator.Migrate(Str(a, "path"), Str(a, "source_name"), follow, progress, ct), ct);
+        _refresher.Invalidate();
         return report.Json.ToJsonString();
     }
 

@@ -59,6 +59,7 @@ public static class SourceCommands
 
     public static int Sources(Args a)
     {
+        if (a.Positional.ElementAtOrDefault(0) == "retention") return ServiceCommands.Retention(a);
         var c = Catalog(a);
         if (!a.Has("no-refresh"))
             foreach (var o in c.Refresh())
@@ -125,11 +126,55 @@ public static class SourceCommands
         catch (UnauthorizedAccessException ex) { throw new CliException(ExitCodes.Usage, ex.Message); }
     }
 
+    /// <summary>
+    /// <c>latticelog mcp</c>: a thin stdio shim to the background service (started when needed); in-process when the
+    /// service cannot start, with <c>--no-service</c> / LATTICELOG_NO_SERVICE=1, or bound to one store (<c>mcp &lt;dir&gt;</c>).
+    /// </summary>
     public static int Mcp(Args a)
     {
         if (a.Positional.ElementAtOrDefault(0) == "install") return McpInstall(a);
-        var catalog = a.Positional.Count > 0 ? SourceCatalog.ForStore(a.Positional[0]) : Catalog(a);
-        return LatticeLog.Mcp.McpServer.Run(catalog, Console.OpenStandardInput(), Console.OpenStandardOutput(), Console.Error);
+        if (a.Positional.ElementAtOrDefault(0) == "uninstall") return McpUninstall(a);
+        if (a.Positional.Count > 0)
+            return LatticeLog.Mcp.McpServer.Run(SourceCatalog.ForStore(a.Positional[0]), Console.OpenStandardInput(), Console.OpenStandardOutput(), Console.Error);
+        var configDir = a.Get("config-dir") is { } cd ? Path.GetFullPath(cd) : null;
+        var noService = a.Has("no-service") || Environment.GetEnvironmentVariable("LATTICELOG_NO_SERVICE") is "1" or "true";
+        return LatticeLog.Service.McpShim.Run(Console.OpenStandardInput(), Console.OpenStandardOutput(), new LatticeLog.Service.ShimOptions
+        {
+            ConfigDir = configDir,
+            ProjectDir = a.Get("project"),
+            NoService = noService,
+            Log = Console.Error,
+            InProcessCatalog = () => SourceCatalog.Open(new CatalogOptions { ConfigDir = configDir, ProjectDir = a.Get("project") }),
+        });
+    }
+
+    /// <summary><c>mcp uninstall --client X [--scope user|project] [--name latticelog]</c>: removes the entry (backup kept).</summary>
+    public static int McpUninstall(Args a, bool quietWhenMissing = false)
+    {
+        var client = a.Get("client") ?? throw new CliException(ExitCodes.Usage, "Usage: latticelog mcp uninstall --client claude-desktop|claude-code|cursor|vscode [--scope user|project]");
+        var projectDir = Path.GetFullPath(a.Get("project") ?? Environment.CurrentDirectory);
+        var scope = a.Get("scope") ?? (client is "claude-code" or "vscode" ? "project" : "user");
+        var target = a.Get("config-file") is { } cf ? ResolveClient(client, scope, projectDir) with { File = Path.GetFullPath(cf) } : ResolveClient(client, scope, projectDir);
+        var serverName = a.Get("name") ?? "latticelog";
+        JsonObject? root = null;
+        if (File.Exists(target.File))
+        {
+            try { root = JsonNode.Parse(File.ReadAllText(target.File), documentOptions: new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true }) as JsonObject; }
+            catch (JsonException ex) { throw new CliException(ExitCodes.DataError, $"{target.File} is not valid JSON ({ex.Message}); not changed."); }
+        }
+        if (root?[target.Key] is not JsonObject servers || !servers.ContainsKey(serverName))
+        {
+            if (!quietWhenMissing) Console.WriteLine($"No MCP server named '{serverName}' in {target.File}; nothing to do.");
+            return ExitCodes.Ok;
+        }
+        servers.Remove(serverName);
+        var backup = $"{target.File}.latticelog-backup-{DateTime.UtcNow:yyyyMMddHHmmss}";
+        File.Copy(target.File, backup, overwrite: true);
+        var tmp = target.File + ".latticelog-tmp";
+        File.WriteAllText(tmp, root.ToJsonString(Indented) + "\n", new UTF8Encoding(false));
+        File.Move(tmp, target.File, overwrite: true);
+        Console.WriteLine($"Removed MCP server '{serverName}' from {target.File} (previous file saved as {backup}).");
+        return ExitCodes.Ok;
     }
 
     // ------------------------------------------------------------------ mcp install
@@ -179,14 +224,18 @@ public static class SourceCommands
         var serverName = a.Get("name") ?? "latticelog";
         var (command, args) = a.Get("command") is { } cmd ? (cmd, new List<string> { "mcp" }) : SelfCommand();
         // Clients that do not start the server in the project folder get it explicitly, so latticelog.toml is found.
-        if (scope == "user" || client == "claude-desktop")
+        if ((scope == "user" || client == "claude-desktop") && !a.Has("no-project"))
             if (ProjectConfig.Find(projectDir) is { } toml) args.AddRange(["--project", Path.GetDirectoryName(toml)!]);
         var entry = new JsonObject();
         if (target.VsCodeStyle) entry["type"] = "stdio";
         entry["command"] = command;
         entry["args"] = new JsonArray(args.Select(x => (JsonNode?)JsonValue.Create(x)).ToArray());
         var env = new JsonObject();
-        foreach (var v in new[] { "DOTNET_ROOT", "LATTICELOG_CONFIG_DIR", "LATTICELOG_DATA_DIR" })
+        // DOTNET_ROOT only for a framework-dependent build: the single-file Native AOT executable needs no .NET.
+        string[] passed = System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported
+            ? ["DOTNET_ROOT", "LATTICELOG_CONFIG_DIR", "LATTICELOG_DATA_DIR"]
+            : ["LATTICELOG_CONFIG_DIR", "LATTICELOG_DATA_DIR"];
+        foreach (var v in passed)
             if (Environment.GetEnvironmentVariable(v) is { Length: > 0 } val) env[v] = val;
         if (env.Count > 0) entry["env"] = env;
 
