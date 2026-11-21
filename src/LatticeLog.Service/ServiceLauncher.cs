@@ -32,7 +32,14 @@ public static class ServiceLauncher
         var reg = Registration(configDir);
         string? method = null;
         if (RegisteredServiceMatches(configDir))
-            try { method = reg.Detect(); } catch (Exception ex) when (ex is InvalidOperationException or IOException) { }
+        {
+            try { method = reg.Detect(); }
+            catch (Exception ex) when (ex is InvalidOperationException or IOException)
+            {
+                // The service manager could not be asked (no schtasks/systemctl here): treat it as not registered.
+                log?.Invoke($"could not check the service registration ({ex.Message}); starting it directly");
+            }
+        }
         if (method is not null && reg.StartRegistered(method))
         {
             log?.Invoke($"started the registered LatticeLog service ({method})");

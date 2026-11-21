@@ -33,7 +33,7 @@ public static class SourceCommands
         if (changed)
         {
             var redirected = PackageContext.RedirectedCopy(config.Path, before);
-            if (redirected is not null || PackageContext.IsPackaged) Console.Error.WriteLine(PackageContext.Warning(config.Path, redirected));
+            if (redirected is not null) Console.Error.WriteLine(PackageContext.Warning(config.Path, redirected));
         }
         return (changed, ConfigEdit.Snapshot(config));
     }

@@ -183,28 +183,13 @@ public static class ConfigEdit
     }
 }
 
-/// <summary>Whether this process runs inside a packaged (MSIX / Store) app, where Windows redirects AppData writes.</summary>
+/// <summary>
+/// Windows packaged (MSIX / Store) apps get their AppData writes redirected to a private copy. This is detected by effect,
+/// not by asking for a package identity: processes such an app starts are redirected while
+/// <c>GetCurrentPackageFullName</c> still reports no package.
+/// </summary>
 public static class PackageContext
 {
-    private const int AppModelErrorNoPackage = 15700;
-
-    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
-    private static extern int GetCurrentPackageFullName(ref uint packageFullNameLength, IntPtr packageFullName);
-
-    private static readonly Lazy<bool> Packaged = new(() =>
-    {
-        if (!OperatingSystem.IsWindows()) return false;
-        try
-        {
-            uint length = 0;
-            return GetCurrentPackageFullName(ref length, IntPtr.Zero) != AppModelErrorNoPackage;
-        }
-        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException) { return false; }
-    });
-
-    /// <summary>True when this process has a package identity (MSIX/Store app).</summary>
-    public static bool IsPackaged => Packaged.Value;
-
     /// <summary>
     /// After writing <paramref name="path"/> (under %APPDATA% or %LOCALAPPDATA%), the package-private copy Windows
     /// redirected that write to, or null when the write landed where it was aimed. Checked by effect rather than by
@@ -237,15 +222,17 @@ public static class PackageContext
             {
                 if (File.Exists(candidate) && File.GetLastWriteTimeUtc(candidate) >= writtenAfterUtc) return candidate;
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Another app's package folder we may not read: it cannot hold our redirected file, so skip it.
+                continue;
+            }
         }
         return null;
     }
 
-    public static string Warning(string path, string? redirectedTo) =>
-        (redirectedTo is not null
-            ? $"warning: Windows stored this change in a packaged app's private copy ({redirectedTo}), not in {path}. "
-            : $"warning: this command runs inside a packaged app, so Windows may keep this change in the app's private copy of {path}. ") +
+    public static string Warning(string path, string redirectedTo) =>
+        $"warning: Windows stored this change in a packaged app's private copy ({redirectedTo}), not in {path}. " +
         "A LatticeLog service started by Windows does not see it. Start the service ('latticelog service start') and run " +
         "the command again, so the service writes the change itself, or run the command from your own terminal.";
 }
