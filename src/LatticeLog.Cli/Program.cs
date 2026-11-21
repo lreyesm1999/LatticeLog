@@ -618,9 +618,10 @@ public static class Program
         var loss = new LossReport();
         var now = UnixTime.NowUnixNanos();
         using var input = File.OpenRead(file);
+        using var text = fmt == "llog-jsonl" ? new StreamReader(input, Encoding.UTF8, leaveOpen: true) : null;
         IEnumerable<LogRecord> records = fmt switch
         {
-            "llog-jsonl" => new JsonlExchangeReader().Read(new StreamReader(input, Encoding.UTF8)),
+            "llog-jsonl" => new JsonlExchangeReader().Read(text!),
             "otlp-json" => OtlpJson.Read(input, loss),
             "jsonl" => StructuredJsonlImporter.Read(input, new StructuredJsonlImporter.Options(a.Has("preserve-raw"), a.Get("service")), loss, now),
             "text" => RawTextImporter.Read(input, Path.GetFileName(file), now,

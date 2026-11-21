@@ -258,7 +258,7 @@ public sealed partial class LatticeServer
     {
         var req = Scope(rc, limitDefault: 100);
         TimeSpan? bucket = null;
-        if (rc.Query["bucket"].ToString() is { Length: > 0 } b)
+        if (rc.Query["bucket"].ToString() is { Length: > 0 })
         {
             var now = UnixTime.NowUnixNanos();
             bucket = TimeSpan.FromTicks((now - TimeArg(rc.Query, "bucket", now)!.Value) / 100);

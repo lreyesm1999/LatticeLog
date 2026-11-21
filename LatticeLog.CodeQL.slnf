@@ -1,0 +1,25 @@
+{
+  "solution": {
+    "path": "LatticeLog.sln",
+    "projects": [
+      "src\\LatticeLog.Abstractions\\LatticeLog.Abstractions.csproj",
+      "src\\LatticeLog.Cli\\LatticeLog.Cli.csproj",
+      "src\\LatticeLog.Core\\LatticeLog.Core.csproj",
+      "src\\LatticeLog.Storage\\LatticeLog.Storage.csproj",
+      "src\\LatticeLog.Query\\LatticeLog.Query.csproj",
+      "src\\LatticeLog.Evidence\\LatticeLog.Evidence.csproj",
+      "src\\LatticeLog.OpenTelemetry\\LatticeLog.OpenTelemetry.csproj",
+      "src\\LatticeLog.Generator\\LatticeLog.Generator.csproj",
+      "src\\LatticeLog.Mcp\\LatticeLog.Mcp.csproj",
+      "src\\LatticeLog.Extensions.Logging\\LatticeLog.Extensions.Logging.csproj",
+      "src\\LatticeLog.Ingest\\LatticeLog.Ingest.csproj",
+      "src\\LatticeLog.Server\\LatticeLog.Server.csproj",
+      "src\\LatticeLog.ServerHost\\LatticeLog.ServerHost.csproj",
+      "src\\LatticeLog.Sources\\LatticeLog.Sources.csproj",
+      "src\\LatticeLog.Service\\LatticeLog.Service.csproj",
+      "tests\\LatticeLog.Tests\\LatticeLog.Tests.csproj",
+      "tests\\LatticeLog.CrashHarness\\LatticeLog.CrashHarness.csproj",
+      "examples\\dotnet-console\\LatticeLog.Examples.Console.csproj"
+    ]
+  }
+}

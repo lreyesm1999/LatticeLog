@@ -306,12 +306,16 @@ public sealed class EventGenerator : IIncrementalGenerator
             var type = method.ContainingType;
             m.Namespace = type.ContainingNamespace.IsGlobalNamespace ? "" : type.ContainingNamespace.ToDisplayString();
             var chain = new List<string>();
-            for (var t = type; t is not null; t = t.ContainingType)
+            // The method's own type, then each enclosing type. (A do/while, so the analysis does not read the loop's
+            // null test as a hint that `type` itself could be null: a method always has a containing type.)
+            var level = type;
+            do
             {
-                var kw = t.IsRecord ? (t.TypeKind == TypeKind.Struct ? "record struct" : "record") : t.TypeKind == TypeKind.Struct ? "struct" : t.TypeKind == TypeKind.Interface ? "interface" : "class";
-                var mods = t.IsStatic ? "static partial " : "partial ";
-                chain.Insert(0, mods + kw + " " + t.Name);
-            }
+                var kw = level.IsRecord ? (level.TypeKind == TypeKind.Struct ? "record struct" : "record") : level.TypeKind == TypeKind.Struct ? "struct" : level.TypeKind == TypeKind.Interface ? "interface" : "class";
+                var mods = level.IsStatic ? "static partial " : "partial ";
+                chain.Insert(0, mods + kw + " " + level.Name);
+                level = level.ContainingType;
+            } while (level is not null);
             m.TypeChain = chain;
             m.TypeKey = type.ToDisplayString();
             return m;
