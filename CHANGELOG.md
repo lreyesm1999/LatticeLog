@@ -15,6 +15,16 @@
     - thin scrollbars;
     - short entrance animations, turned off when the system asks for reduced motion.
   - **Phone width:** the tabs and level filters scroll sideways instead of widening the page.
+  - **Simpler search:**
+    - the box just says "Search logs…";
+    - **+ Filter** adds a filter without query syntax: pick Service, Event, Exception type or "Has a trace", then
+      one of the values found in the current results, with its count;
+    - filters show as readable chips ("Service: gateway");
+    - the syntax help is now a small **?** with four examples, and the full reference is folded away.
+  - **Infinite scroll** replaces "Load more":
+    - the next page loads as the list nears its end, with placeholder rows meanwhile;
+    - the list ends with "End of results · N events";
+    - a floating **Top** button (or `Home`) returns to the top.
 
 - **Faster web console and time histograms.**
   - **Time histograms** (`/v1/stats?bucket=`, `latticelog stats --bucket`) now count every block whose records all

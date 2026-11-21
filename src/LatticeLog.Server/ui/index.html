@@ -85,7 +85,7 @@
     <form id="query" class="querybar">
       <div class="search-box">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
-        <input id="where" spellcheck="false" placeholder="Search words, or filter: level >= ERROR AND service = 'orders-api'" aria-label="Search or filter">
+        <input id="where" spellcheck="false" placeholder="Search logs…" aria-label="Search logs (words, or a filter expression)">
         <button type="button" id="clear-where" class="ghost icon-btn small" title="Clear" aria-label="Clear search" hidden>×</button>
         <kbd title="Press / to focus">/</kbd>
       </div>
@@ -111,23 +111,33 @@
         <button type="button" data-level="WARN" class="lvl-warn">Warn+</button>
         <button type="button" data-level="ERROR" class="lvl-error">Errors</button>
       </div>
+      <div class="add-filter-wrap">
+        <button type="button" id="add-filter" class="add-filter" aria-haspopup="true" aria-expanded="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Filter
+        </button>
+        <div id="filter-menu" class="filter-menu card" role="dialog" aria-label="Add a filter" hidden></div>
+      </div>
       <div id="chips" class="chips"></div>
       <div class="spacer"></div>
-      <button type="button" id="help-toggle" class="ghost">Syntax help</button>
       <select id="order" aria-label="Order" class="compact">
         <option value="desc">Newest first</option>
         <option value="asc">Oldest first</option>
       </select>
+      <button type="button" id="help-toggle" class="ghost icon-btn help-btn" title="Search tips" aria-label="Search tips" aria-expanded="false">?</button>
     </div>
 
     <div id="help" class="card help" hidden>
       <div class="help-head">
-        <strong>Searching</strong>
-        <span class="muted">Plain words search the message, event name, attributes and exception text. Click an example to try it.</span>
+        <strong>Search tips</strong>
+        <span class="muted small">Type words to find them anywhere in an event. Click an example to try it.</span>
+        <button type="button" id="help-close" class="ghost icon-btn small" aria-label="Close tips">×</button>
       </div>
       <div class="examples" id="examples"></div>
-      <p class="muted small">Fields: <code>level</code> <code>service</code> <code>event</code> <code>message</code> <code>trace_id</code> <code>exception.type</code> <code>text</code> or any attribute name.
-        Operators: <code>=</code> <code>!=</code> <code>&gt;=</code> <code>CONTAINS</code> <code>STARTSWITH</code> <code>IN (…)</code> <code>EXISTS(field)</code>, joined with <code>AND</code> / <code>OR</code> / <code>NOT</code>.</p>
+      <details class="advanced">
+        <summary>Advanced: write your own filter</summary>
+        <p class="muted small">Fields: <code>level</code> <code>service</code> <code>event</code> <code>message</code> <code>trace_id</code> <code>exception.type</code> <code>text</code> or any attribute name.
+          Operators: <code>=</code> <code>!=</code> <code>&gt;=</code> <code>CONTAINS</code> <code>STARTSWITH</code> <code>IN (…)</code> <code>EXISTS(field)</code>, joined with <code>AND</code> / <code>OR</code> / <code>NOT</code>.</p>
+      </details>
     </div>
 
     <div id="histogram" class="histogram card" hidden>
@@ -156,7 +166,12 @@
         <div id="empty-actions" class="row-center"></div>
       </div>
     </div>
-    <div class="row-center"><button type="button" id="more" hidden>Load more</button></div>
+    <!-- Infinite scroll: reaching the sentinel loads the next page. -->
+    <div id="feed-end" class="feed-end" aria-live="polite"></div>
+    <div id="more-sentinel" class="sentinel" aria-hidden="true"></div>
+    <button type="button" id="to-top" class="to-top" title="Back to the top (Home)" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg><span>Top</span>
+    </button>
   </section>
 
   <section id="view-stats" hidden>

@@ -27,6 +27,7 @@ const state = {
   fallback: false,    // talking to a server or an older service without /v1/sources
   view: "search",
   cursor: null,
+  loadingMore: false, // the next page of the current search is being fetched (infinite scroll)
   events: [],
   selected: -1,
   level: "",
@@ -200,10 +201,24 @@ function renderChips() {
       h("button", { type: "button", "aria-label": "Remove time window", onclick: () => { state.zoom = null; renderChips(); runSearch(); } }, "×")));
   }
   for (const c of state.chips) {
-    box.append(h("span", { class: "chip" }, c.expr,
+    const [field, value] = chipLabel(c.expr);
+    box.append(h("span", { class: "chip", title: c.expr }, field ? h("span", { class: "chip-k", text: field }) : null, h("span", { class: value === c.expr ? "chip-x" : "chip-v", text: value }),
       h("button", { type: "button", "aria-label": `Remove filter ${c.expr}`, onclick: () => { state.chips = state.chips.filter((x) => x !== c); renderChips(); refreshView(); } }, "×")));
   }
 }
+/** A filter in words: "service = 'gateway'" → ["Service", "gateway"]; anything else is shown as written. */
+const FIELD_LABEL = { service: "Service", event: "Event", level: "Level", "exception.type": "Exception", trace_id: "Trace", message: "Message", text: "Text" };
+function chipLabel(expr) {
+  if (/^EXISTS\(trace_id\)$/i.test(expr)) return ["", "Has a trace"];
+  let m = /^([A-Za-z_][\w.]*|`[^`]+`) = '((?:[^']|'')*)'$/.exec(expr);
+  if (m) { const f = m[1].replace(/`/g, ""); return [FIELD_LABEL[f] || f, m[2].replace(/''/g, "'")]; }
+  m = /^([A-Za-z_][\w.]*|`[^`]+`) IS NULL$/.exec(expr);
+  if (m) { const f = m[1].replace(/`/g, ""); return [FIELD_LABEL[f] || f, "(none)"]; }
+  m = /^level (=|>=) (\w+)$/.exec(expr);
+  if (m) return ["Level", m[1] === "=" ? m[2] : `${m[2]} and above`];
+  return ["", expr];
+}
+
 function clearFilters() {
   $("where").value = "";
   state.chips = [];
@@ -345,7 +360,9 @@ function showNoSource() {
   $("summary-count").textContent = "";
   $("summary-meta").textContent = "";
   $("notice").hidden = true;
-  $("more").hidden = true;
+  state.cursor = null;
+  state.events = [];
+  feedEnd();
   $("loading").hidden = true;
   if (state.namespaces.length) {
     showEmpty("Choose a source", `${num(state.namespaces.length)} sources have logs. Pick one in the explorer, or press Ctrl+K and type its name.`,
@@ -371,22 +388,32 @@ function notice(text, kind = "") {
   $("notice").textContent = text || "";
 }
 
+/**
+ * A new search (more = false) or the next page of the current one (more = true). Pages load by themselves as the
+ * list scrolls near its end (infinite scroll), shown meanwhile as placeholder rows at the bottom.
+ */
 async function runSearch(more = false, note = null) {
   if (!state.ns) { showNoSource(); return; }
+  if (more && (state.loadingMore || !state.cursor)) return;
   const seq = more ? state.seq : ++state.seq;
   const tbody = $("events").tBodies[0];
+  let pending = [];
   if (!more) {
     state.cursor = null;
     state.events = [];
     state.selected = -1;
     tbody.replaceChildren(...skeletonRows(8));
-    $("more").hidden = true;
     $("empty").hidden = true;
     notice(note, "info");
     $("summary-count").textContent = "";
     $("summary-meta").textContent = "";
+  } else {
+    state.loadingMore = true;
+    pending = skeletonRows(3);
+    tbody.append(...pending);
   }
-  $("loading").hidden = !more; // a new search shows placeholder rows instead
+  feedEnd();
+  $("loading").hidden = true;
   const where = buildWhere();
   const scope = timeScope();
   if (!more) histogram(where, scope, seq);
@@ -394,13 +421,11 @@ async function runSearch(more = false, note = null) {
     const res = await api("/v1/search", { where, ...scope.params, order: $("order").value, limit: 100, cursor: more ? state.cursor : null });
     if (seq !== state.seq) return;
     if (!more) tbody.replaceChildren();
-    for (const e of res.events) {
-      const i = state.events.push(e) - 1;
-      tbody.append(eventRow(e, i));
-    }
+    for (const r of pending) r.remove();
+    const rows = res.events.map((e) => eventRow(e, state.events.push(e) - 1));
+    tbody.append(...rows);
     const c = res.coverage;
     state.cursor = c.next_cursor || null;
-    $("more").hidden = !state.cursor;
     if (!state.histTotal) $("summary-count").textContent = `${num(state.events.length)} event${state.events.length === 1 ? "" : "s"}${state.cursor ? "+" : ""}`;
     $("summary-meta").textContent = `${rangeText()} · ${res.stats.elapsed_ms} ms`;
     const warn = [];
@@ -409,9 +434,12 @@ async function runSearch(more = false, note = null) {
     if (warn.length) notice(warn.join(" "));
     if (!more && state.events.length === 0) emptyResults();
     if (state.selected >= 0 && more) selectEvent(state.selected + 1);
+    feedEnd();
   } catch (err) {
     if (seq !== state.seq) return;
-    if (!more) tbody.replaceChildren();
+    for (const r of pending) r.remove();
+    if (more) { feedEnd(`Could not load more events: ${err.message}`); return; }
+    tbody.replaceChildren();
     if (err.status === 401) { showConnect("The token is no longer accepted."); return; }
     const text = $("where").value.trim();
     const actions = [];
@@ -419,9 +447,33 @@ async function runSearch(more = false, note = null) {
     actions.push(["Syntax help", () => { $("help").hidden = false; }, true]);
     showEmpty("This search could not run", err.message, actions);
   } finally {
-    if (seq === state.seq) $("loading").hidden = true;
+    if (more) state.loadingMore = false;
+    // The page may still not fill the screen (or the user kept scrolling): keep going while the end is in view.
+    requestAnimationFrame(checkSentinel);
   }
 }
+
+/** The line under the results: the end of the list, or why the next page did not load (with a retry). */
+function feedEnd(error = null) {
+  const box = $("feed-end");
+  box.classList.toggle("error", Boolean(error));
+  if (error) {
+    box.replaceChildren(h("span", { text: error }), h("button", { type: "button", class: "small", onclick: () => { feedEnd(); runSearch(true); } }, "Retry"));
+    return;
+  }
+  const n = state.events.length;
+  if (state.cursor || n < 30 || state.loadingMore) { box.replaceChildren(); return; }
+  box.replaceChildren(h("span", { class: "end-line", text: `End of results · ${num(n)} event${n === 1 ? "" : "s"}` }),
+    h("button", { type: "button", class: "ghost small", onclick: scrollToTop }, "Back to top"));
+}
+
+/** Loads the next page when the end of the list is within about a screen of the viewport. */
+function checkSentinel() {
+  if (state.view !== "search" || !state.cursor || state.loadingMore || $("app").hidden || $("feed-end").classList.contains("error")) return;
+  if ($("more-sentinel").getBoundingClientRect().top < window.innerHeight + 900) runSearch(true);
+}
+
+function scrollToTop() { window.scrollTo({ top: 0, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }); }
 
 /** Grey shimmering rows shaped like results, shown while a new search runs. */
 function skeletonRows(n) {
@@ -1400,7 +1452,7 @@ function syncTabs() {
   for (const v of ["sources", "search", "stats", "catalog"]) $("view-" + v).hidden = v !== view;
   $("source-span").hidden = view === "sources";
   $("source-btn").classList.toggle("active", view === "sources");
-  if (view !== "search") closeDetail();
+  if (view !== "search") { closeDetail(); $("to-top").hidden = true; }
 }
 
 function switchView(view) {
@@ -1422,16 +1474,102 @@ function refreshView(note) {
 }
 
 const EXAMPLES = [
-  ["timeout", "plain text"],
-  ["level >= ERROR", "errors and fatals"],
-  ["service = 'orders-api'", "one service"],
-  ["message CONTAINS 'payment'", "in the message"],
+  ["timeout", "a word anywhere"],
+  ["\"connection refused\"", "an exact phrase"],
+  ["level >= ERROR", "errors only"],
   ["exception.type CONTAINS 'Timeout'", "by exception"],
-  ["event IN ('OrderPlaced', 'OrderFailed')", "several events"],
-  ["EXISTS(trace_id) AND level >= WARN", "traced warnings"],
-  ["NOT service = 'health-check'", "exclude"],
 ];
 $("examples").replaceChildren(...EXAMPLES.map(([q, why]) => h("button", { type: "button", onclick: () => { $("where").value = q; syncClear(); runSearch(); } }, q, h("span", { text: why }))));
+
+// ------------------------------------------------------------------ guided filters (+ Filter)
+
+// Pick a field, then one of the values present in the current results (with counts): no query syntax needed.
+const FILTER_FIELDS = [
+  { label: "Service", by: "service", field: "service", hint: "Which service wrote the event" },
+  { label: "Event", by: "event", field: "event", hint: "The event name" },
+  { label: "Exception type", by: "exception.type", field: "exception.type", hint: "Events that carry an exception" },
+  { label: "Has a trace", expr: "EXISTS(trace_id)", hint: "Events that belong to a distributed trace" },
+];
+const fmenu = { field: null, values: [], sel: 0 };
+
+function openFilterMenu() {
+  fmenu.field = null;
+  renderFilterMenu();
+  $("filter-menu").hidden = false;
+  $("add-filter").setAttribute("aria-expanded", "true");
+}
+function closeFilterMenu() {
+  $("filter-menu").hidden = true;
+  $("add-filter").setAttribute("aria-expanded", "false");
+}
+
+function renderFilterMenu() {
+  const box = $("filter-menu");
+  if (!fmenu.field) {
+    box.replaceChildren(h("div", { class: "fm-title", text: "Filter by" }),
+      ...FILTER_FIELDS.map((f) => h("button", { type: "button", class: "fm-field", onclick: () => pickFilterField(f) },
+        h("span", { class: "fm-name", text: f.label }), h("span", { class: "fm-hint", text: f.hint }))));
+    box.querySelector("button")?.focus();
+    return;
+  }
+  const f = fmenu.field;
+  const input = h("input", { class: "fm-search", placeholder: "Type to narrow the list…", spellcheck: "false", "aria-label": `Find a value of ${f.label}` });
+  const list = h("div", { class: "fm-list", role: "listbox" }, h("div", { class: "loading small" }, h("span", { class: "spinner" }), "Counting…"));
+  box.replaceChildren(
+    h("div", { class: "fm-head" }, h("button", { type: "button", class: "ghost icon-btn small", "aria-label": "Back", onclick: () => { fmenu.field = null; renderFilterMenu(); } }, "‹"),
+      h("span", { class: "fm-title", text: f.label })),
+    input, list);
+  input.addEventListener("input", () => { fmenu.sel = 0; renderFilterValues(list, input.value); });
+  input.addEventListener("keydown", (ev) => {
+    const n = list.querySelectorAll(".fm-value").length;
+    if (ev.key === "ArrowDown" || ev.key === "ArrowUp") { ev.preventDefault(); if (n) { fmenu.sel = (fmenu.sel + (ev.key === "ArrowDown" ? 1 : -1) + n) % n; markFilterValues(list); } }
+    else if (ev.key === "Enter") { ev.preventDefault(); list.querySelectorAll(".fm-value")[fmenu.sel]?.click(); }
+  });
+  input.focus();
+  const scope = timeScope();
+  const where = buildWhere();
+  cachedApi("/v1/stats", { by: f.by, where, ...scope.params, top: 200 }).then((res) => {
+    if (fmenu.field !== f || $("filter-menu").hidden) return;
+    fmenu.values = res.groups;
+    fmenu.total = res.total;
+    renderFilterValues(list, input.value);
+  }).catch((err) => { if (fmenu.field === f) list.replaceChildren(h("p", { class: "muted small fm-empty", text: `Could not count: ${err.message}` })); });
+}
+
+function pickFilterField(f) {
+  if (f.expr) { closeFilterMenu(); addChip(f.expr); runSearch(); return; }
+  fmenu.field = f; fmenu.values = []; fmenu.sel = 0;
+  renderFilterMenu();
+}
+
+function renderFilterValues(list, q) {
+  const f = fmenu.field;
+  const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const values = fmenu.values.filter((g) => words.every((w) => String(g.key).toLowerCase().includes(w)));
+  if (!values.length) {
+    list.replaceChildren(h("p", { class: "muted small fm-empty", text: fmenu.values.length ? "Nothing matches." : `No ${f.label.toLowerCase()} in these results.` }));
+    return;
+  }
+  const max = Math.max(1, ...values.map((g) => g.count));
+  list.replaceChildren(...values.slice(0, 100).map((g) => {
+    const none = g.key === "(none)" || g.key === "(missing)";
+    const fill = h("span", { class: "fm-fill" });
+    fill.style.width = `${(100 * g.count) / max}%`;
+    return h("button", { type: "button", class: "fm-value", role: "option", onclick: () => {
+      closeFilterMenu();
+      addChip(none ? `${f.field} IS NULL` : `${f.field} = ${quote(g.key)}`); // the fields above are plain query names
+      runSearch();
+    } }, fill, h("span", { class: "fm-v" + (none ? " muted" : ""), text: none ? "(none)" : g.key }), h("span", { class: "fm-n", text: compact(g.count) }));
+  }));
+  markFilterValues(list);
+}
+
+function markFilterValues(list) {
+  list.querySelectorAll(".fm-value").forEach((b, i) => { b.classList.toggle("sel", i === fmenu.sel); if (i === fmenu.sel) b.scrollIntoView({ block: "nearest" }); });
+}
+
+$("add-filter").addEventListener("click", () => { if ($("filter-menu").hidden) openFilterMenu(); else closeFilterMenu(); });
+document.addEventListener("mousedown", (ev) => { if (!$("filter-menu").hidden && !ev.target.closest(".add-filter-wrap")) closeFilterMenu(); });
 
 $("auth").addEventListener("submit", (ev) => {
   ev.preventDefault();
@@ -1501,8 +1639,22 @@ $("range").addEventListener("change", () => {
 $("since-custom").addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); runSearch(); } });
 $("order").addEventListener("change", () => { savePrefs(); runSearch(); });
 for (const b of $("levels").children) b.addEventListener("click", () => { setLevel(b.dataset.level); runSearch(); });
-$("help-toggle").addEventListener("click", () => { $("help").hidden = !$("help").hidden; });
-$("more").addEventListener("click", () => runSearch(true));
+$("help-toggle").addEventListener("click", () => { $("help").hidden = !$("help").hidden; $("help-toggle").setAttribute("aria-expanded", String(!$("help").hidden)); });
+$("help-close").addEventListener("click", () => { $("help").hidden = true; $("help-toggle").setAttribute("aria-expanded", "false"); });
+// Infinite scroll: the sentinel under the results comes within reach of the viewport.
+if ("IntersectionObserver" in window) {
+  new IntersectionObserver((entries) => { if (entries.some((e) => e.isIntersecting)) checkSentinel(); }, { rootMargin: "0px 0px 900px 0px" }).observe($("more-sentinel"));
+}
+let topRaf = 0;
+window.addEventListener("scroll", () => {
+  if (topRaf) return;
+  topRaf = requestAnimationFrame(() => {
+    topRaf = 0;
+    $("to-top").hidden = !(state.view === "search" && window.scrollY > 1200);
+    checkSentinel(); // also covers browsers without IntersectionObserver
+  });
+}, { passive: true });
+$("to-top").addEventListener("click", scrollToTop);
 
 for (const b of $("groupby").children) b.addEventListener("click", () => { state.statsBy = b.dataset.by; savePrefs(); stats(); });
 $("stats-refresh").addEventListener("click", () => { dropStatsCache(); stats(); });
@@ -1523,6 +1675,7 @@ document.addEventListener("keydown", (ev) => {
     return;
   }
   if (ev.key === "Escape" && !$("palette").hidden) { closePalette(); return; }
+  if (ev.key === "Escape" && !$("filter-menu").hidden) { closeFilterMenu(); $("add-filter").focus(); return; }
   if (ev.key === "Escape") {
     if (typing) { ev.target.blur(); return; }
     if (!$("detail").hidden) closeDetail();
@@ -1540,6 +1693,7 @@ document.addEventListener("keydown", (ev) => {
     return;
   }
   if (ev.key === "/") { ev.preventDefault(); if (state.view !== "search") switchView("search"); $("where").focus(); $("where").select(); }
+  else if (state.view === "search" && ev.key === "Home" && !(ev.target instanceof HTMLButtonElement)) { ev.preventDefault(); scrollToTop(); }
   else if (state.view === "search" && (ev.key === "j" || ev.key === "ArrowDown")) { ev.preventDefault(); selectEvent(state.selected + 1); }
   else if (state.view === "search" && (ev.key === "k" || ev.key === "ArrowUp")) { ev.preventDefault(); if (state.selected > 0) selectEvent(state.selected - 1); }
 });
