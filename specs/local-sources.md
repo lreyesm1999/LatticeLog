@@ -294,12 +294,33 @@ One port carries two protocols, told apart by the first byte:
 
 - **Line protocol** (first byte `{`).
   1. The client sends one JSON line:
-     `{"latticelog":"service/1","token":"…","op":"mcp|status|stop|ping|refresh|maintenance","project_dir":"…","config_dir":"…"}`.
+     `{"latticelog":"service/1","token":"…","op":"mcp|status|stop|ping|refresh|maintenance|config","project_dir":"…","config_dir":"…"}`.
   2. The service answers one line: `{"ok":true,…}` or `{"ok":false,"error":"…","message":"…"}`. It refuses a wrong
      token, or a config folder that differs from its own.
   3. After `mcp`, the connection carries MCP JSON-RPC lines both ways. They are served by the same `McpServer` as
      in-process mode, so tools, limits and results are the same. `list_sources` reports `"served_by":"service"` (or
      `"in-process"`).
+  4. `config` carries one change to `config.json` in `"edit"`. The kinds are:
+     - `{"kind":"folder","list":"roots|allow","action":"add|remove","folder":"<absolute>"}`;
+     - `{"kind":"retention","name":"…","max_age":"30d","max_mb":N,"clear":false}`;
+     - `{"kind":"get"}`.
+
+     The service applies it to the file it reads and answers `{"ok":true,"changed":…,"config":{path, roots, allow,
+     retention}}`. A malformed edit gets `bad_request`.
+
+### Config changes go through the service
+
+`latticelog roots|allow add|remove|list` and `latticelog sources retention` send their change to the running service,
+which writes its own `config.json`. They write the file themselves only when no service answers, or when the service
+predates the `config` operation. Its catalogs reopen when the file changes.
+
+The reason is Windows packaged apps. A command started from inside an MSIX or Store app, such as Claude Desktop or a
+terminal it opens, gets its writes to `%APPDATA%` redirected to the package's private copy
+(`%LOCALAPPDATA%\Packages\<package>\LocalCache\Roaming\…`). The service is started by the Task Scheduler outside the
+package, so it would never see such a change. When a command does write the file itself, it checks afterwards whether
+the write landed in some package's `LocalCache` copy. It checks by effect, because processes such an app starts can be
+redirected while `GetCurrentPackageFullName` reports no package. If the write was redirected, the command prints a
+warning with the exact redirected path and how to apply the change where the service reads it.
 - **HTTP** (`GET`/`HEAD`).
   - `/ui` serves the web console.
   - The read API the console uses treats each source as a namespace: `/v1/namespaces`, `/v1/search`,
@@ -314,7 +335,10 @@ One port carries two protocols, told apart by the first byte:
 
 `latticelog mcp` reads the endpoint file and connects. When no service answers, it starts one and waits up to 15 s:
 
-- **Registered:** through the registration (`schtasks /Run`, `systemctl --user start`, `launchctl kickstart`).
+- **Registered:** through the registration (`schtasks /Run`, `systemctl --user start`, `launchctl kickstart`). The
+  OS starts that service with the per-user default folders, so this path is taken only when the caller uses them too.
+  A caller with `--config-dir`, `LATTICELOG_CONFIG_DIR` or `LATTICELOG_DATA_DIR` (tests, portable use) starts its own
+  detached process instead of waking the user's service and waiting for an endpoint that never appears.
 - **Not registered:** as a detached process. On Windows this is a ShellExecute that inherits no handles; on Unix,
   `nohup` with `/dev/null` streams. The client's stdio pipes must not leak into a process that outlives the shim.
 
@@ -340,8 +364,14 @@ When stdin closes, the shim answers the requests already sent before it exits.
 | macOS | `launchd` | `~/Library/LaunchAgents/dev.latticelog.service.plist` (`RunAtLoad`, `KeepAlive` on failure) | `launchctl bootstrap` / `kickstart` |
 
 `latticelogw.exe` is a copy of the executable with its PE subsystem field set to GUI (like `pythonw.exe`), so the
-service runs without a console window. `service install --dry-run` prints the plan and the files it would write, and
-changes nothing. `service uninstall` stops the service and removes the registration; the data folder stays.
+service runs without a console window.
+
+`setup` copies the new executable over the installed one. On Windows a running executable (an editor keeps
+`latticelog.exe mcp` open) cannot be overwritten but can be renamed. So the old file is moved aside as
+`latticelog.exe.old-<timestamp>`, and later setups (and `setup --uninstall`) delete those copies once nothing runs them.
+`latticelogw.exe` is refreshed the same way.
+
+`service install --dry-run` prints the plan and the files it would write, and changes nothing. `service uninstall` stops the service and removes the registration; the data folder stays.
 
 ### Health
 

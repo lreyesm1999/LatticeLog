@@ -100,6 +100,143 @@ public sealed class UserConfig
     }
 }
 
+/// <summary>
+/// One change to the per-user config, as JSON, applied the same way by the CLI and by the background service. When a
+/// service runs, the CLI sends the change to it instead of writing <c>config.json</c> itself: a CLI started from a
+/// packaged (MSIX) app such as Claude Desktop would otherwise write into that package's private copy of AppData, which
+/// the service, started by the OS outside the package, never reads.
+/// </summary>
+public static class ConfigEdit
+{
+    public static JsonObject Get() => new() { ["kind"] = "get" };
+
+    /// <param name="list"><c>roots</c> or <c>allow</c>.</param>
+    /// <param name="action"><c>add</c> or <c>remove</c>.</param>
+    /// <param name="folder">An absolute folder (resolve relative paths before sending: the service's directory differs).</param>
+    public static JsonObject Folder(string list, string action, string folder) =>
+        new() { ["kind"] = "folder", ["list"] = list, ["action"] = action, ["folder"] = folder };
+
+    public static JsonObject Retention(string name, string? maxAge, long? maxMb, bool clear) =>
+        new() { ["kind"] = "retention", ["name"] = name, ["max_age"] = maxAge, ["max_mb"] = maxMb, ["clear"] = clear };
+
+    /// <summary>Applies <paramref name="edit"/> and saves when something changed. Throws <see cref="ArgumentException"/> on a malformed edit.</summary>
+    public static bool Apply(UserConfig config, JsonObject edit)
+    {
+        bool changed;
+        switch ((string?)edit["kind"])
+        {
+            case "get":
+                return false;
+            case "folder":
+                {
+                    var list = (string?)edit["list"] switch
+                    {
+                        "roots" => config.Roots,
+                        "allow" => config.Allow,
+                        var l => throw new ArgumentException($"unknown folder list '{l}'"),
+                    };
+                    var folder = (string?)edit["folder"] is { Length: > 0 } f && System.IO.Path.IsPathFullyQualified(f)
+                        ? f : throw new ArgumentException("'folder' must be an absolute path");
+                    changed = (string?)edit["action"] switch
+                    {
+                        "add" => UserConfig.AddFolder(list, folder),
+                        "remove" => UserConfig.RemoveFolder(list, folder),
+                        var x => throw new ArgumentException($"unknown action '{x}'"),
+                    };
+                    break;
+                }
+            case "retention":
+                {
+                    var name = (string?)edit["name"] is { Length: > 0 } n ? n : throw new ArgumentException("'name' is required");
+                    if ((bool?)edit["clear"] == true) changed = config.Retention.Remove(name);
+                    else
+                    {
+                        var setting = new RetentionSetting((string?)edit["max_age"], (long?)edit["max_mb"]);
+                        if (setting.MaxAge is null && setting.MaxMb is null) throw new ArgumentException("retention needs max_age and/or max_mb");
+                        if (setting.MaxAge is not null) _ = Durations.Parse(setting.MaxAge);
+                        if (setting.MaxMb is <= 0) throw new ArgumentException("max_mb must be positive");
+                        changed = !config.Retention.TryGetValue(name, out var old) || old != setting;
+                        config.Retention[name] = setting;
+                    }
+                    break;
+                }
+            default:
+                throw new ArgumentException($"unknown config edit '{(string?)edit["kind"]}'");
+        }
+        if (changed) config.Save();
+        return changed;
+    }
+
+    /// <summary>The parts of the config a caller shows back (folder lists and retention).</summary>
+    public static JsonObject Snapshot(UserConfig config)
+    {
+        var ret = new JsonObject();
+        foreach (var (name, r) in config.Retention.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+            ret[name] = new JsonObject { ["max_age"] = r.MaxAge, ["max_mb"] = r.MaxMb };
+        return new JsonObject
+        {
+            ["path"] = config.Path,
+            ["roots"] = new JsonArray(config.Roots.Select(r => (JsonNode?)JsonValue.Create(r)).ToArray()),
+            ["allow"] = new JsonArray(config.Allow.Select(r => (JsonNode?)JsonValue.Create(r)).ToArray()),
+            ["retention"] = ret,
+        };
+    }
+}
+
+/// <summary>
+/// Windows packaged (MSIX / Store) apps get their AppData writes redirected to a private copy. This is detected by effect,
+/// not by asking for a package identity: processes such an app starts are redirected while
+/// <c>GetCurrentPackageFullName</c> still reports no package.
+/// </summary>
+public static class PackageContext
+{
+    /// <summary>
+    /// After writing <paramref name="path"/> (under %APPDATA% or %LOCALAPPDATA%), the package-private copy Windows
+    /// redirected that write to, or null when the write landed where it was aimed. Checked by effect rather than by
+    /// identity: processes an app such as Claude Desktop starts (its terminals, its MCP servers) can have their AppData
+    /// writes redirected while <c>GetCurrentPackageFullName</c> still reports no package.
+    /// </summary>
+    public static string? RedirectedCopy(string path, DateTime writtenAfterUtc) => !OperatingSystem.IsWindows() ? null
+        : RedirectedCopy(path, writtenAfterUtc,
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData, Environment.SpecialFolderOption.DoNotVerify),
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.DoNotVerify));
+
+    /// <summary>Testable form: <paramref name="roaming"/> and <paramref name="local"/> stand for %APPDATA% and %LOCALAPPDATA%.</summary>
+    public static string? RedirectedCopy(string path, DateTime writtenAfterUtc, string roaming, string local)
+    {
+        var full = System.IO.Path.GetFullPath(path);
+        string? kind = null, relative = null;
+        foreach (var (folder, name) in new[] { (roaming, "Roaming"), (local, "Local") })
+            if (folder.Length > 0 && PathPolicy.IsUnder(full, PathPolicy.Normalize(folder)))
+            {
+                kind = name;
+                relative = System.IO.Path.GetRelativePath(folder, full);
+                break;
+            }
+        var packages = System.IO.Path.Combine(local, "Packages");
+        if (kind is null || relative is null || !Directory.Exists(packages)) return null;
+        foreach (var dir in Directory.EnumerateDirectories(packages))
+        {
+            var candidate = System.IO.Path.Combine(dir, "LocalCache", kind, relative);
+            try
+            {
+                if (File.Exists(candidate) && File.GetLastWriteTimeUtc(candidate) >= writtenAfterUtc) return candidate;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Another app's package folder we may not read: it cannot hold our redirected file, so skip it.
+                continue;
+            }
+        }
+        return null;
+    }
+
+    public static string Warning(string path, string redirectedTo) =>
+        $"warning: Windows stored this change in a packaged app's private copy ({redirectedTo}), not in {path}. " +
+        "A LatticeLog service started by Windows does not see it. Start the service ('latticelog service start') and run " +
+        "the command again, so the service writes the change itself, or run the command from your own terminal.";
+}
+
 /// <summary>Retention for one source: maximum age (<c>30d</c>, <c>12h</c>) and/or maximum size in MiB.</summary>
 public sealed record RetentionSetting(string? MaxAge, long? MaxMb)
 {

@@ -2,6 +2,15 @@
 
 ## Unreleased — public repository under the MIT license
 
+- **Fixed (found on a real Windows install):**
+  - `roots`/`allow` changes made from inside a packaged app (such as Claude Desktop) never reached the service. Windows
+    redirected the write into the app's private copy of AppData. Config commands now send the change to the running
+    service, which writes the file it reads (new line-protocol operation `config`), and warn when they write from
+    inside a package.
+  - `setup` failed with "access denied" while an editor was running `latticelog.exe mcp`. It now moves the running
+    executable aside and cleans the old copy up later.
+  - With `LATTICELOG_CONFIG_DIR`/`LATTICELOG_DATA_DIR` or `--config-dir` set, the MCP shim woke the user's registered
+    service and waited about 15 s for it. It now starts its own.
 - **Install once: background service and single-file install** ([`specs/local-sources.md` §6](specs/local-sources.md#6-background-service),
   new library `LatticeLog.Service`, README "Install once"):
   - `latticelog service run|start|stop|restart|status|install|uninstall|ui`: one per-user process on 127.0.0.1

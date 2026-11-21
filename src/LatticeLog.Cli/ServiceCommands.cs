@@ -16,7 +16,7 @@ public static class ServiceCommands
 {
     private static readonly JsonSerializerOptions Indented = new() { WriteIndented = true };
 
-    private static string? ConfigDir(Args a) => a.Get("config-dir") is { } d ? Path.GetFullPath(d) : null;
+    internal static string? ConfigDir(Args a) => a.Get("config-dir") is { } d ? Path.GetFullPath(d) : null;
 
     public static int Service(Args a)
     {
@@ -369,11 +369,15 @@ public static class ServiceCommands
         {
             if (ServiceClient.Stop(configDir, TimeSpan.FromSeconds(30))) Console.WriteLine("Stopped the running service to replace its executable.");
             Directory.CreateDirectory(installDir);
+            ServiceLauncher.DeleteOldCopies(installDir);
             var tmp = target + ".new";
             File.Copy(self, tmp, overwrite: true);
             if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(tmp, (UnixFileMode)0b111_101_101);
-            File.Move(tmp, target, overwrite: true);
+            // An editor may be running 'latticelog.exe mcp' right now: then the old file is moved aside, not overwritten.
+            var aside = ServiceLauncher.ReplaceFile(tmp, target);
             Console.WriteLine($"Installed {target}.");
+            if (aside is not null)
+                Console.WriteLine($"  The previous version is still running (an MCP client, probably): it was moved to {Path.GetFileName(aside)} and is removed by the next setup once it has exited. Restart your AI tools to load the new version.");
         }
         WriteShortAlias(installDir);
         // 2. PATH
@@ -477,7 +481,9 @@ public static class ServiceCommands
             catch (CliException ex) { Console.Error.WriteLine($"{c}: {ex.Message}"); }
         }
         RemoveFromPath(installDir);
-        var files = new[] { ExeName, OperatingSystem.IsWindows() ? "latticelogw.exe" : null }.Concat(ShortAliasFiles).Where(f => f is not null).Select(f => Path.Combine(installDir, f!)).Where(File.Exists).ToList();
+        var oldCopies = Directory.Exists(installDir) ? Directory.EnumerateFiles(installDir, "*.old-*").Select(Path.GetFileName) : [];
+        var files = new[] { ExeName, OperatingSystem.IsWindows() ? "latticelogw.exe" : null }.Concat(ShortAliasFiles).Concat(oldCopies)
+            .Where(f => f is not null).Select(f => Path.Combine(installDir, f!)).Where(File.Exists).ToList();
         var self = Environment.ProcessPath is { } p ? Path.GetFullPath(p) : "";
         var later = new List<string>();
         foreach (var f in files)
@@ -510,18 +516,19 @@ public static class ServiceCommands
     /// <summary><c>latticelog sources retention [&lt;name&gt;|*] [--max-age 30d] [--max-mb N] [--clear]</c></summary>
     public static int Retention(Args a)
     {
-        var config = UserConfig.Load(ConfigDir(a));
         var name = a.Positional.ElementAtOrDefault(1);
         if (name is null)
         {
-            if (config.Retention.Count == 0) Console.WriteLine("No retention configured: LatticeLog's indexes and migrated sources keep everything.");
-            foreach (var (k, v) in config.Retention.OrderBy(kv => kv.Key, StringComparer.Ordinal)) Console.WriteLine($"{(k == "*" ? "* (default)" : k),-24} {v}");
+            var (_, config) = SourceCommands.EditConfig(a, ConfigEdit.Get());
+            var entries = (config["retention"] as JsonObject ?? []).OrderBy(kv => kv.Key, StringComparer.Ordinal).ToList();
+            if (entries.Count == 0) Console.WriteLine("No retention configured: LatticeLog's indexes and migrated sources keep everything.");
+            foreach (var (k, v) in entries)
+                Console.WriteLine($"{(k == "*" ? "* (default)" : k),-24} {new RetentionSetting((string?)v?["max_age"], (long?)v?["max_mb"])}");
             return ExitCodes.Ok;
         }
         if (a.Has("clear"))
         {
-            var removed = config.Retention.Remove(name);
-            config.Save();
+            var (removed, _) = SourceCommands.EditConfig(a, ConfigEdit.Retention(name, null, null, clear: true));
             Console.WriteLine(removed ? $"Retention for {name} removed." : $"No retention was set for {name}.");
             return ExitCodes.Ok;
         }
@@ -530,9 +537,8 @@ public static class ServiceCommands
         if (age is null && mb is null) throw new CliException(ExitCodes.Usage, "Usage: latticelog sources retention <name|*> --max-age 30d and/or --max-mb N (or --clear)");
         if (age is not null) _ = Durations.Parse(age);
         if (mb is <= 0) throw new CliException(ExitCodes.Usage, "--max-mb must be positive.");
-        config.Retention[name] = new RetentionSetting(age, mb);
-        config.Save();
-        Console.WriteLine($"Retention for {(name == "*" ? "all sources (default)" : name)}: {config.Retention[name]}. Applied by the background service to LatticeLog's own copies (indexes, migrated sources), never to your original files or .NET stores.");
+        SourceCommands.EditConfig(a, ConfigEdit.Retention(name, age, mb, clear: false));
+        Console.WriteLine($"Retention for {(name == "*" ? "all sources (default)" : name)}: {new RetentionSetting(age, mb)}. Applied by the background service to LatticeLog's own copies (indexes, migrated sources), never to your original files or .NET stores.");
         return ExitCodes.Ok;
     }
 }
