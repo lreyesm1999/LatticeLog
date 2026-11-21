@@ -98,9 +98,19 @@ latticelog trace  demo-store --trace-id <id printed by step 1> --format markdown
 ```
 
 The [tutorial](docs/guides/getting-started.md) walks through the same incident step by step, then connects your
-coding agent. To install the CLI once as a single executable (no .NET needed to run it), download it from
-[Releases](https://github.com/lreyesm1999/LatticeLog/releases) (Windows x64, Linux x64) and run `latticelog setup`:
-see [Install](docs/guides/install.md).
+coding agent. To install the CLI once as a single executable (no .NET, no administrator rights), run one line. It
+downloads the newest [release](https://github.com/lreyesm1999/LatticeLog/releases) (Windows x64, Linux x64), checks
+it against `SHA256SUMS` and runs `latticelog setup`:
+
+```powershell
+irm https://raw.githubusercontent.com/lreyesm1999/LatticeLog/main/scripts/install.ps1 | iex   # Windows
+```
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lreyesm1999/LatticeLog/main/scripts/install.sh | sh   # Linux
+```
+
+See [Install](docs/guides/install.md) for options, updates and uninstalling.
 
 ### Use it in your app
 
