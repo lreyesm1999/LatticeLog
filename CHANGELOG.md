@@ -2,6 +2,11 @@
 
 ## Unreleased — public repository under the MIT license
 
+- **`llog update`** installs the newest GitHub release: it downloads the executable for the platform and `SHA256SUMS`,
+  refuses a hash mismatch, and runs the new version's own `setup`. Data, config and MCP entries are kept. `--check`
+  only reports; `--version` and `--prerelease` pick a release. New workflow `release.yml` publishes a release (Native
+  AOT executables for Windows x64 and Linux x64, plus `SHA256SUMS`) when a `v*` tag is pushed. A hyphenated tag
+  becomes a pre-release. `latticelog --version` now reports the version the executable was built as.
 - **Fixed (found on a real Windows install):**
   - `roots`/`allow` changes made from inside a packaged app (such as Claude Desktop) never reached the service. Windows
     redirected the write into the app's private copy of AppData. Config commands now send the change to the running

@@ -56,7 +56,8 @@ public sealed class Args
     }
 
     private static readonly HashSet<string> Flags = ["follow", "no-index", "force", "stdout", "pretty", "help", "preserve-raw", "no-redact", "desc", "explain", "preview", "yes", "dry-run", "no-refresh",
-        "no-service", "no-start", "no-project", "no-path", "open", "no-open", "verbose", "uninstall", "remove-data", "clear"];
+        "no-service", "no-start", "no-project", "no-path", "open", "no-open", "verbose", "uninstall", "remove-data", "clear",
+        "check", "prerelease"];
 
     /// <summary>One-letter forms of common flags: <c>llog ui -o</c>, <c>-h</c>, <c>-y</c>.</summary>
     private static readonly Dictionary<char, string> ShortFlags = new() { ['o'] = "open", ['h'] = "help", ['y'] = "yes" };
@@ -76,7 +77,13 @@ public sealed class Args
 
 public static class Program
 {
-    public const string Version = "0.1.0-alpha.1";
+    /// <summary>
+    /// The version this executable was built as: <c>Version</c> in Directory.Build.props, or the release tag the release
+    /// workflow passes with <c>-p:Version=…</c>. Read from the assembly so <c>latticelog update</c> compares real builds.
+    /// </summary>
+    public static readonly string Version =
+        (System.Reflection.CustomAttributeExtensions.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>(typeof(Program).Assembly)
+            ?.InformationalVersion ?? "0.0.0").Split('+')[0];
 
     private static readonly Dictionary<string, string> Help = new()
     {
@@ -109,6 +116,7 @@ public static class Program
         ["mcp uninstall"] = "mcp uninstall --client claude-desktop|claude-code|cursor|vscode [--scope user|project]",
         ["ui"] = "ui [-o] [--no-open]                 Open the web console in your browser (starts the service if needed). Short: llog ui.",
         ["service"] = "service status|start|stop|restart|install|uninstall|ui [--open]|run [--port N] [--verbose]   Per-user background service on 127.0.0.1.",
+        ["update"] = "update [--check] [--version X] [--prerelease] [--force] [-y]   Install the newest GitHub release (checksum verified); keeps data, config and MCP entries.",
         ["setup"] = "setup [--clients a,b|none] [--install-dir DIR] [--no-service] [--no-path] [--method task|run-key] | setup --uninstall [--remove-data]",
     };
 
@@ -151,6 +159,7 @@ public static class Program
                 "mcp" => SourceCommands.Mcp(args),
                 "service" => ServiceCommands.Service(args),
                 "ui" => ServiceCommands.OpenUi(args),
+                "update" => UpdateCommands.Update(args),
                 "setup" => ServiceCommands.Setup(args),
                 _ => throw new CliException(ExitCodes.Usage, $"Unknown command '{cmd}'. Run 'latticelog help'."),
             };
