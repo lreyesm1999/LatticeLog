@@ -244,18 +244,38 @@ main > section:not([hidden]) { animation: rise .22s var(--ease); }
 .advanced p { margin-top: 6px; }
 
 /* histogram */
-.histogram { padding: 12px 16px 8px; }
-.hist-head { display: flex; justify-content: space-between; margin-bottom: 8px; }
-.hist-bars { display: flex; align-items: flex-end; gap: 2px; height: 76px; }
-.hist-bars .b { flex: 1 1 0; min-width: 2px; height: 100%; display: flex; align-items: flex-end; cursor: pointer; border-radius: 3px; }
+.histogram { padding: 12px 16px 8px; position: relative; }
+.hist-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; min-height: 24px; }
+.hist-badge { font-size: 10.5px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; color: var(--muted); border: 1px solid var(--line-strong); border-radius: 999px; padding: 0 7px; cursor: help; }
+.hist-errors { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.hist-errors.bad { color: var(--error); }
+.hist-errors.ok { color: var(--ok); }
+.hist-errors:empty { display: none; }
+.histogram.folded { padding-bottom: 10px; }
+.histogram.folded .hist-head { margin-bottom: 0; }
+.histogram.folded .hist-body { display: none; }
+.hist-bars { display: flex; align-items: flex-end; gap: 2px; height: 84px; }
+.hist-bars .b { position: relative; flex: 1 1 0; min-width: 2px; height: 100%; display: flex; align-items: flex-end; cursor: pointer; border-radius: 3px; }
+.hist-bars .b.zero { cursor: default; }
 .hist-bars .b:hover { background: var(--surface-2); }
-.hist-bars .b span {
+.hist-bars .b .fill {
   display: block; width: 100%; border-radius: 3px 3px 1px 1px; min-height: 0;
   background: linear-gradient(180deg, var(--accent-2), color-mix(in srgb, var(--accent) 55%, transparent));
   transform-origin: bottom; animation: grow .35s var(--ease) both;
 }
-.hist-bars .b:hover span { background: var(--accent); }
-.hist-bars .b.zero span { background: transparent; }
+.hist-bars .b .err { position: absolute; left: 0; right: 0; bottom: 0; height: 0; border-radius: 2px 2px 1px 1px; background: var(--error); opacity: .9; transition: height .3s var(--ease); }
+.hist-bars .b:hover .fill { background: var(--accent); }
+.hist-bars .b.zero .fill { background: transparent; }
+.hist-legend { display: inline-flex; align-items: center; gap: 6px; }
+.hist-legend .sw { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-left: 6px; }
+.hist-legend .sw.ev { background: var(--accent); }
+.hist-legend .sw.er { background: var(--error); }
+.hist-tip {
+  position: absolute; top: -6px; transform: translate(-50%, -100%); z-index: 3; pointer-events: none; display: flex; flex-direction: column; gap: 1px;
+  background: var(--surface); border: 1px solid var(--line-strong); border-radius: 9px; padding: 7px 10px; font-size: 12px; white-space: nowrap;
+  box-shadow: var(--shadow-lg); font-variant-numeric: tabular-nums;
+}
+.hist-tip .bad { color: var(--error); font-weight: 600; }
 @keyframes grow { from { transform: scaleY(0); } to { transform: none; } }
 .hist-axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: 6px; font-variant-numeric: tabular-nums; }
 

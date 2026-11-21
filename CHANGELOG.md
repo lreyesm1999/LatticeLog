@@ -2,6 +2,15 @@
 
 ## Unreleased — public repository under the MIT license
 
+- **A histogram that tells you something** (web console, Search):
+  - **Errors in red:** each bar shows its errors as a red part, so you see when things went wrong, not only how
+    busy it was.
+  - **Log scale:** when one period dwarfs the rest, heights switch to a log scale (marked "log scale"), so quiet
+    days stay visible.
+  - **Summary line:** the header names the busiest period and the total number of errors.
+  - **Tooltip:** hovering a bar shows its period, events and errors. Clicking a bar zooms in on that period.
+  - **Day labels:** day bars are named by their (UTC) date instead of "May 7 19:00".
+  - **Hide:** a button folds the chart away, and the browser remembers it.
 - **Web console redesign** (`llog ui`):
   - **Theme:** follows the system, with a header button that switches between System, Light and Dark (remembered
     per browser). The dark theme is deep graphite and the light one crisp white, both with an indigo accent.

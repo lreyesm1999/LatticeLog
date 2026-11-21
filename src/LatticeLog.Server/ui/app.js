@@ -550,6 +550,11 @@ async function histogram(where, scope, seq) {
   const from = scope.from ?? state.span?.min;
   if (from === null || from === undefined || to === null || to === undefined || to <= from) { box.hidden = true; return; }
   const [width, param, label] = BUCKETS.find(([w]) => w >= (to - from) / 60) || BUCKETS[BUCKETS.length - 1];
+  // Errors drawn over the events, in red: when things went wrong, not only how busy it was. Not needed when the
+  // search already shows errors only. Counted in parallel; the bars appear first.
+  const errorsOnly = state.level === "ERROR" || state.level === "FATAL";
+  const errP = errorsOnly ? null : cachedApi("/v1/stats", { where: where ? `(${where}) AND level >= ERROR` : "level >= ERROR", ...scope.params, bucket: param });
+  errP?.catch(() => { /* the overlay is optional */ });
   try {
     const res = await cachedApi("/v1/stats", { where, ...scope.params, bucket: param });
     if (seq !== state.seq) return;
@@ -557,21 +562,94 @@ async function histogram(where, scope, seq) {
     const counts = new Map(res.groups.map((g) => [toMs(g.key), g.count]));
     const start = Math.floor(from / width) * width;
     const bars = [];
-    for (let t = start; t <= to && bars.length < 400; t += width) bars.push([t, counts.get(t) || 0]);
-    const max = Math.max(1, ...bars.map((b) => b[1]));
-    $("hist-bars").replaceChildren(...bars.map(([t, n]) => {
-      const fill = h("span");
-      fill.style.height = n ? `${Math.max(3, (100 * n) / max)}%` : "0";
-      return h("div", { class: n ? "b" : "b zero", title: `${fmtShort(t)} – ${fmtShort(t + width)}: ${num(n)} event${n === 1 ? "" : "s"}`, onclick: () => zoomTo(t, t + width) }, fill);
+    for (let t = start; t <= to && bars.length < 400; t += width) bars.push({ t, n: counts.get(t) || 0, e: 0 });
+    const max = Math.max(1, ...bars.map((b) => b.n));
+    const nonzero = bars.filter((b) => b.n).map((b) => b.n).sort((a, b) => a - b);
+    // One huge spike flattens everything else into a line: switch to a log scale so small periods stay visible.
+    const log = nonzero.length > 1 && max / nonzero[Math.floor(nonzero.length / 2)] > 40;
+    const scale = (n) => (!n ? 0 : log ? Math.max(4, (100 * Math.log10(n + 1)) / Math.log10(max + 1)) : Math.max(3, (100 * n) / max));
+    const peak = bars.reduce((a, b) => (b.n > a.n ? b : a), bars[0]);
+    hist.bars = bars; hist.width = width; hist.errors = errorsOnly ? null : undefined;
+    $("hist-bars").replaceChildren(...bars.map((b, i) => {
+      const fill = h("span", { class: "fill" });
+      fill.style.height = `${scale(b.n)}%`;
+      const err = h("span", { class: "err" });
+      return h("div", { class: b.n ? "b" : "b zero", "data-i": i }, fill, err);
     }));
+    hist.scale = scale;
     $("hist-title").textContent = `Events over time · ${label} per bar`;
-    $("hist-from").textContent = fmtShort(start);
+    $("hist-scale").hidden = !log;
+    $("hist-peak").textContent = peak.n ? `Busiest: ${fmtBucket(peak.t, width)} (${compact(peak.n)})` : "";
+    $("hist-errors").textContent = errorsOnly ? "" : "Errors: counting…";
+    $("hist-errors").className = "hist-errors";
+    $("hist-from").textContent = fmtBucket(start, width);
     $("hist-to").textContent = fmtShort(Math.min(to, start + bars.length * width));
     box.hidden = false;
     state.histTotal = true;
     $("summary-count").textContent = `${num(res.total)} matching event${res.total === 1 ? "" : "s"}`;
+    if (!errP) return;
+    const errs = await errP;
+    if (seq !== state.seq) return;
+    const ec = new Map(errs.groups.map((g) => [toMs(g.key), g.count]));
+    let total = 0;
+    const cells = $("hist-bars").children;
+    bars.forEach((b, i) => {
+      b.e = ec.get(b.t) || 0;
+      total += b.e;
+      // The red part is the errors' share of the bar (on the same scale), at least a visible sliver.
+      if (b.e) cells[i].lastChild.style.height = `${Math.max(3, scale(b.n) * (log ? scale(b.e) / scale(b.n) : b.e / b.n))}%`;
+    });
+    hist.errors = total;
+    $("hist-errors").textContent = total ? `Errors: ${compact(total)}` : "No errors";
+    $("hist-errors").className = "hist-errors " + (total ? "bad" : "ok");
   } catch { if (seq === state.seq) box.hidden = true; }
 }
+
+// Hover details for the histogram (one shared tooltip instead of a title per bar) and click to zoom.
+const hist = { bars: [], width: 0, errors: undefined, scale: null };
+// Day (and longer) bars are UTC days on the server, so they are named by their UTC date, not "May 7 19:00".
+function fmtBucket(t, width) {
+  if (width < DAY) return fmtShort(t);
+  const d = new Date(t);
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC", year: d.getUTCFullYear() === new Date().getUTCFullYear() ? undefined : "numeric" });
+}
+function bucketRange(t, width) {
+  if (width === DAY) return `${fmtBucket(t, width)} (UTC day)`;
+  if (width > DAY) return `${fmtBucket(t, width)} – ${fmtBucket(t + width - 1, width)} (UTC)`;
+  return `${fmtShort(t)} – ${fmtShort(t + width)}`;
+}
+function histTip(ev) {
+  const cell = ev.target.closest(".b");
+  const tip = $("hist-tip");
+  if (!cell) { tip.hidden = true; return; }
+  const b = hist.bars[Number(cell.dataset.i)];
+  if (!b) return;
+  tip.replaceChildren(
+    h("b", { text: bucketRange(b.t, hist.width) }),
+    h("span", { text: `${num(b.n)} event${b.n === 1 ? "" : "s"}` }),
+    hist.errors === null ? null : h("span", { class: b.e ? "bad" : "muted", text: hist.errors === undefined ? "errors: counting…" : `${num(b.e)} error${b.e === 1 ? "" : "s"}` }),
+    b.n ? h("span", { class: "muted", text: "Click to see only this period" }) : null);
+  tip.hidden = false;
+  const box = $("histogram").getBoundingClientRect();
+  const r = cell.getBoundingClientRect();
+  const x = Math.min(Math.max(r.left + r.width / 2 - box.left, 90), box.width - 90);
+  tip.style.left = `${x}px`;
+}
+$("hist-bars").addEventListener("mousemove", histTip);
+$("hist-bars").addEventListener("mouseleave", () => { $("hist-tip").hidden = true; });
+$("hist-bars").addEventListener("click", (ev) => {
+  const b = hist.bars[Number(ev.target.closest(".b")?.dataset.i)];
+  if (b?.n) { $("hist-tip").hidden = true; zoomTo(b.t, b.t + hist.width); }
+});
+// The chart can be folded away (remembered per browser).
+function setHistFolded(folded) {
+  $("histogram").classList.toggle("folded", folded);
+  $("hist-fold").textContent = folded ? "Show chart" : "Hide";
+  $("hist-fold").setAttribute("aria-expanded", String(!folded));
+  try { localStorage.setItem("ll-hist-folded", folded ? "1" : ""); } catch { /* private mode: not remembered */ }
+}
+$("hist-fold").addEventListener("click", () => setHistFolded(!$("histogram").classList.contains("folded")));
+setHistFolded((() => { try { return localStorage.getItem("ll-hist-folded") === "1"; } catch { return false; } })());
 
 function zoomTo(from, to) {
   state.zoom = { from, to };
