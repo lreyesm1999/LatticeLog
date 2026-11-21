@@ -2,6 +2,20 @@
 
 ## Unreleased — public repository under the MIT license
 
+- **Web console redesign** (`llog ui`):
+  - **Theme:** follows the system, with a header button that switches between System, Light and Dark (remembered
+    per browser). The dark theme is deep graphite and the light one crisp white, both with an indigo accent.
+  - **Layout:** a translucent header, segmented tabs and a status pill. Cards have more depth. Stat cards get
+    accent lines and larger numbers.
+  - **Charts:** histogram and level bars use gradients.
+  - **Lists:** level pills carry a status dot. Source icons sit on tinted tiles.
+  - **Polish:**
+    - shimmering placeholder rows while a search runs;
+    - a blurred backdrop behind `Ctrl+K`;
+    - thin scrollbars;
+    - short entrance animations, turned off when the system asks for reduced motion.
+  - **Phone width:** the tabs and level filters scroll sideways instead of widening the page.
+
 - **Faster web console and time histograms.**
   - **Time histograms** (`/v1/stats?bucket=`, `latticelog stats --bucket`) now count every block whose records all
     match and fall into one bucket straight from the segment's footer directory, without decoding it. This works

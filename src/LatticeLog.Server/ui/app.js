@@ -379,20 +379,21 @@ async function runSearch(more = false, note = null) {
     state.cursor = null;
     state.events = [];
     state.selected = -1;
-    tbody.replaceChildren();
+    tbody.replaceChildren(...skeletonRows(8));
     $("more").hidden = true;
     $("empty").hidden = true;
     notice(note, "info");
     $("summary-count").textContent = "";
     $("summary-meta").textContent = "";
   }
-  $("loading").hidden = false;
+  $("loading").hidden = !more; // a new search shows placeholder rows instead
   const where = buildWhere();
   const scope = timeScope();
   if (!more) histogram(where, scope, seq);
   try {
     const res = await api("/v1/search", { where, ...scope.params, order: $("order").value, limit: 100, cursor: more ? state.cursor : null });
     if (seq !== state.seq) return;
+    if (!more) tbody.replaceChildren();
     for (const e of res.events) {
       const i = state.events.push(e) - 1;
       tbody.append(eventRow(e, i));
@@ -410,6 +411,7 @@ async function runSearch(more = false, note = null) {
     if (state.selected >= 0 && more) selectEvent(state.selected + 1);
   } catch (err) {
     if (seq !== state.seq) return;
+    if (!more) tbody.replaceChildren();
     if (err.status === 401) { showConnect("The token is no longer accepted."); return; }
     const text = $("where").value.trim();
     const actions = [];
@@ -419,6 +421,13 @@ async function runSearch(more = false, note = null) {
   } finally {
     if (seq === state.seq) $("loading").hidden = true;
   }
+}
+
+/** Grey shimmering rows shaped like results, shown while a new search runs. */
+function skeletonRows(n) {
+  const bar = (w) => { const s = h("span"); s.style.width = w; return s; };
+  return Array.from({ length: n }, (_, i) => h("tr", { class: "skel", "aria-hidden": "true" },
+    h("td", {}, bar("80%")), h("td", {}, bar("70%")), h("td", {}, bar("75%")), h("td", {}, bar("85%")), h("td", {}, bar(`${45 + ((i * 37) % 50)}%`))));
 }
 
 function emptyResults() {
@@ -741,7 +750,30 @@ const ICONS = {
   chevron: "M9 6l6 6-6 6",
   copy: "M9 9h10v10H9zM5 15V5h10",
   open: "M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5",
+  sun: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4",
+  moon: "M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z",
+  system: "M3 5h18v11H3zM8 20h8M12 16v4",
 };
+
+// ------------------------------------------------------------------ theme (system, light or dark; remembered per browser)
+
+const THEMES = { system: ["system", "follows the system"], light: ["sun", "light"], dark: ["moon", "dark"] };
+function applyTheme(theme) {
+  const t = theme in THEMES ? theme : "system";
+  if (t === "system") delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t;
+  const label = `Theme: ${THEMES[t][1]} (click to change)`;
+  $("theme-btn").replaceChildren(icon(THEMES[t][0]));
+  $("theme-btn").title = label;
+  $("theme-btn").setAttribute("aria-label", label);
+  return t;
+}
+let theme = applyTheme((() => { try { return localStorage.getItem("ll-theme") || "system"; } catch { return "system"; } })()); // blocked storage: follow the system
+$("theme-btn").addEventListener("click", () => {
+  const order = ["system", "light", "dark"];
+  theme = applyTheme(order[(order.indexOf(theme) + 1) % order.length]);
+  try { localStorage.setItem("ll-theme", theme); } catch { /* private mode: not remembered */ }
+  toast(`Theme: ${THEMES[theme][1]}`);
+});
 function icon(name, cls = "") {
   const svg = document.createElementNS(SVG_NS, "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
