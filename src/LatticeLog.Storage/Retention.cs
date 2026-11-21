@@ -93,7 +93,7 @@ public static class Retention
             });
             try { File.Delete(StoreLayout.SegmentPath(root, d.SegmentId)); }
             catch (IOException) { /* still open somewhere: recovery deletes it, readers already ignore it */ }
-            catch (UnauthorizedAccessException) { }
+            catch (UnauthorizedAccessException) { /* still open somewhere: recovery deletes it, readers already ignore it */ }
         }
     }
 }

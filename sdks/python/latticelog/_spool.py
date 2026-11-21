@@ -47,6 +47,7 @@ class Spool:
                 try:
                     out.append((int(name[6:-6]), os.path.join(self.dir, name)))
                 except ValueError:
+                    # Our prefix and suffix but no sequence number: not one of our files, left alone.
                     pass
         return sorted(out)
 

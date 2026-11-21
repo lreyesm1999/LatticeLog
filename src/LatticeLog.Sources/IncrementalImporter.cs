@@ -75,7 +75,7 @@ public static class IncrementalImporter
         foreach (var (file, info) in heads)
         {
             ct.ThrowIfCancellationRequested();
-            var (size, mtime) = info!.Value;
+            var (_, mtime) = info!.Value; // the size is read again from the open file below
             var st = claims[file.Path];
             if (st is null)
             {
@@ -88,7 +88,7 @@ public static class IncrementalImporter
                 st.Path = file.Path;
             }
             using var fs = Inputs.OpenShared(file.Path);
-            size = fs.Length;
+            var size = fs.Length;
             if (st.HeadLen < HeadBytes && size > st.HeadLen) (st.HeadLen, st.HeadHash) = Head(fs, Math.Min(size, HeadBytes));
             var format = Enum.Parse<LogFormat>(st.Format);
             long end;

@@ -100,7 +100,7 @@ public static class ServiceCommands
         var configDir = ConfigDir(a);
         string? registered = null;
         try { registered = ServiceLauncher.Registration(configDir).Detect(); }
-        catch (Exception ex) when (ex is InvalidOperationException or IOException) { }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException) { /* the service manager could not be asked: shown as not registered */ }
         JsonObject? status = null;
         try { status = ServiceClient.Request(configDir, "status")?["status"] as JsonObject; }
         catch (ServiceRefusedException ex) { Console.Error.WriteLine("warning: " + ex.Message); }

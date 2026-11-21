@@ -115,7 +115,7 @@ public static class Program
     public static int Main(string[] argv)
     {
         try { Console.OutputEncoding = new UTF8Encoding(false); }
-        catch (IOException) { } // no console (the service started as latticelogw.exe)
+        catch (IOException) { /* no console (the service started as latticelogw.exe) */ }
         if (argv.Length == 0 || argv[0] is "-h" or "--help" or "help") { PrintHelp(); return argv.Length == 0 ? ExitCodes.Usage : ExitCodes.Ok; }
         if (argv[0] is "--version" or "version") { Console.WriteLine("latticelog " + Version); return ExitCodes.Ok; }
         var cmd = argv[0];

@@ -415,7 +415,7 @@ public sealed class IngestService : IDisposable
 
     private void Diagnose(string message)
     {
-        try { _options.Diagnostics?.Invoke("[LatticeLog.Ingest] " + message); } catch { }
+        try { _options.Diagnostics?.Invoke("[LatticeLog.Ingest] " + message); } catch { /* a diagnostics callback must never break ingestion */ }
     }
 
     // ------------------------------------------------------------------ online administration (P17-T12)

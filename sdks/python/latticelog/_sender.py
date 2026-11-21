@@ -110,6 +110,7 @@ class Sender:
                     try:
                         retry_after = float(headers.get("Retry-After"))
                     except ValueError:
+                        # Retry-After as an HTTP date (or garbage): fall back to the normal backoff.
                         pass
                 attempt += 1
                 self._backoff(attempt, retry_after)

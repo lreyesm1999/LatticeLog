@@ -402,7 +402,7 @@ public sealed class ServiceHost : IDisposable
                 }
             }
         }
-        catch (Exception ex) when (ex is SocketException or ObjectDisposedException or IOException) { }
+        catch (Exception ex) when (ex is SocketException or ObjectDisposedException or IOException) { /* the client already hung up: nothing to close gracefully */ }
         finally { client.Dispose(); }
     }
 
@@ -551,11 +551,11 @@ public sealed class ServiceHost : IDisposable
                 else if (rel.StartsWith("migrated" + Path.DirectorySeparatorChar, StringComparison.Ordinal)) migrated += len;
             }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* a file removed or locked meanwhile: disk use is a best-effort figure */ }
         JsonArray errors;
         lock (_errors) errors = new JsonArray(_errors.Select(e => (JsonNode?)JsonValue.Create(e)).ToArray());
         JsonArray maintenance;
-        lock (_maintenance) maintenance = new JsonArray(_maintenance.Select(m => (JsonNode?)m.DeepClone()).ToArray());
+        lock (_maintenance) maintenance = new JsonArray(_maintenance.Select(m => m.DeepClone()).ToArray());
         return new JsonObject
         {
             ["format"] = "latticelog.service.status.v1",
@@ -604,16 +604,16 @@ public sealed class ServiceHost : IDisposable
         try
         {
             _cts.Cancel();
-            try { _listener.Stop(); } catch (SocketException) { }
+            try { _listener.Stop(); } catch (SocketException) { /* already stopped */ }
             foreach (var c in _connections.Keys)
             {
-                try { c.Client?.Shutdown(SocketShutdown.Both); } catch (Exception ex) when (ex is SocketException or ObjectDisposedException) { }
-                try { c.Dispose(); } catch (ObjectDisposedException) { }
+                try { c.Client?.Shutdown(SocketShutdown.Both); } catch (Exception ex) when (ex is SocketException or ObjectDisposedException) { /* the client already disconnected */ }
+                try { c.Dispose(); } catch (ObjectDisposedException) { /* already disposed */ }
             }
             if (_backgroundThread.IsAlive && Thread.CurrentThread != _backgroundThread) _backgroundThread.Join(TimeSpan.FromSeconds(30));
             var ep = ServiceEndpoint.TryLoad(ServicePaths.EndpointFile(DataDir));
             if (ep is not null && ep.Pid == Endpoint.Pid && ep.Port == Endpoint.Port)
-                try { File.Delete(ServicePaths.EndpointFile(DataDir)); } catch (IOException) { }
+                try { File.Delete(ServicePaths.EndpointFile(DataDir)); } catch (IOException) { /* already gone or held: the next start overwrites it */ }
             Log.Write("stopped");
         }
         finally

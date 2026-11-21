@@ -448,7 +448,7 @@ public sealed class SourceCatalog
             var unsealed = 0;
             foreach (var id in r.SegmentIds)
             {
-                try { bytes += new FileInfo(r.SegmentPath(id)).Length; } catch (IOException) { }
+                try { bytes += new FileInfo(r.SegmentPath(id)).Length; } catch (IOException) { /* file removed meanwhile (retention or compaction): left out of the total */ }
                 if (r.Indexes.GetValueOrDefault(id) is { HasRecords: true } x)
                 {
                     records += x.RecordCount;

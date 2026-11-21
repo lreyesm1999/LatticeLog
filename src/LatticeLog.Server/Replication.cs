@@ -89,7 +89,7 @@ public sealed class Replicator : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _stop.Cancel();
-        try { await _loop.ConfigureAwait(false); } catch (OperationCanceledException) { }
+        try { await _loop.ConfigureAwait(false); } catch (OperationCanceledException) { /* the loop ended by cancellation, as Dispose asked */ }
         List<Forwarder> all;
         lock (_forwarders) all = [.. _forwarders.Values];
         foreach (var f in all) await f.DisposeAsync().ConfigureAwait(false);

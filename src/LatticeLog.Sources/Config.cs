@@ -504,8 +504,8 @@ public static class PathPolicy
             FileSystemInfo fi = Directory.Exists(full) ? new DirectoryInfo(full) : new FileInfo(full);
             if (fi.LinkTarget is not null && fi.ResolveLinkTarget(returnFinalTarget: true) is { } target) full = target.FullName;
         }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
+        catch (IOException) { /* the link cannot be resolved: the path is compared as written */ }
+        catch (UnauthorizedAccessException) { /* the link cannot be resolved: the path is compared as written */ }
         return full.Length > 3 ? full.TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar) : full;
     }
 

@@ -220,7 +220,7 @@ public sealed partial class LogMigrator(SourceCatalog catalog)
         }
         finally
         {
-            try { Directory.Delete(tmp, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            try { Directory.Delete(tmp, recursive: true); } catch (IOException) { /* a temporary folder left behind is removed by the next sweep */ } catch (UnauthorizedAccessException) { /* a temporary folder left behind is removed by the next sweep */ }
         }
     }
 
@@ -274,7 +274,7 @@ public sealed partial class LogMigrator(SourceCatalog catalog)
                             if (doc.RootElement.ValueKind != JsonValueKind.Object) continue;
                             foreach (var p in doc.RootElement.EnumerateObject()) if (!keys.Contains(p.Name)) keys.Add(p.Name);
                         }
-                        catch (JsonException) { }
+                        catch (JsonException) { /* not a JSON line: it adds no keys to the preview mapping */ }
                     }
                     foreach (var k in keys) m[k] = StructuredJsonlImporter.DescribeKey(k);
                     m["<line that is not JSON>"] = "kept as a text record (flag LossyImport, attribute latticelog.import.error)";
@@ -362,8 +362,8 @@ public sealed partial class LogMigrator(SourceCatalog catalog)
         foreach (var p in state.Patterns)
         {
             try { files.AddRange(Expand(p)); }
-            catch (FileNotFoundException) { } // rotated away or not created yet
-            catch (DirectoryNotFoundException) { }
+            catch (FileNotFoundException) { /* rotated away or not created yet */ }
+            catch (DirectoryNotFoundException) { /* rotated away or not created yet */ }
         }
         var (json, imported) = Run(source.Path, state, files.Distinct(StringComparer.OrdinalIgnoreCase).ToList(), compact, state.Follow, null, Stopwatch.StartNew(), ct);
         return new MigrationReport(json, imported, false);
@@ -444,7 +444,11 @@ public sealed partial class LogMigrator(SourceCatalog catalog)
     {
         for (var i = 0; i < 5; i++)
         {
-            try { if (Directory.Exists(d)) Directory.Delete(d, recursive: true); return; }
+            try
+            {
+                if (Directory.Exists(d)) Directory.Delete(d, recursive: true);
+                return;
+            }
             catch (IOException) { Thread.Sleep(50); }
             catch (UnauthorizedAccessException) { Thread.Sleep(50); }
         }

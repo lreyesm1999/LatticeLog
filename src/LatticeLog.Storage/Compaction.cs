@@ -244,8 +244,8 @@ public static class Compactor
     private static void TryDelete(string path)
     {
         try { if (File.Exists(path)) File.Delete(path); }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
+        catch (IOException) { /* best effort: a leftover temporary file is removed by recovery */ }
+        catch (UnauthorizedAccessException) { /* best effort: a leftover temporary file is removed by recovery */ }
     }
 }
 

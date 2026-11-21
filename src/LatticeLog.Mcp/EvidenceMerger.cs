@@ -132,7 +132,7 @@ internal static class EvidenceMerger
                     case JsonValue val:
                         {
                             var sum = ((double?)o[k] ?? 0) + (double)val;
-                            o[k] = sum == Math.Floor(sum) && Math.Abs(sum) < 9e15 ? JsonValue.Create((long)sum) : JsonValue.Create(sum);
+                            o[k] = double.IsInteger(sum) && Math.Abs(sum) < 9e15 ? JsonValue.Create((long)sum) : JsonValue.Create(sum);
                             break;
                         }
                 }

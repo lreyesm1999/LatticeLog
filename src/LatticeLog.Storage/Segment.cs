@@ -142,7 +142,7 @@ public sealed class SegmentWriter : IDisposable
         {
             // Never leave a partial frame followed by later frames: cut back to the last good block.
             Faulted = true;
-            try { RandomAccess.SetLength(_handle, offset); } catch (IOException) { }
+            try { RandomAccess.SetLength(_handle, offset); } catch (IOException) { /* best effort: the original exception is rethrown and recovery truncates the torn tail */ }
             throw;
         }
         Length += _frame.Length;

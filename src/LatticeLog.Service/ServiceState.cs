@@ -117,7 +117,7 @@ public sealed class ServiceLog(string path, TextWriter? echo = null)
                 if (fi.Exists && fi.Length > MaxBytes) File.Move(Path, Path + ".1", overwrite: true);
                 File.AppendAllText(Path, line + "\n", new UTF8Encoding(false));
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ObjectDisposedException) { }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ObjectDisposedException) { /* the service log must never stop the service */ }
         }
     }
 
