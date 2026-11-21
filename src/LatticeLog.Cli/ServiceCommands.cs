@@ -128,7 +128,7 @@ public static class ServiceCommands
         }));
         if (running)
         {
-            Console.WriteLine($"Web console:       {status["console"]}   (open it with the token: latticelog service ui --open)");
+            Console.WriteLine($"Web console:       {status["console"]}   (open it: llog ui)");
             var sessions = status["sessions"]!;
             Console.WriteLine($"MCP sessions:      {sessions["active"]} active, {sessions["served"]} served since start");
             Console.WriteLine($"Last refresh:      {(string?)status["last_refresh"] ?? "-"} (every {status["refresh_interval_seconds"]} s); last maintenance: {(string?)status["last_maintenance"] ?? "-"}");
@@ -281,7 +281,12 @@ public static class ServiceCommands
 
     // ------------------------------------------------------------------ ui
 
-    private static int Ui(Args a)
+    /// <summary><c>latticelog ui</c> (<c>llog ui</c>): opens the console in the browser unless <c>--no-open</c>; <c>-o</c> is accepted too.</summary>
+    public static int OpenUi(Args a) => Ui(a, open: !a.Has("no-open"));
+
+    private static int Ui(Args a) => Ui(a, open: a.Has("open"));
+
+    private static int Ui(Args a, bool open)
     {
         var configDir = ConfigDir(a);
         var ep = ServiceClient.Running(configDir) ?? ServiceLauncher.EnsureRunning(configDir, TimeSpan.FromSeconds(30), m => Console.Error.WriteLine(m))
@@ -289,7 +294,11 @@ public static class ServiceCommands
         var url = $"{ep.BaseUri}ui#token={ep.Token}";
         Console.WriteLine(url);
         Console.Error.WriteLine("The link carries the service token (in the #fragment, never sent over the network); it reads every source of this user. Do not share it.");
-        if (a.Has("open")) Process.Start(new ProcessStartInfo(url) { UseShellExecute = true })?.Dispose();
+        if (open)
+        {
+            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true })?.Dispose();
+            Console.Error.WriteLine("Opened in your browser. The page keeps the token and removes it from the address bar.");
+        }
         return ExitCodes.Ok;
     }
 
@@ -302,6 +311,33 @@ public static class ServiceCommands
         : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "bin");
 
     private static string ExeName => OperatingSystem.IsWindows() ? "latticelog.exe" : "latticelog";
+
+    /// <summary>The short command <c>llog</c>, next to the executable: a .cmd for cmd and PowerShell plus a tiny sh script for
+    /// Git Bash on Windows; a symlink elsewhere. Small text files (or a link), so an upgrade never leaves a stale copy.</summary>
+    private static string[] ShortAliasFiles => OperatingSystem.IsWindows() ? ["llog.cmd", "llog"] : ["llog"];
+
+    public static void WriteShortAlias(string installDir)
+    {
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                File.WriteAllText(Path.Combine(installDir, "llog.cmd"), "@\"%~dp0latticelog.exe\" %*\r\n");
+                File.WriteAllText(Path.Combine(installDir, "llog"), "#!/bin/sh\nexec \"$(dirname \"$0\")/latticelog.exe\" \"$@\"\n");
+            }
+            else
+            {
+                var link = Path.Combine(installDir, "llog");
+                if (File.Exists(link) || Directory.Exists(link)) File.Delete(link);
+                File.CreateSymbolicLink(link, ExeName);
+            }
+            Console.WriteLine($"Short command: llog (same as latticelog), in {installDir}.");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine($"Could not create the short command 'llog' in {installDir}: {ex.Message}. 'latticelog' still works.");
+        }
+    }
 
     /// <summary>
     /// <c>latticelog setup</c>: copies this single-file executable to a per-user folder (and onto the user's PATH),
@@ -339,6 +375,7 @@ public static class ServiceCommands
             File.Move(tmp, target, overwrite: true);
             Console.WriteLine($"Installed {target}.");
         }
+        WriteShortAlias(installDir);
         // 2. PATH
         if (!a.Has("no-path")) EnsureOnPath(installDir);
         // 3. service
@@ -360,7 +397,7 @@ public static class ServiceCommands
         Console.WriteLine("Done. Next:");
         Console.WriteLine("  latticelog roots add <folder>     register the folder your services write logs into");
         Console.WriteLine("  latticelog service status         sources, last indexed time, disk use, errors");
-        Console.WriteLine("  latticelog service ui --open      web console on 127.0.0.1");
+        Console.WriteLine("  llog ui                           web console in your browser (llog = latticelog)");
         if (clients.Count > 0) Console.WriteLine($"  restart {string.Join(", ", clients)} so they load the LatticeLog MCP server");
         Console.WriteLine("Uninstall: latticelog setup --uninstall [--remove-data]");
         return ExitCodes.Ok;
@@ -440,7 +477,7 @@ public static class ServiceCommands
             catch (CliException ex) { Console.Error.WriteLine($"{c}: {ex.Message}"); }
         }
         RemoveFromPath(installDir);
-        var files = new[] { ExeName, OperatingSystem.IsWindows() ? "latticelogw.exe" : null }.Where(f => f is not null).Select(f => Path.Combine(installDir, f!)).Where(File.Exists).ToList();
+        var files = new[] { ExeName, OperatingSystem.IsWindows() ? "latticelogw.exe" : null }.Concat(ShortAliasFiles).Where(f => f is not null).Select(f => Path.Combine(installDir, f!)).Where(File.Exists).ToList();
         var self = Environment.ProcessPath is { } p ? Path.GetFullPath(p) : "";
         var later = new List<string>();
         foreach (var f in files)

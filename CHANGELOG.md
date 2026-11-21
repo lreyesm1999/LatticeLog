@@ -21,6 +21,8 @@
     and starts the service, and runs `mcp install` for the chosen clients. `latticelog setup --uninstall` undoes it,
     and `mcp uninstall` removes one entry. Scripts: `scripts/publish-aot.ps1`, `scripts/install.ps1`,
     `scripts/install.sh`, `scripts/smoke-aot.ps1|.sh`.
+  - Short command `llog` (installed by `setup` next to the executable) and `llog ui`, which opens the web console in
+    the browser; one-letter flags `-o`, `-h`, `-y`.
   - CI builds the AOT executable for win-x64 and linux-x64 and smoke-tests list_sources and get_error_groups with
     dotnet removed from PATH, then again in containers without .NET (Windows Server Core, Debian).
   - `StoreWriter.ApplyRetention(..., keepNewest)` and `SourceCatalog` thread safety (snapshot warnings, serialized

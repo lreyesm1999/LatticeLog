@@ -229,7 +229,7 @@ Then register the folder your services write into, and ask:
 ```bash
 latticelog roots add C:/dev/my-services/logs   # once; services under it are found by name
 latticelog service status                      # sources, last indexed time, disk use, errors
-latticelog service ui --open                   # web console on 127.0.0.1 (the link carries the service token)
+llog ui                                        # web console in your browser (short for latticelog service ui --open)
 ```
 
 `latticelog mcp`, the command the clients run, is a thin shim. It forwards to the service and starts it when it isn't

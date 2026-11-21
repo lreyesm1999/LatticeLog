@@ -528,3 +528,31 @@ public class SourcesTests(ITestOutputHelper output)
         return (p.ExitCode, stdout.Result + stderr.Result);
     }
 }
+
+public class ShortCommandTests
+{
+    [Fact]
+    public void One_letter_flags_map_to_their_long_names()
+    {
+        var a = new Args(["ui", "-o"]);
+        Assert.True(a.Has("open"));
+        Assert.Equal(["ui"], a.Positional);
+        Assert.True(new Args(["setup", "-y"]).Has("yes"));
+        // Unknown one-letter arguments stay positional, as before.
+        Assert.Equal(["query", "-z"], new Args(["query", "-z"]).Positional);
+    }
+
+    [Fact]
+    public void Setup_writes_the_llog_alias_next_to_the_executable()
+    {
+        var dir = TestData.TempDir();
+        ServiceCommands.WriteShortAlias(dir);
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Contains("latticelog.exe", File.ReadAllText(Path.Combine(dir, "llog.cmd")));
+            Assert.Contains("latticelog.exe", File.ReadAllText(Path.Combine(dir, "llog")));
+        }
+        else Assert.Equal("latticelog", new FileInfo(Path.Combine(dir, "llog")).LinkTarget);
+        ServiceCommands.WriteShortAlias(dir); // idempotent: running setup again replaces the alias
+    }
+}

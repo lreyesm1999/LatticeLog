@@ -50,12 +50,16 @@ public sealed class Args
                 if (i + 1 < list.Count && !list[i + 1].StartsWith("--", StringComparison.Ordinal) && !Flags.Contains(name)) _opts[name] = list[++i];
                 else _opts[name] = null;
             }
+            else if (a.Length == 2 && a[0] == '-' && ShortFlags.TryGetValue(a[1], out var longName)) _opts[longName] = null;
             else Positional.Add(a);
         }
     }
 
     private static readonly HashSet<string> Flags = ["follow", "no-index", "force", "stdout", "pretty", "help", "preserve-raw", "no-redact", "desc", "explain", "preview", "yes", "dry-run", "no-refresh",
-        "no-service", "no-start", "no-project", "no-path", "open", "verbose", "uninstall", "remove-data", "clear"];
+        "no-service", "no-start", "no-project", "no-path", "open", "no-open", "verbose", "uninstall", "remove-data", "clear"];
+
+    /// <summary>One-letter forms of common flags: <c>llog ui -o</c>, <c>-h</c>, <c>-y</c>.</summary>
+    private static readonly Dictionary<char, string> ShortFlags = new() { ['o'] = "open", ['h'] = "help", ['y'] = "yes" };
 
     public bool Has(string name) => _opts.ContainsKey(name);
     public string? Get(string name) => _opts.TryGetValue(name, out var v) ? v : null;
@@ -103,6 +107,7 @@ public static class Program
         ["mcp"] = "mcp [<dir>] [--project DIR] [--no-service]   MCP over stdio via the background service (auto-started; in-process if it cannot start).",
         ["mcp install"] = "mcp install --client claude-desktop|claude-code|cursor|vscode [--scope user|project] [--yes] [--dry-run]",
         ["mcp uninstall"] = "mcp uninstall --client claude-desktop|claude-code|cursor|vscode [--scope user|project]",
+        ["ui"] = "ui [-o] [--no-open]                 Open the web console in your browser (starts the service if needed). Short: llog ui.",
         ["service"] = "service status|start|stop|restart|install|uninstall|ui [--open]|run [--port N] [--verbose]   Per-user background service on 127.0.0.1.",
         ["setup"] = "setup [--clients a,b|none] [--install-dir DIR] [--no-service] [--no-path] [--method task|run-key] | setup --uninstall [--remove-data]",
     };
@@ -145,6 +150,7 @@ public static class Program
                 "migrate" => SourceCommands.Migrate(args),
                 "mcp" => SourceCommands.Mcp(args),
                 "service" => ServiceCommands.Service(args),
+                "ui" => ServiceCommands.OpenUi(args),
                 "setup" => ServiceCommands.Setup(args),
                 _ => throw new CliException(ExitCodes.Usage, $"Unknown command '{cmd}'. Run 'latticelog help'."),
             };
