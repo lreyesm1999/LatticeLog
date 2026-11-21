@@ -4,7 +4,7 @@
 
 | surface | rule | how it is checked |
 |---|---|---|
-| `.llog` format | A reader reads the current minor version and **every earlier minor of the same major** (today 0.1 and 0.2). A new minor only adds optional elements: an older reader ignores them or reads the segment sequentially, and never returns wrong data. | frozen test files `tests/GoldenFiles/v0.1` and `v0.2`, read by the .NET reader and by the independent Python reader on every test-suite and CI run |
+| `.llog` format | A reader reads the current minor version and **every earlier minor of the same major** (today 0.1, 0.2 and 0.3). A new minor only adds optional elements: an older reader ignores them or reads the segment sequentially, and never returns wrong data. | frozen test files `tests/GoldenFiles/v0.1`, `v0.2` and `v0.3`, read by the .NET reader and by the independent Python reader on every test-suite and CI run |
 | `latticelog.jsonl` v1 exchange | Stable output; optional fields may be added, the meaning of an existing one never changes | round-trip tests (`EvidenceAndInteropTests`, server export) |
 | Ingest protocol v1 | `body_encoding` 1 (JSONL) is always accepted; new encodings are negotiated (415 → the client falls back to an accepted one) | `IngestTests.Forwarder_falls_back_to_jsonl_when_the_server_rejects_the_binary_body`, deduplication rules with both encodings |
 | HTTP API v1 (`/v1/...`) | Added fields are compatible; removing or changing one requires `/v2`. `error` codes are stable. | `ServerApiTests` |

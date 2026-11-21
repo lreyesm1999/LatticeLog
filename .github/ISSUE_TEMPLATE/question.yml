@@ -1,0 +1,25 @@
+name: Question
+description: Ask how to do something, or why something behaves the way it does.
+labels: [question]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please check [Getting started](https://github.com/lreyesm1999/LatticeLog/blob/main/docs/guides/getting-started.md) and [Troubleshooting](https://github.com/lreyesm1999/LatticeLog/blob/main/docs/guides/troubleshooting.md) first.
+  - type: textarea
+    id: question
+    attributes:
+      label: What are you trying to do?
+      description: The goal, what you tried (commands or code) and what happened.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: output of `latticelog --version`, or a commit SHA
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      placeholder: OS, .NET / Python / PHP version, MCP client if relevant

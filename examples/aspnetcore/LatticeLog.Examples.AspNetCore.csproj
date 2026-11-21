@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The logger, the ILogger bridge, and the source generator for [LatticeEvent] methods. -->
+    <ProjectReference Include="..\..\src\LatticeLog.Core\LatticeLog.Core.csproj" />
+    <ProjectReference Include="..\..\src\LatticeLog.Extensions.Logging\LatticeLog.Extensions.Logging.csproj" />
+    <ProjectReference Include="..\..\src\LatticeLog.Generator\LatticeLog.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>
