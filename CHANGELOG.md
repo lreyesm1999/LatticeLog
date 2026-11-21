@@ -20,7 +20,9 @@
     - **+ Filter** adds a filter without query syntax: pick Service, Event, Exception type or "Has a trace", then
       one of the values found in the current results, with its count;
     - filters show as readable chips ("Service: gateway");
-    - the syntax help is now a small **?** with four examples, and the full reference is folded away.
+    - the **?** button opens Quick searches, one-click buttons in plain words: Only errors, Errors and warnings,
+      With an exception, Part of a trace, Last hour, Start over. The filter syntax is folded under
+      "For experts", as what-to-type recipes with a Try button.
   - **Infinite scroll** replaces "Load more":
     - the next page loads as the list nears its end, with placeholder rows meanwhile;
     - the list ends with "End of results · N events";

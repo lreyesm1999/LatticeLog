@@ -128,15 +128,15 @@
 
     <div id="help" class="card help" hidden>
       <div class="help-head">
-        <strong>Search tips</strong>
-        <span class="muted small">Type words to find them anywhere in an event. Click an example to try it.</span>
-        <button type="button" id="help-close" class="ghost icon-btn small" aria-label="Close tips">×</button>
+        <strong>Quick searches</strong>
+        <span class="muted small">One click, nothing to type.</span>
+        <button type="button" id="help-close" class="ghost icon-btn small" aria-label="Close">×</button>
       </div>
-      <div class="examples" id="examples"></div>
+      <div class="quick" id="quick"></div>
+      <p class="tip small"><b>Tip:</b> type any words to find them anywhere in an event. Put a phrase in quotes, like <span class="q">"connection refused"</span>, to match it exactly.</p>
       <details class="advanced">
-        <summary>Advanced: write your own filter</summary>
-        <p class="muted small">Fields: <code>level</code> <code>service</code> <code>event</code> <code>message</code> <code>trace_id</code> <code>exception.type</code> <code>text</code> or any attribute name.
-          Operators: <code>=</code> <code>!=</code> <code>&gt;=</code> <code>CONTAINS</code> <code>STARTSWITH</code> <code>IN (…)</code> <code>EXISTS(field)</code>, joined with <code>AND</code> / <code>OR</code> / <code>NOT</code>.</p>
+        <summary>For experts: write a filter yourself</summary>
+        <table class="recipes" id="recipes"></table>
       </details>
     </div>
 

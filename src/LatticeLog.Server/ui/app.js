@@ -210,6 +210,7 @@ function renderChips() {
 const FIELD_LABEL = { service: "Service", event: "Event", level: "Level", "exception.type": "Exception", trace_id: "Trace", message: "Message", text: "Text" };
 function chipLabel(expr) {
   if (/^EXISTS\(trace_id\)$/i.test(expr)) return ["", "Has a trace"];
+  if (/^EXISTS\(exception\.type\)$/i.test(expr)) return ["", "Has an exception"];
   let m = /^([A-Za-z_][\w.]*|`[^`]+`) = '((?:[^']|'')*)'$/.exec(expr);
   if (m) { const f = m[1].replace(/`/g, ""); return [FIELD_LABEL[f] || f, m[2].replace(/''/g, "'")]; }
   m = /^([A-Za-z_][\w.]*|`[^`]+`) IS NULL$/.exec(expr);
@@ -1473,13 +1474,31 @@ function refreshView(note) {
   return runSearch(false, note);
 }
 
-const EXAMPLES = [
-  ["timeout", "a word anywhere"],
-  ["\"connection refused\"", "an exact phrase"],
-  ["level >= ERROR", "errors only"],
-  ["exception.type CONTAINS 'Timeout'", "by exception"],
+// Quick searches: plain-language buttons that set the level, a filter or the time range (no syntax shown).
+const QUICK = [
+  ["Only errors", "Errors and fatal errors", () => setLevel("ERROR")],
+  ["Errors and warnings", "Anything that looks wrong", () => setLevel("WARN")],
+  ["With an exception", "Events that carry a stack trace", () => addChip("EXISTS(exception.type)")],
+  ["Part of a trace", "Events linked to a request trace", () => addChip("EXISTS(trace_id)")],
+  ["Last hour", "Only the last 60 minutes", () => setRange("1h")],
+  ["Start over", "No filters, all time", () => { clearFilters(); setRange("all"); }],
 ];
-$("examples").replaceChildren(...EXAMPLES.map(([q, why]) => h("button", { type: "button", onclick: () => { $("where").value = q; syncClear(); runSearch(); } }, q, h("span", { text: why }))));
+function closeHelp() { $("help").hidden = true; $("help-toggle").setAttribute("aria-expanded", "false"); }
+$("quick").replaceChildren(...QUICK.map(([label, hint, fn]) => h("button", { type: "button", class: "quick-btn", onclick: () => { fn(); closeHelp(); runSearch(); } },
+  h("span", { class: "qb-label", text: label }), h("span", { class: "qb-hint", text: hint }))));
+
+// For experts: what to type for common needs, each with a Try button.
+const RECIPES = [
+  ["A word anywhere", "timeout"],
+  ["An exact phrase", "\"connection refused\""],
+  ["One service", "service = 'orders-api'"],
+  ["Leave a service out", "NOT service = 'health-check'"],
+  ["Text in the message", "message CONTAINS 'payment'"],
+  ["Two conditions at once", "level >= WARN AND service = 'orders-api'"],
+];
+$("recipes").replaceChildren(...RECIPES.map(([what, q]) => h("tr", {},
+  h("td", { class: "rc-what", text: what }), h("td", {}, h("code", { text: q })),
+  h("td", { class: "rc-try" }, h("button", { type: "button", class: "ghost small", onclick: () => { $("where").value = q; syncClear(); closeHelp(); runSearch(); } }, "Try")))));
 
 // ------------------------------------------------------------------ guided filters (+ Filter)
 
@@ -1640,7 +1659,7 @@ $("since-custom").addEventListener("keydown", (ev) => { if (ev.key === "Enter") 
 $("order").addEventListener("change", () => { savePrefs(); runSearch(); });
 for (const b of $("levels").children) b.addEventListener("click", () => { setLevel(b.dataset.level); runSearch(); });
 $("help-toggle").addEventListener("click", () => { $("help").hidden = !$("help").hidden; $("help-toggle").setAttribute("aria-expanded", String(!$("help").hidden)); });
-$("help-close").addEventListener("click", () => { $("help").hidden = true; $("help-toggle").setAttribute("aria-expanded", "false"); });
+$("help-close").addEventListener("click", closeHelp);
 // Infinite scroll: the sentinel under the results comes within reach of the viewport.
 if ("IntersectionObserver" in window) {
   new IntersectionObserver((entries) => { if (entries.some((e) => e.isIntersecting)) checkSentinel(); }, { rootMargin: "0px 0px 900px 0px" }).observe($("more-sentinel"));
