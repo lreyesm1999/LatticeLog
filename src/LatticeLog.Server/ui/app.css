@@ -296,6 +296,15 @@ table.plain td.mono { font-family: var(--mono); font-size: 12px; }
 table.ex-list { table-layout: auto; }
 .ex-list td.n { width: 100%; max-width: 0; min-width: 210px; }
 .ex-list td.loc { max-width: 220px; }
+/* Only the visible rows exist (virtual list): fixed row heights and minimum column widths keep the
+   geometry stable while rows come and go during scrolling. */
+.ex-list tbody tr[data-i] td { height: 46px; }
+.ex-list tr.spacer td { padding: 0; border: 0; }
+.ex-list th.c-loc { width: 200px; }
+.ex-list th.c-type { width: 140px; }
+.ex-list th.c-records { width: 96px; }
+.ex-list th.c-bytes { width: 84px; }
+.ex-list th.c-last { width: 124px; }
 .ex-list th:nth-child(2), .ex-list td.loc { display: none; }
 .ex-list.flat th:nth-child(2), .ex-list.flat td.loc { display: table-cell; }
 .ex-list th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }

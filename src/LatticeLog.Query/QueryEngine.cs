@@ -317,8 +317,13 @@ public sealed class QueryEngine(StoreReader store)
         var expr = BuildExpression(req);
         var constraints = PruningConstraints.From(expr);
         var onlyTime = IsOnlyTime(expr);
+        // Time buckets: a block whose records all match and fall into one bucket is counted from the footer
+        // directory without being decoded (the console's histogram over a whole source).
+        var wholeBlocks = IsTimeAndMinSeverity(expr, out var minSeverity) && bucket is not null;
         var gb = groupBy.ToLowerInvariant();
         var counts = new Dictionary<string, long>(StringComparer.Ordinal);
+        var buckets = bucket is null ? null : new Dictionary<long, long>();
+        var width = bucket is { } bw ? Math.Max(1, bw.Ticks * 100) : 1;
         var stats = new QueryStats { SegmentsTotal = Store.SegmentIds.Count };
         var report = new ScanReport();
         var usedIndexOnly = true;
@@ -337,6 +342,27 @@ public sealed class QueryEngine(StoreReader store)
                 else for (var s = 0; s < idx!.SeverityCounts.Length; s++) if (idx.SeverityCounts[s] > 0) Add(counts, ((Severity)s).ToText(), idx.SeverityCounts[s]);
                 continue;
             }
+            List<BlockIndexEntry>? pending = null;
+            if (wholeBlocks && idx is not null)
+            {
+                pending = [];
+                foreach (var b in idx.Blocks)
+                {
+                    if (b.Type != BlockType.Records) continue;
+                    if (constraints.ExcludeBlock(b, idx) is not null) { stats.BlocksPruned++; continue; }
+                    var start = BucketStart(b.MinTimestamp, width);
+                    var allMatch = b.MinTimestamp >= constraints.MinTime && b.MaxTimestamp <= constraints.MaxTime
+                        && (minSeverity is not { } ms || (b.Summary is { } sum && (sum.SeverityMask & ((1u << (int)ms) - 1)) == 0));
+                    if (allMatch && BucketStart(b.MaxTimestamp, width) == start)
+                    {
+                        buckets![start] = buckets.GetValueOrDefault(start) + b.RecordCount;
+                        stats.RecordsMatched += b.RecordCount;
+                        continue;
+                    }
+                    pending.Add(b);
+                }
+                if (pending.Count == 0) continue;
+            }
             usedIndexOnly = false;
             SegmentReader reader;
             try { reader = SegmentReader.Open(Store.SegmentPath(id)); }
@@ -344,7 +370,7 @@ public sealed class QueryEngine(StoreReader store)
             catch (Exception ex) when (ex is LlogFormatException or IOException) { report.Add(new ScanIssue(IssueKind.UnsupportedFile, Store.SegmentPath(id), 0, 0, ex.Message)); continue; }
             using var _ = reader;
             stats.SegmentsScanned++;
-            foreach (var block in Blocks(reader, constraints, SortOrder.Ascending, report, stats))
+            foreach (var block in pending is null ? Blocks(reader, constraints, SortOrder.Ascending, report, stats) : PendingBlocks(reader, pending, report))
             {
                 stats.BlocksScanned++;
                 stats.RecordsDecoded += block.Records.Count;
@@ -352,14 +378,13 @@ public sealed class QueryEngine(StoreReader store)
                 {
                     if (!match(r)) continue;
                     stats.RecordsMatched++;
-                    string key;
-                    if (bucket is { } bk)
+                    if (buckets is not null)
                     {
-                        var width = bk.Ticks * 100;
-                        var start = r.TimestampUnixNanos - (((r.TimestampUnixNanos % width) + width) % width);
-                        key = UnixTime.FormatRfc3339(start);
+                        var start = BucketStart(r.TimestampUnixNanos, width);
+                        buckets[start] = buckets.GetValueOrDefault(start) + 1;
+                        continue;
                     }
-                    else key = gb switch
+                    var key = gb switch
                     {
                         "event" => r.EffectiveEventName ?? "(none)",
                         "level" or "severity" => r.Severity.ToText(),
@@ -371,20 +396,84 @@ public sealed class QueryEngine(StoreReader store)
             }
         }
         stats.ElapsedMs = sw.Elapsed.TotalMilliseconds;
-        var ordered = bucket is null ? counts.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key, StringComparer.Ordinal) : counts.OrderBy(kv => kv.Key, StringComparer.Ordinal);
-        var groups = ordered.Take(bucket is null ? top : int.MaxValue).Select(kv => (kv.Key, kv.Value)).ToList();
-        return new AggregateResult(bucket is null ? groupBy : $"time/{bucket}", groups, counts.Values.Sum(), usedIndexOnly && stats.SegmentsScanned == 0, !report.IsClean, report.Issues, stats);
+        List<(string Key, long Count)> groups;
+        long total;
+        if (buckets is not null)
+        {
+            // Formatted once per bucket (not per record), in time order.
+            groups = buckets.OrderBy(kv => kv.Key).Select(kv => (UnixTime.FormatRfc3339(kv.Key), kv.Value)).ToList();
+            total = buckets.Values.Sum();
+        }
+        else
+        {
+            groups = counts.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key, StringComparer.Ordinal).Take(top).Select(kv => (kv.Key, kv.Value)).ToList();
+            total = counts.Values.Sum();
+        }
+        return new AggregateResult(bucket is null ? groupBy : $"time/{bucket}", groups, total, usedIndexOnly && stats.SegmentsScanned == 0, !report.IsClean, report.Issues, stats);
     }
 
     private static void Add(Dictionary<string, long> d, string k, long n) => d[k] = d.GetValueOrDefault(k) + n;
 
+    private static long BucketStart(long t, long width) => t - (((t % width) + width) % width);
+
+    /// <summary>Decodes the given blocks of a sealed segment in file order; undecodable ones are reported and skipped.</summary>
+    private static IEnumerable<DecodedBlock> PendingBlocks(SegmentReader reader, List<BlockIndexEntry> blocks, ScanReport report)
+    {
+        foreach (var b in blocks)
+        {
+            DecodedBlock? decoded = null;
+            try
+            {
+                decoded = reader.ReadBlockAt(b);
+                report.BytesRead += b.Length;
+            }
+            catch (Exception ex) when (ex is LlogFormatException or InvalidDataException or IOException)
+            {
+                report.Add(new ScanIssue(IssueKind.UndecodableBlock, reader.Path, b.Offset, b.Length, ex.Message, b.RecordCount));
+            }
+            if (decoded is not null) yield return decoded;
+        }
+    }
+
+    // Only comparisons that PruningConstraints turns into exact time bounds: then "inside the bounds" means "matches".
     private static bool IsOnlyTime(Expr e) => e switch
     {
         TrueExpr => true,
         AndExpr a => IsOnlyTime(a.Left) && IsOnlyTime(a.Right),
-        CompareExpr { Field.Kind: BuiltinField.Time } => true,
+        CompareExpr { Field.Kind: BuiltinField.Time, Op: CompareOp.Eq or CompareOp.Gt or CompareOp.Ge or CompareOp.Lt or CompareOp.Le } => true,
         _ => false,
     };
+
+    /// <summary>
+    /// True when the filter is exact time bounds plus at most "level &gt;= X" / "level &gt; X" conditions; then a block
+    /// inside the bounds whose severities are all at least <paramref name="minSeverity"/> matches entirely.
+    /// </summary>
+    private static bool IsTimeAndMinSeverity(Expr e, out Severity? minSeverity)
+    {
+        Severity? min = null;
+        bool Walk(Expr x)
+        {
+            switch (x)
+            {
+                case TrueExpr: return true;
+                case AndExpr a: return Walk(a.Left) && Walk(a.Right);
+                case CompareExpr { Field.Kind: BuiltinField.Severity, Op: CompareOp.Ge or CompareOp.Gt } s:
+                    try
+                    {
+                        var sev = Evaluator.ParseSeverity(s.Value);
+                        var m = s.Op == CompareOp.Gt ? (Severity)((int)sev + 1) : sev;
+                        if ((int)m > SeverityExtensions.MaxNumber) return false;
+                        if (min is null || m > min) min = m;
+                        return true;
+                    }
+                    catch (QuerySyntaxException) { return false; } // not a level: decode and let the matcher decide
+                default: return IsOnlyTime(x);
+            }
+        }
+        var ok = Walk(e);
+        minSeverity = min;
+        return ok;
+    }
 }
 
 /// <summary>Source-generated serializer for cursors (no reflection: trimming/AOT-safe). Same JSON shape as before.</summary>
