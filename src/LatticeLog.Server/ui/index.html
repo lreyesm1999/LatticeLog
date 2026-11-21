@@ -141,9 +141,19 @@
     </div>
 
     <div id="histogram" class="histogram card" hidden>
-      <div class="hist-head"><span id="hist-title" class="muted small"></span><span class="muted small">Click a bar to zoom in</span></div>
-      <div id="hist-bars" class="hist-bars"></div>
-      <div class="hist-axis"><span id="hist-from"></span><span id="hist-to"></span></div>
+      <div class="hist-head">
+        <span id="hist-title" class="muted small"></span>
+        <span id="hist-scale" class="hist-badge" title="One period has far more events than the rest, so heights use a logarithmic scale to keep the small ones visible" hidden>log scale</span>
+        <span class="spacer"></span>
+        <span id="hist-peak" class="muted small"></span>
+        <span id="hist-errors" class="hist-errors"></span>
+        <button type="button" id="hist-fold" class="ghost small" aria-controls="hist-body">Hide</button>
+      </div>
+      <div id="hist-body" class="hist-body">
+        <div id="hist-bars" class="hist-bars"></div>
+        <div class="hist-axis"><span id="hist-from"></span><span class="hist-legend"><i class="sw ev"></i>events <i class="sw er"></i>errors</span><span id="hist-to"></span></div>
+      </div>
+      <div id="hist-tip" class="hist-tip" role="tooltip" hidden></div>
     </div>
 
     <div class="summary">
