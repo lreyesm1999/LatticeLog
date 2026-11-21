@@ -242,6 +242,24 @@ restarts mid-session, the shim reconnects and resends the requests that were in 
 | retention | `latticelog sources retention '*' --max-age 30d` (default for all), `latticelog sources retention legacy-app --max-mb 500` |
 | service files | endpoint and log in `<data>/service/` (`%LOCALAPPDATA%\LatticeLog\service`, `~/.local/share/latticelog/service`) |
 
+**Update.** `llog update` installs the newest release from GitHub Releases:
+
+```bash
+llog update --check     # what is installed, what is available; changes nothing
+llog update             # asks, then installs (-y to skip the question)
+```
+
+1. It downloads the executable for your platform (Windows x64, Linux x64) and `SHA256SUMS`, and refuses the file if
+   the hash does not match.
+2. It runs the downloaded executable's own `setup`, which stops the service, swaps the executable (a running one, such
+   as an editor's MCP server, is moved aside), and registers and restarts the service.
+
+Data, config and the MCP entries in your editors are kept. Restart your AI tools to load the new MCP server. Use
+`--version 0.2.0` for a specific release, or `--prerelease` to include pre-releases.
+
+Releases are published by [`release.yml`](.github/workflows/release.yml) when a version tag is pushed: run
+`git tag v0.2.0` and then `git push origin v0.2.0`. A tag with a hyphen (`v0.2.0-beta.1`) becomes a pre-release.
+
 **Uninstall.** Run `latticelog setup --uninstall`. It:
 
 - stops and unregisters the service;
