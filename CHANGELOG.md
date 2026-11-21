@@ -2,6 +2,20 @@
 
 ## Unreleased — public repository under the MIT license
 
+- **Faster web console and time histograms.**
+  - **Time histograms** (`/v1/stats?bucket=`, `latticelog stats --bucket`) now count every block whose records all
+    match and fall into one bucket straight from the segment's footer directory, without decoding it. This works
+    with no filter, with time bounds and with `level >= X`. Over 1.76 M events, the whole-source histogram the
+    console draws on every search went from about 510 ms to 4 ms with daily bars, and to 23 ms with 5-minute bars.
+    The counts are unchanged.
+  - **Bucket keys** are formatted once per bucket instead of once per record.
+  - **Source explorer:** the list only puts the visible rows in the page (virtual scrolling). Per-source search
+    text, folder and newest-event time are computed once, and sorting and numbers use shared `Intl` formatters.
+    With 3,000 sources, a full redraw went from about 215 ms to 9 ms, and re-sorting from 184 ms to 7 ms.
+  - **Overview** draws each count as it arrives, instead of waiting for the slowest (the per-service count reads
+    every event).
+  - **Counts are reused for 20 s** when moving between views. Search and Refresh always count again.
+
 - **Source explorer in the web console** (`llog ui`): the source drop-down is replaced by a Sources view laid out like
   a file explorer. A folder tree (registered roots and their subfolders, latticelog.toml projects, migrated logs by the
   original file's folder, plus All, Pinned and Recent), a sortable list with events, size, newest event and an

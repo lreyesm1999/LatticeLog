@@ -112,6 +112,45 @@ public class QueryTests
     }
 
     [Theory]
+    [InlineData("", "1s")]
+    [InlineData("", "1m")]
+    [InlineData("", "1h")]
+    [InlineData("", "1d")]
+    [InlineData("level >= ERROR", "10m")]
+    [InlineData("level > WARN AND level >= INFO", "1h")]
+    [InlineData("level >= 1", "1d")]
+    [InlineData("time >= '2025-11-17T17:40:00Z' AND time < '2025-11-17T18:30:00Z'", "5m")]
+    [InlineData("time != '2025-11-17T17:40:00Z'", "1h")]
+    [InlineData("level >= ERROR AND service = 'svc-1'", "1h")]
+    [InlineData("text CONTAINS 'timeout'", "1h")]
+    public void Time_histogram_equals_full_scan(string where, string bucket)
+    {
+        var (root, all) = Fixture.Value;
+        var engine = QueryEngine.Open(root);
+        var width = LatticeLog.Sources.Durations.Parse(bucket);
+        var res = engine.Aggregate(new QueryRequest { Where = where.Length == 0 ? null : where }, "time", width);
+        var match = where.Length == 0 ? (_ => true) : Evaluator.Compile(QueryParser.Parse(where));
+        var w = width.Ticks * 100;
+        var expected = all.Where(match).GroupBy(r => r.TimestampUnixNanos - (((r.TimestampUnixNanos % w) + w) % w))
+            .OrderBy(g => g.Key).Select(g => (UnixTime.FormatRfc3339(g.Key), (long)g.Count())).ToList();
+        Assert.True(expected.Count > 0, "the filter should match the fixture: " + where);
+        Assert.Equal(expected, res.Groups);
+        Assert.Equal(expected.Sum(g => g.Item2), res.Total);
+        Assert.False(res.Partial);
+    }
+
+    [Fact]
+    public void Whole_source_histogram_counts_blocks_from_the_footer()
+    {
+        var (root, all) = Fixture.Value;
+        var engine = QueryEngine.Open(root);
+        // Wide buckets: nearly every block falls into one bucket, so it is counted without being decoded.
+        var res = engine.Aggregate(new QueryRequest(), "time", TimeSpan.FromDays(1));
+        Assert.Equal(all.Count, res.Total);
+        Assert.True(res.Stats.RecordsDecoded < all.Count / 4, $"decoded {res.Stats.RecordsDecoded} of {all.Count}");
+    }
+
+    [Theory]
     [InlineData("level >=")]
     [InlineData("(level = ERROR")]
     [InlineData("service = 'unterminated")]

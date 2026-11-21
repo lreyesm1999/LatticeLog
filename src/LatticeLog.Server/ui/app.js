@@ -69,8 +69,25 @@ async function api(path, params = {}) {
   return body;
 }
 
+// Counts (/v1/stats) are reused for a short while, so going back and forth between views does not count again.
+// Search, Refresh and anything that changes the query bypass it (a different query is a different key).
+const statsCache = new Map();
+const STATS_TTL = 20e3;
+function cachedApi(path, params = {}) {
+  const key = JSON.stringify([state.ns, path, Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== "")]);
+  const hit = statsCache.get(key);
+  if (hit && Date.now() - hit.at < STATS_TTL) return hit.promise;
+  const promise = api(path, params);
+  statsCache.set(key, { at: Date.now(), promise });
+  promise.catch(() => statsCache.delete(key));
+  if (statsCache.size > 80) statsCache.delete(statsCache.keys().next().value);
+  return promise;
+}
+const dropStatsCache = () => statsCache.clear();
+
 const toMs = (iso) => Date.parse(String(iso).replace(/(\.\d{3})\d+/, "$1"));
-const num = (n) => Number(n ?? 0).toLocaleString();
+const NUM = new Intl.NumberFormat(); // one formatter: toLocaleString() builds a new one on every call
+const num = (n) => NUM.format(Number(n ?? 0));
 const pad = (n, w = 2) => String(n).padStart(w, "0");
 const baseLevel = (s) => String(s || "").replace(/\d+$/, "");
 const DAY = 864e5;
@@ -472,7 +489,7 @@ async function histogram(where, scope, seq) {
   if (from === null || from === undefined || to === null || to === undefined || to <= from) { box.hidden = true; return; }
   const [width, param, label] = BUCKETS.find(([w]) => w >= (to - from) / 60) || BUCKETS[BUCKETS.length - 1];
   try {
-    const res = await api("/v1/stats", { where, ...scope.params, bucket: param });
+    const res = await cachedApi("/v1/stats", { where, ...scope.params, bucket: param });
     if (seq !== state.seq) return;
     if (!String(res.group_by).startsWith("time")) { box.hidden = true; return; } // an older service without buckets
     const counts = new Map(res.groups.map((g) => [toMs(g.key), g.count]));
@@ -622,40 +639,53 @@ async function stats() {
   $("stats-range").textContent = `${rangeText()}${where ? ` · filter: ${where}` : ""}`;
   box.replaceChildren(h("div", { class: "loading" }, h("span", { class: "spinner" }), "Counting…"));
   const seq = ++state.seq;
+  const by = state.statsBy;
+  // Three counts in parallel, each drawn as soon as it arrives: level and event counts usually come from the
+  // segment indexes in a few ms, the per-service count may have to read every event.
+  const byLevelP = cachedApi("/v1/stats", { by: "level", where, ...scope.params });
+  const byServiceP = cachedApi("/v1/stats", { by: "service", where, ...scope.params, top: 1000 });
+  const mainP = by === "level" ? byLevelP : by === "service" ? byServiceP : cachedApi("/v1/stats", { by, where, ...scope.params });
+  byServiceP.catch(() => { /* reported below with the others */ });
+  mainP.catch(() => { /* reported below */ });
   try {
-    const [byLevel, byService, main] = await Promise.all([
-      api("/v1/stats", { by: "level", where, ...scope.params }),
-      api("/v1/stats", { by: "service", where, ...scope.params, top: 1000 }),
-      state.statsBy === "level" || state.statsBy === "service" ? null : api("/v1/stats", { by: state.statsBy, where, ...scope.params }),
-    ]);
+    const byLevel = await byLevelP;
     if (seq !== state.seq) return;
-    const lv = Object.fromEntries(byLevel.groups.map((g) => [baseLevel(g.key), 0]));
-    for (const g of byLevel.groups) lv[baseLevel(g.key)] += g.count;
+    const lv = {};
+    for (const g of byLevel.groups) lv[baseLevel(g.key)] = (lv[baseLevel(g.key)] || 0) + g.count;
     const errors = (lv.ERROR || 0) + (lv.FATAL || 0);
     const goSearch = (fn) => () => { fn(); switchView("search"); };
+    const servicesCard = statCard("Services", "…", "counting");
     cards.replaceChildren(
-      statCard("Events", num(byService.total), rangeText()),
+      statCard("Events", num(byLevel.total), rangeText()),
       statCard("Errors", num(errors), byLevel.total ? `${((100 * errors) / byLevel.total).toFixed(1)}% of events` : "", errors ? "error" : "", errors ? goSearch(() => setLevel("ERROR")) : null),
       statCard("Warnings", num(lv.WARN || 0), "", lv.WARN ? "warn" : "", lv.WARN ? goSearch(() => setLevel("WARN")) : null),
-      statCard("Services", num(byService.groups.length), byService.groups.slice(0, 3).map((g) => g.key).join(", ")));
-    const res = state.statsBy === "level" ? byLevel : state.statsBy === "service" ? byService : main;
-    const groups = state.statsBy === "service" ? res.groups.slice(0, 50) : res.groups;
-    if (!groups.length) { box.replaceChildren(h("div", { class: "none", text: `No events in ${rangeText()}.` })); return; }
-    const max = Math.max(1, ...groups.map((g) => g.count));
-    box.replaceChildren(...groups.map((g) => {
-      const fill = h("span", { class: `fill ${state.statsBy === "level" ? baseLevel(g.key) : ""}` });
-      fill.style.width = `${(100 * g.count) / max}%`;
-      return h("div", { class: "row", title: `Show these events`, onclick: () => drill(g.key) },
-        h("span", { class: "key", title: g.key, text: g.key }),
-        h("span", { class: "track" }, fill),
-        h("span", { class: "n", text: num(g.count) }),
-        h("span", { class: "pct", text: res.total ? `${((100 * g.count) / res.total).toFixed(1)}%` : "" }));
-    }));
+      servicesCard);
+    const main = await mainP;
+    if (seq !== state.seq) return;
+    statBars(box, main, by);
+    const byService = await byServiceP;
+    if (seq !== state.seq) return;
+    servicesCard.replaceWith(statCard("Services", num(byService.groups.length), byService.groups.slice(0, 3).map((g) => g.key).join(", ")));
   } catch (err) {
     if (seq !== state.seq) return;
     cards.replaceChildren();
     box.replaceChildren(h("div", { class: "none", text: err.message }));
   }
+}
+
+function statBars(box, res, by) {
+  const groups = by === "service" ? res.groups.slice(0, 50) : res.groups;
+  if (!groups.length) { box.replaceChildren(h("div", { class: "none", text: `No events in ${rangeText()}.` })); return; }
+  const max = Math.max(1, ...groups.map((g) => g.count));
+  box.replaceChildren(...groups.map((g) => {
+    const fill = h("span", { class: `fill ${by === "level" ? baseLevel(g.key) : ""}` });
+    fill.style.width = `${(100 * g.count) / max}%`;
+    return h("div", { class: "row", title: `Show these events`, onclick: () => drill(g.key) },
+      h("span", { class: "key", title: g.key, text: g.key }),
+      h("span", { class: "track" }, fill),
+      h("span", { class: "n", text: num(g.count) }),
+      h("span", { class: "pct", text: res.total ? `${((100 * g.count) / res.total).toFixed(1)}%` : "" }));
+  }));
 }
 
 function drill(key) {
@@ -732,8 +762,9 @@ const KINDS = {
 const kindOf = (s) => KINDS[s.kind] || KINDS.store;
 const kindLabel = (s) => (s.kind === "migrated" && s.follow ? "Migrated log (following)" : kindOf(s).label);
 const hasData = (s) => s.status === "ok";
-const lastMs = (s) => (s.last_time ? toMs(s.last_time) : null);
-const compact = (n) => { try { return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(n || 0); } catch { return num(n); } };
+const lastMs = (s) => { const d = ex.derived.get(s.name); return d && d.time === s.last_time ? d.last : (s.last_time ? toMs(s.last_time) : null); };
+const COMPACT = (() => { try { return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }); } catch { return null; } })(); // older engines: plain numbers
+const compact = (n) => (COMPACT ? COMPACT.format(n || 0) : num(n));
 const byName = (name) => state.sources.find((s) => s.name === name);
 
 /** live: new events in the last 15 minutes; idle: older; none: nothing indexed yet; bad: the service failed to index it. */
@@ -773,7 +804,7 @@ function isUnder(path, base) {
 }
 const relParts = (path, base) => pathParts(trimSep(path).slice(trimSep(base).length));
 
-const ex = { nodes: new Map(), locOf: new Map(), node: null, sel: null, filter: "", sort: { key: "name", dir: 1 }, open: new Set(), rows: [], stats: new Map(), seq: 0 };
+const ex = { nodes: new Map(), locOf: new Map(), derived: new Map(), listKey: "", node: null, sel: null, filter: "", sort: { key: "name", dir: 1 }, open: new Set(), rows: [], stats: new Map(), seq: 0 };
 
 /**
  * The folder tree: one location per registered root (and latticelog.toml project), its subfolders down to each
@@ -823,6 +854,14 @@ function buildTree() {
   }
   ex.nodes = nodes;
   ex.locOf = locOf;
+  // Per-source text used by every sort, search and row, computed once per source list instead of per call.
+  ex.derived = new Map();
+  for (const s of state.sources) {
+    const parts = [];
+    for (let n = locOf.get(s.name); n; n = n.parent) parts.unshift(n.label);
+    const loc = parts.join(" › ");
+    ex.derived.set(s.name, { loc, time: s.last_time, last: s.last_time ? toMs(s.last_time) : null, hay: [s.name, s.service, s.environment, s.path, kindLabel(s), loc, ...(s.migrated_from || [])].filter(Boolean).join(" ").toLowerCase() });
+  }
   if (!ex.node || !nodes.has(ex.node)) {
     const home = state.ns && locOf.get(state.ns);
     ex.node = home ? home.id : "all";
@@ -858,14 +897,10 @@ function virtualSources(node) {
 }
 
 /** Where a source lives, as a short path: "logs › payments". */
-function locationText(s) {
-  const parts = [];
-  for (let n = ex.locOf.get(s.name); n; n = n.parent) parts.unshift(n.label);
-  return parts.join(" › ");
-}
+function locationText(s) { return ex.derived.get(s.name)?.loc ?? ""; }
 
 function matchesFilter(s, words) {
-  const hay = [s.name, s.service, s.environment, s.path, kindLabel(s), ...(s.migrated_from || [])].filter(Boolean).join(" ").toLowerCase();
+  const hay = ex.derived.get(s.name)?.hay ?? s.name.toLowerCase();
   return words.every((w) => hay.includes(w));
 }
 
@@ -879,16 +914,18 @@ function currentItems() {
   return { flat: false, folders: [...node.children.values()], sources: node.sources };
 }
 
+// One collator: localeCompare() with options builds a new one on every comparison (50 ms to sort 3,000 names).
+const COLL = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 const SORTS = {
-  name: (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }),
-  loc: (a, b) => locationText(a).localeCompare(locationText(b)) || SORTS.name(a, b),
-  type: (a, b) => kindLabel(a).localeCompare(kindLabel(b)) || SORTS.name(a, b),
+  name: (a, b) => COLL.compare(a.name, b.name),
+  loc: (a, b) => COLL.compare(locationText(a), locationText(b)) || SORTS.name(a, b),
+  type: (a, b) => COLL.compare(kindLabel(a), kindLabel(b)) || SORTS.name(a, b),
   records: (a, b) => (a.records || 0) - (b.records || 0),
   bytes: (a, b) => (a.bytes || 0) - (b.bytes || 0),
   last: (a, b) => (lastMs(a) || 0) - (lastMs(b) || 0),
 };
 const FOLDER_SORTS = {
-  name: (a, b) => a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: "base" }),
+  name: (a, b) => COLL.compare(a.label, b.label),
   records: (a, b) => aggregate(a).records - aggregate(b).records,
   bytes: (a, b) => aggregate(a).bytes - aggregate(b).bytes,
   last: (a, b) => (aggregate(a).newest || 0) - (aggregate(b).newest || 0),
@@ -900,7 +937,7 @@ function renderHead(flat) {
   $("ex-list").classList.toggle("flat", flat);
   $("ex-head").replaceChildren(...COLUMNS.map(([key, label, cls]) => {
     const active = ex.sort.key === key;
-    return h("th", { class: (cls || "") + " sortable" + (active ? " sorted" : ""), "aria-sort": active ? (ex.sort.dir > 0 ? "ascending" : "descending") : null,
+    return h("th", { class: `c-${key} ${cls || ""} sortable${active ? " sorted" : ""}`, "aria-sort": active ? (ex.sort.dir > 0 ? "ascending" : "descending") : null,
       onclick: () => { ex.sort = { key, dir: active ? -ex.sort.dir : (key === "name" || key === "loc" || key === "type" ? 1 : -1) }; renderList(); } },
     label, h("span", { class: "arrow", text: active ? (ex.sort.dir > 0 ? "▲" : "▼") : "" }));
   }));
@@ -914,8 +951,10 @@ function renderList() {
   const fsort = FOLDER_SORTS[ex.sort.key] || FOLDER_SORTS.name;
   const folders = [...items.folders].sort((a, b) => (FOLDER_SORTS[ex.sort.key] ? dir : 1) * fsort(a, b));
   ex.rows = [...folders.map((f) => ({ type: "folder", key: f.id, node: f })), ...sources.map((s) => ({ type: "source", key: s.name, source: s }))];
-  const tbody = $("ex-list").tBodies[0];
-  tbody.replaceChildren(...ex.rows.map((r, i) => r.type === "folder" ? folderRow(r.node, i) : sourceRow(r.source, i)));
+  // Another folder or search starts at the top; a re-sort or refresh keeps the scroll position.
+  const listKey = `${ex.node}|${ex.filter.trim().toLowerCase()}`;
+  if (listKey !== ex.listKey) { ex.listKey = listKey; $("ex-wrap").scrollTop = 0; }
+  renderRows(true);
   const empty = ex.rows.length === 0;
   $("ex-empty").hidden = !empty;
   if (empty) {
@@ -934,7 +973,44 @@ function renderList() {
   const recs = sources.reduce((n, s) => n + (s.records || 0), 0) + folders.reduce((n, f) => n + aggregate(f).records, 0);
   const size = sources.reduce((n, s) => n + (s.bytes || 0), 0) + folders.reduce((n, f) => n + aggregate(f).bytes, 0);
   $("ex-status").textContent = total ? `${num(total)} item${total === 1 ? "" : "s"} · ${num(recs)} events · ${bytes(size)}` : "";
+}
+
+/**
+ * Virtual list: only the rows in (and just around) the visible part of the list are in the DOM, between two spacer
+ * rows that keep the scrollbar true to the full list. Thousands of sources cost the same as forty.
+ */
+const vlist = { h: 46, start: -1, end: -1, raf: 0 };
+function renderRows(force = false) {
+  const wrap = $("ex-wrap");
+  const n = ex.rows.length;
+  const head = $("ex-list").tHead.offsetHeight;
+  const view = wrap.clientHeight || 800;
+  const top = Math.max(0, wrap.scrollTop - head);
+  const start = Math.max(0, Math.floor(top / vlist.h) - 8);
+  const end = Math.min(n, Math.ceil((top + view) / vlist.h) + 8);
+  if (!force && start === vlist.start && end === vlist.end) return;
+  vlist.start = start; vlist.end = end;
+  const spacer = (px) => { const td = h("td", { colspan: "6" }); td.style.height = `${px}px`; return h("tr", { class: "spacer", "aria-hidden": "true" }, td); };
+  const rows = [];
+  if (start > 0) rows.push(spacer(start * vlist.h));
+  for (let i = start; i < end; i++) { const r = ex.rows[i]; rows.push(r.type === "folder" ? folderRow(r.node, i) : sourceRow(r.source, i)); }
+  if (end < n) rows.push(spacer((n - end) * vlist.h));
+  $("ex-list").tBodies[0].replaceChildren(...rows);
   markSelection();
+  // The CSS sets the row height; measure it once it is laid out (zoom and fonts change it slightly).
+  const first = rows.find((r) => r.dataset.i !== undefined);
+  const real = first && wrap.clientHeight ? first.getBoundingClientRect().height : 0;
+  if (real > 10 && Math.abs(real - vlist.h) > 0.5) { vlist.h = real; renderRows(true); }
+}
+
+/** Scrolls the list so row i is visible below the sticky header. */
+function scrollToRow(i) {
+  const wrap = $("ex-wrap");
+  const head = $("ex-list").tHead.offsetHeight;
+  const top = i * vlist.h;
+  if (top < wrap.scrollTop) wrap.scrollTop = top;
+  else if (top + vlist.h + head > wrap.scrollTop + wrap.clientHeight) wrap.scrollTop = top + vlist.h + head - wrap.clientHeight;
+  renderRows();
 }
 
 function nameCell(iconEl, name, sub, dotKind, dotTitle) {
@@ -981,11 +1057,12 @@ function selectedIndex() { return ex.sel ? ex.rows.findIndex((r) => r.type === e
 
 function markSelection(scroll = false) {
   const i = selectedIndex();
+  if (scroll && i >= 0) scrollToRow(i);
   for (const tr of $("ex-list").tBodies[0].rows) {
+    if (tr.dataset.i === undefined) continue;
     const on = Number(tr.dataset.i) === i;
     tr.classList.toggle("selected", on);
     tr.setAttribute("aria-selected", String(on));
-    if (on && scroll) tr.scrollIntoView({ block: "nearest" });
   }
 }
 
@@ -1042,7 +1119,7 @@ function renderTree() {
   };
   const tops = [...ex.nodes.values()].filter((n) => n.top);
   const order = (n) => (n.id.startsWith("loc:") ? 0 : n.id.startsWith("proj:") ? 1 : n.id === "migrated" ? 2 : 3);
-  tops.sort((a, b) => order(a) - order(b) || a.label.localeCompare(b.label));
+  tops.sort((a, b) => order(a) - order(b) || COLL.compare(a.label, b.label));
   const section = (title, nodes) => nodes.length ? [h("div", { class: "tsec", text: title }), ...nodes.flatMap((n) => item(n, 0))] : [];
   tree.replaceChildren(
     ...section("Quick access", ["all", "pinned", "recent"].map((id) => ex.nodes.get(id))),
@@ -1118,7 +1195,9 @@ function sourcePreview(box, s) {
       ["Migrated from", (s.migrated_from || []).join("\n") || null],
       ["Note", s.records_note],
     ])].filter(Boolean));
-  if (can) previewStats(s);
+  // Holding an arrow key passes many rows: count only for the row the selection stops on (cached ones draw at once).
+  clearTimeout(ex.pvTimer);
+  if (can) ex.pvTimer = setTimeout(() => previewStats(s), ex.stats.has(`${s.name}|${s.last_time}|${s.records}`) ? 0 : 150);
 }
 
 /** All-time level mix and events over time, for the preview. Cached per source and newest event. */
@@ -1338,6 +1417,10 @@ $("cancel-token").addEventListener("click", () => showApp());
 $("source-btn").addEventListener("click", () => switchView("sources"));
 $("ex-up").addEventListener("click", goUp);
 $("ex-refresh").addEventListener("click", () => renderExplorer("rescan"));
+$("ex-wrap").addEventListener("scroll", () => {
+  if (!vlist.raf) vlist.raf = requestAnimationFrame(() => { vlist.raf = 0; renderRows(); });
+}, { passive: true });
+window.addEventListener("resize", () => { if (state.view === "sources") renderRows(); });
 $("ex-filter").addEventListener("input", () => {
   ex.filter = $("ex-filter").value;
   $("ex-clear").hidden = !ex.filter;
@@ -1375,7 +1458,7 @@ function activateSelection() {
 }
 for (const b of $("tabs").children) b.addEventListener("click", () => switchView(b.dataset.view));
 
-$("query").addEventListener("submit", (ev) => { ev.preventDefault(); state.view === "search" ? runSearch() : refreshView(); });
+$("query").addEventListener("submit", (ev) => { ev.preventDefault(); dropStatsCache(); state.view === "search" ? runSearch() : refreshView(); });
 $("where").addEventListener("input", syncClear);
 $("clear-where").addEventListener("click", () => { $("where").value = ""; syncClear(); $("where").focus(); runSearch(); });
 $("range").addEventListener("change", () => {
@@ -1390,7 +1473,7 @@ $("help-toggle").addEventListener("click", () => { $("help").hidden = !$("help")
 $("more").addEventListener("click", () => runSearch(true));
 
 for (const b of $("groupby").children) b.addEventListener("click", () => { state.statsBy = b.dataset.by; savePrefs(); stats(); });
-$("stats-refresh").addEventListener("click", () => stats());
+$("stats-refresh").addEventListener("click", () => { dropStatsCache(); stats(); });
 
 $("close").addEventListener("click", closeDetail);
 $("prev").addEventListener("click", () => selectEvent(state.selected - 1));
