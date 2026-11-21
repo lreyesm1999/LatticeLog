@@ -14,8 +14,8 @@ namespace LatticeLog.Service;
 /// <summary>
 /// The service's HTTP side, on the same 127.0.0.1 port: the web console (<c>/ui</c>, the server's console) and the
 /// subset of the server's read API it uses, where each source is a "namespace" (<c>/v1/namespaces</c>,
-/// <c>/v1/search</c>, <c>/v1/traces/{id}</c>, <c>/v1/stats</c>, <c>/v1/catalog</c>), plus <c>/v1/status</c> and
-/// <c>/v1/health</c>. GET and HEAD only, one request per connection.
+/// <c>/v1/search</c>, <c>/v1/traces/{id}</c>, <c>/v1/stats</c>, <c>/v1/catalog</c>), plus <c>/v1/sources</c> (the
+/// console's source explorer), <c>/v1/status</c> and <c>/v1/health</c>. GET and HEAD only, one request per connection.
 /// <list type="bullet">
 /// <item>Every <c>/v1/*</c> route except health needs <c>Authorization: Bearer &lt;service token&gt;</c>.</item>
 /// <item>The Host header must name the loopback address and port: a web page cannot reach the service through DNS
@@ -67,6 +67,9 @@ internal static class LoopbackHttp
             {
                 case "/v1/status":
                     Json(200, host.Status());
+                    return;
+                case "/v1/sources":
+                    Json(200, host.Sources(discover: req.Query.GetValueOrDefault("refresh") is "1" or "true"));
                     return;
                 case "/v1/namespaces":
                     Json(200, new JsonObject { ["namespaces"] = new JsonArray(host.AllSources().Where(x => x.Source.HasStore).Select(x => (JsonNode?)JsonValue.Create(x.Source.Name)).ToArray()) });

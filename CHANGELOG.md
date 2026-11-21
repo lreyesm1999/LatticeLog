@@ -2,6 +2,14 @@
 
 ## Unreleased — public repository under the MIT license
 
+- **Source explorer in the web console** (`llog ui`): the source drop-down is replaced by a Sources view laid out like
+  a file explorer. A folder tree (registered roots and their subfolders, latticelog.toml projects, migrated logs by the
+  original file's folder, plus All, Pinned and Recent), a sortable list with events, size, newest event and an
+  active/idle/no-data marker, a breadcrumb, a search across every folder, and a details pane (events over time, level
+  mix, path, retention, last indexing error) with Open logs, Errors and Overview. `Ctrl+K` jumps to a source by name
+  from anywhere. With several sources and none chosen, the console starts in the explorer. New service route
+  `GET /v1/sources` (`?refresh=1` rescans the roots).
+
 - **`llog update`** installs the newest GitHub release: it downloads the executable for the platform and `SHA256SUMS`,
   refuses a hash mismatch, and runs the new version's own `setup`. Data, config and MCP entries are kept. `--check`
   only reports; `--version` and `--prerelease` pick a release. New workflow `release.yml` publishes a release (Native

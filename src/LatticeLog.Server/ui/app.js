@@ -21,7 +21,10 @@ const prefs = loadPrefs();
 const state = {
   token: sessionStorage.getItem("ll-token") || "",
   ns: sessionStorage.getItem("ll-ns") || "",
-  namespaces: [],
+  namespaces: [],     // names of the sources that hold data (can be opened)
+  sources: [],        // every source as /v1/sources describes it
+  roots: [],          // registered folders, also the ones without sources yet
+  fallback: false,    // talking to a server or an older service without /v1/sources
   view: "search",
   cursor: null,
   events: [],
@@ -217,7 +220,8 @@ function showConnect(message, cancellable = false) {
   $("connect").hidden = false;
   $("app").hidden = true;
   $("tabs").hidden = true;
-  $("source-picker").hidden = true;
+  $("source-btn").hidden = true;
+  closePalette();
   $("change-token").hidden = true;
   $("cancel-token").hidden = !cancellable;
   $("connect-error").textContent = message || "";
@@ -230,21 +234,43 @@ function showApp() {
   $("app").hidden = false;
   $("tabs").hidden = false;
   $("change-token").hidden = false;
-  $("source-picker").hidden = state.namespaces.length === 0;
+  $("source-btn").hidden = state.sources.length === 0;
+}
+
+/** Every source with where it comes from (/v1/sources); a server or an older service only lists names. */
+async function loadSources(refresh = false) {
+  try {
+    const res = await api("/v1/sources", refresh ? { refresh: 1, ns: "" } : { ns: "" });
+    state.sources = Array.isArray(res.sources) ? res.sources : [];
+    state.roots = Array.isArray(res.roots) ? res.roots : [];
+    state.fallback = false;
+  } catch (err) {
+    if (err.status !== 404) throw err;
+    const { namespaces } = await api("/v1/namespaces", { ns: "" });
+    state.sources = namespaces.map((n) => ({ name: n, kind: "store", status: "ok", origin: "" }));
+    state.roots = [];
+    state.fallback = true;
+  }
+  state.namespaces = state.sources.filter(hasData).map((s) => s.name);
+  buildTree();
 }
 
 async function connect() {
   try {
-    const { namespaces } = await api("/v1/namespaces", { ns: "" });
-    state.namespaces = namespaces;
-    const sel = $("ns");
-    sel.replaceChildren(...namespaces.map((n) => h("option", { value: n, text: n })));
-    if (!namespaces.includes(state.ns)) state.ns = namespaces[0] || "";
-    sel.value = state.ns;
+    await loadSources();
+    const n = state.namespaces;
+    if (!n.includes(state.ns)) state.ns = n.length === 1 ? n[0] : "";
     sessionStorage.setItem("ll-ns", state.ns);
-    setStatus(namespaces.length === 1 ? "Connected · 1 source" : `Connected · ${namespaces.length} sources`, "ok");
+    if (state.ns) touchRecent(state.ns);
+    const total = state.sources.length;
+    setStatus(total === 1 ? "Connected · 1 source" : `Connected · ${num(total)} sources`, "ok");
     showApp();
-    await sourceChanged();
+    renderSourceButton();
+    // Several sources and none chosen in this tab: start in the explorer instead of guessing one.
+    if (!state.ns && n.length > 1) state.view = "sources";
+    syncTabs();
+    if (state.view === "sources") renderExplorer();
+    else await sourceChanged();
   } catch (err) {
     setStatus("Not connected", "bad");
     showConnect(err.status === 401 || err.status === 403 ? "That token was not accepted. Check it and try again." : `Could not reach LatticeLog: ${err.message}`);
@@ -301,6 +327,14 @@ function showNoSource() {
   $("histogram").hidden = true;
   $("summary-count").textContent = "";
   $("summary-meta").textContent = "";
+  $("notice").hidden = true;
+  $("more").hidden = true;
+  $("loading").hidden = true;
+  if (state.namespaces.length) {
+    showEmpty("Choose a source", `${num(state.namespaces.length)} sources have logs. Pick one in the explorer, or press Ctrl+K and type its name.`,
+      [["Browse sources", () => switchView("sources"), true], ["Jump to one…", openPalette]]);
+    return;
+  }
   showEmpty("No logs yet",
     "No source has data. On this PC, register the folder your services log into (llog roots add <folder>) or convert an old log file (llog migrate <file> --name <name>), then reload this page.", []);
 }
@@ -661,17 +695,616 @@ async function catalog() {
   if (problems.length) $("catalog-problems").textContent = `Manifest problems: ${problems.join("; ")}`;
 }
 
+// ------------------------------------------------------------------ source explorer
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+const ICONS = {
+  folder: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",
+  drive: "M3 13h18v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1zM5 13l2.5-7h9L19 13M7 16h.01M10 16h.01",
+  project: "M5 3h9l5 5v13H5zM14 3v5h5M8 13h8M8 17h5",
+  all: "M4 6h.01M8 6h12M4 12h.01M8 12h12M4 18h.01M8 18h12",
+  star: "M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z",
+  clock: "M12 7v5l3 2M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z",
+  python: "M4 5h16v14H4zM8 10l2.5 2L8 14M13 14h3",
+  dotnet: "M12 3l8 4.5v9L12 21l-8-4.5v-9zM4 7.5l8 4.5 8-4.5M12 12v9",
+  migrated: "M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8zM14 3v5h5M9 15h6M13 12l3 3-3 3",
+  chevron: "M9 6l6 6-6 6",
+  copy: "M9 9h10v10H9zM5 15V5h10",
+  open: "M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5",
+};
+function icon(name, cls = "") {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("class", ("ic " + cls).trim());
+  const p = document.createElementNS(SVG_NS, "path");
+  p.setAttribute("d", ICONS[name] || ICONS.folder);
+  svg.append(p);
+  return svg;
+}
+
+const KINDS = {
+  "python-local": { icon: "python", label: "Service (Python)" },
+  "dotnet-store": { icon: "dotnet", label: "Service (.NET)" },
+  migrated: { icon: "migrated", label: "Migrated log" },
+  store: { icon: "dotnet", label: "Source" },
+};
+const kindOf = (s) => KINDS[s.kind] || KINDS.store;
+const kindLabel = (s) => (s.kind === "migrated" && s.follow ? "Migrated log (following)" : kindOf(s).label);
+const hasData = (s) => s.status === "ok";
+const lastMs = (s) => (s.last_time ? toMs(s.last_time) : null);
+const compact = (n) => { try { return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(n || 0); } catch { return num(n); } };
+const byName = (name) => state.sources.find((s) => s.name === name);
+
+/** live: new events in the last 15 minutes; idle: older; none: nothing indexed yet; bad: the service failed to index it. */
+function activity(s) {
+  if (s.last_error) return ["bad", `Indexing failed: ${s.last_error}`];
+  if (!hasData(s)) return ["none", s.status && s.status !== "ok" ? cap(s.status) : "No events yet"];
+  const newest = Math.max(lastMs(s) || 0, s.last_new_records ? toMs(s.last_new_records) : 0);
+  if (newest && Date.now() - newest < 15 * 60e3) return ["live", "Active: new events in the last 15 minutes"];
+  return ["idle", newest ? `Idle: newest event ${ago(newest)}` : "Idle"];
+}
+const cap = (t) => String(t).charAt(0).toUpperCase() + String(t).slice(1);
+
+// Pinned and recently opened sources are per-browser conveniences: localStorage, best effort.
+function loadLib() {
+  try {
+    const v = JSON.parse(localStorage.getItem("ll-sources") || "{}");
+    return { pins: Array.isArray(v.pins) ? v.pins.filter((x) => typeof x === "string") : [], recent: Array.isArray(v.recent) ? v.recent.filter((x) => typeof x === "string") : [] };
+  } catch { return { pins: [], recent: [] }; } // unreadable or blocked storage: start empty
+}
+const lib = loadLib();
+function saveLib() { try { localStorage.setItem("ll-sources", JSON.stringify(lib)); } catch { /* private mode: not remembered */ } }
+function touchRecent(name) { lib.recent = [name, ...lib.recent.filter((x) => x !== name)].slice(0, 12); saveLib(); }
+function togglePin(name) {
+  lib.pins = lib.pins.includes(name) ? lib.pins.filter((x) => x !== name) : [...lib.pins, name];
+  saveLib();
+  renderExplorerParts();
+}
+
+// Paths come from Windows or POSIX hosts; compare case-insensitively (as the catalog does on Windows).
+const pathParts = (p) => String(p || "").split(/[\\/]+/).filter(Boolean);
+const trimSep = (p) => String(p || "").replace(/[\\/]+$/, "");
+function dirOf(p) { const s = trimSep(p); const i = Math.max(s.lastIndexOf("\\"), s.lastIndexOf("/")); return i > 0 ? s.slice(0, i) : s; }
+function leafOf(p) { const parts = pathParts(p); return parts.length ? parts[parts.length - 1] : String(p || ""); }
+function isUnder(path, base) {
+  const a = trimSep(path).toLowerCase(); const b = trimSep(base).toLowerCase();
+  return a === b || a.startsWith(b + "\\") || a.startsWith(b + "/");
+}
+const relParts = (path, base) => pathParts(trimSep(path).slice(trimSep(base).length));
+
+const ex = { nodes: new Map(), locOf: new Map(), node: null, sel: null, filter: "", sort: { key: "name", dir: 1 }, open: new Set(), rows: [], stats: new Map(), seq: 0 };
+
+/**
+ * The folder tree: one location per registered root (and latticelog.toml project), its subfolders down to each
+ * source folder, migrated logs grouped by the folder of the original file, plus the virtual All, Pinned and Recent.
+ */
+function buildTree() {
+  const nodes = new Map();
+  const locOf = new Map();
+  const make = (id, label, iconName, parent, path, title) => {
+    const n = { id, label, icon: iconName, parent, path, title: title || path || label, children: new Map(), sources: [], agg: null };
+    nodes.set(id, n);
+    return n;
+  };
+  const child = (parent, name, path) => {
+    const key = name.toLowerCase();
+    let c = parent.children.get(key);
+    if (!c) {
+      const p = path || (parent.path ? trimSep(parent.path) + (String(parent.path).includes("\\") ? "\\" : "/") + name : null);
+      c = make(parent.id + "/" + key, path ? leafOf(path) : name, "folder", parent, p);
+      parent.children.set(key, c);
+    }
+    return c;
+  };
+  for (const v of [["all", "All sources", "all"], ["pinned", "Pinned", "star"], ["recent", "Recent", "clock"]]) make(v[0], v[1], v[2], null, null).virtual = v[0];
+  const location = (id, path, iconName, label) => nodes.get(id) || Object.assign(make(id, label || leafOf(path) || path, iconName, null, path), { top: true });
+  for (const r of state.roots) location("loc:" + trimSep(r).toLowerCase(), r, "drive");
+  for (const s of state.sources) {
+    const origin = String(s.origin || "");
+    const m = /^(root|toml-root):(.+)$/.exec(origin);
+    let folder;
+    if (m && isUnder(s.path, m[2])) {
+      folder = location("loc:" + trimSep(m[2]).toLowerCase(), m[2], m[1] === "root" ? "drive" : "project");
+      for (const part of relParts(s.path, m[2]).slice(0, -1)) folder = child(folder, part);
+    } else if (origin.startsWith("toml:")) {
+      const dir = dirOf(origin.slice(5));
+      folder = location("proj:" + dir.toLowerCase(), dir, "project");
+      if (isUnder(s.path, dir)) for (const part of relParts(s.path, dir).slice(0, -1)) folder = child(folder, part);
+    } else if (s.kind === "migrated") {
+      folder = location("migrated", null, "migrated", "Migrated logs");
+      const from = (s.migrated_from || [])[0];
+      if (from) folder = child(folder, dirOf(from).toLowerCase(), dirOf(from));
+    } else {
+      folder = location("other", null, "folder", state.fallback ? "Namespaces" : "Other sources");
+    }
+    folder.sources.push(s);
+    locOf.set(s.name, folder);
+  }
+  ex.nodes = nodes;
+  ex.locOf = locOf;
+  if (!ex.node || !nodes.has(ex.node)) {
+    const home = state.ns && locOf.get(state.ns);
+    ex.node = home ? home.id : "all";
+    if (home && !ex.sel) ex.sel = { type: "source", key: state.ns };
+  }
+  for (let n = nodes.get(ex.node); n; n = n.parent) ex.open.add(n.id);
+  for (const n of nodes.values()) if (n.top) ex.open.add(n.id);
+}
+
+function aggregate(node) {
+  if (node.agg) return node.agg;
+  const a = { sources: 0, records: 0, bytes: 0, newest: null, live: 0 };
+  const addSource = (s) => {
+    a.sources++; a.records += s.records || 0; a.bytes += s.bytes || 0;
+    const t = lastMs(s);
+    if (t && (a.newest === null || t > a.newest)) a.newest = t;
+    if (activity(s)[0] === "live") a.live++;
+  };
+  for (const s of virtualSources(node) || node.sources) addSource(s);
+  for (const c of node.children.values()) {
+    const b = aggregate(c);
+    a.sources += b.sources; a.records += b.records; a.bytes += b.bytes; a.live += b.live;
+    if (b.newest && (a.newest === null || b.newest > a.newest)) a.newest = b.newest;
+  }
+  return (node.agg = a);
+}
+
+function virtualSources(node) {
+  if (node.virtual === "all") return state.sources;
+  if (node.virtual === "pinned") return lib.pins.map(byName).filter(Boolean);
+  if (node.virtual === "recent") return lib.recent.map(byName).filter(Boolean);
+  return null;
+}
+
+/** Where a source lives, as a short path: "logs › payments". */
+function locationText(s) {
+  const parts = [];
+  for (let n = ex.locOf.get(s.name); n; n = n.parent) parts.unshift(n.label);
+  return parts.join(" › ");
+}
+
+function matchesFilter(s, words) {
+  const hay = [s.name, s.service, s.environment, s.path, kindLabel(s), ...(s.migrated_from || [])].filter(Boolean).join(" ").toLowerCase();
+  return words.every((w) => hay.includes(w));
+}
+
+/** What the list shows: a folder's subfolders and sources, or a flat list (virtual folders and searches). */
+function currentItems() {
+  const words = ex.filter.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length) return { flat: true, folders: [], sources: state.sources.filter((s) => matchesFilter(s, words)) };
+  const node = ex.nodes.get(ex.node) || ex.nodes.get("all");
+  const virt = virtualSources(node);
+  if (virt) return { flat: true, folders: [], sources: virt, keepOrder: node.virtual !== "all" };
+  return { flat: false, folders: [...node.children.values()], sources: node.sources };
+}
+
+const SORTS = {
+  name: (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }),
+  loc: (a, b) => locationText(a).localeCompare(locationText(b)) || SORTS.name(a, b),
+  type: (a, b) => kindLabel(a).localeCompare(kindLabel(b)) || SORTS.name(a, b),
+  records: (a, b) => (a.records || 0) - (b.records || 0),
+  bytes: (a, b) => (a.bytes || 0) - (b.bytes || 0),
+  last: (a, b) => (lastMs(a) || 0) - (lastMs(b) || 0),
+};
+const FOLDER_SORTS = {
+  name: (a, b) => a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: "base" }),
+  records: (a, b) => aggregate(a).records - aggregate(b).records,
+  bytes: (a, b) => aggregate(a).bytes - aggregate(b).bytes,
+  last: (a, b) => (aggregate(a).newest || 0) - (aggregate(b).newest || 0),
+};
+
+const COLUMNS = [["name", "Name"], ["loc", "Folder"], ["type", "Type"], ["records", "Events", "num"], ["bytes", "Size", "num"], ["last", "Newest event"]];
+
+function renderHead(flat) {
+  $("ex-list").classList.toggle("flat", flat);
+  $("ex-head").replaceChildren(...COLUMNS.map(([key, label, cls]) => {
+    const active = ex.sort.key === key;
+    return h("th", { class: (cls || "") + " sortable" + (active ? " sorted" : ""), "aria-sort": active ? (ex.sort.dir > 0 ? "ascending" : "descending") : null,
+      onclick: () => { ex.sort = { key, dir: active ? -ex.sort.dir : (key === "name" || key === "loc" || key === "type" ? 1 : -1) }; renderList(); } },
+    label, h("span", { class: "arrow", text: active ? (ex.sort.dir > 0 ? "▲" : "▼") : "" }));
+  }));
+}
+
+function renderList() {
+  const items = currentItems();
+  renderHead(items.flat);
+  const dir = ex.sort.dir;
+  const sources = items.keepOrder && ex.sort.key === "name" && ex.sort.dir === 1 ? [...items.sources] : [...items.sources].sort((a, b) => dir * (SORTS[ex.sort.key] || SORTS.name)(a, b));
+  const fsort = FOLDER_SORTS[ex.sort.key] || FOLDER_SORTS.name;
+  const folders = [...items.folders].sort((a, b) => (FOLDER_SORTS[ex.sort.key] ? dir : 1) * fsort(a, b));
+  ex.rows = [...folders.map((f) => ({ type: "folder", key: f.id, node: f })), ...sources.map((s) => ({ type: "source", key: s.name, source: s }))];
+  const tbody = $("ex-list").tBodies[0];
+  tbody.replaceChildren(...ex.rows.map((r, i) => r.type === "folder" ? folderRow(r.node, i) : sourceRow(r.source, i)));
+  const empty = ex.rows.length === 0;
+  $("ex-empty").hidden = !empty;
+  if (empty) {
+    const node = ex.nodes.get(ex.node);
+    const [title, text] = ex.filter.trim()
+      ? [`No source matches “${ex.filter.trim()}”`, "The search looks at names, services, environments and folders."]
+      : state.sources.length === 0
+        ? ["No sources yet", "Register the folder your services log into (llog roots add <folder>) or convert an old log file (llog migrate <file> --name <name>). Then press the rescan button."]
+        : node?.virtual === "pinned" ? ["Nothing pinned", "Select a source and press Pin to keep it here."]
+          : node?.virtual === "recent" ? ["Nothing opened yet", "Sources you open appear here."]
+            : ["No sources in this folder yet", "Services that log into this folder with LatticeLog appear here on the next rescan."];
+    $("ex-empty-title").textContent = title;
+    $("ex-empty-text").textContent = text;
+  }
+  const total = ex.rows.length;
+  const recs = sources.reduce((n, s) => n + (s.records || 0), 0) + folders.reduce((n, f) => n + aggregate(f).records, 0);
+  const size = sources.reduce((n, s) => n + (s.bytes || 0), 0) + folders.reduce((n, f) => n + aggregate(f).bytes, 0);
+  $("ex-status").textContent = total ? `${num(total)} item${total === 1 ? "" : "s"} · ${num(recs)} events · ${bytes(size)}` : "";
+  markSelection();
+}
+
+function nameCell(iconEl, name, sub, dotKind, dotTitle) {
+  return h("td", { class: "n" },
+    h("div", { class: "nm" },
+      h("span", { class: "dot " + (dotKind || "blank"), title: dotTitle || null }),
+      iconEl,
+      h("div", { class: "nt" }, h("span", { class: "name", text: name }), sub ? h("span", { class: "sub", text: sub }) : null)));
+}
+
+function folderRow(f, i) {
+  const a = aggregate(f);
+  return h("tr", { class: "folder", "data-i": i, onclick: () => selectRow(i), ondblclick: () => goFolder(f.id), title: f.title },
+    nameCell(icon(f.icon, "k-folder"), f.label, `${num(a.sources)} source${a.sources === 1 ? "" : "s"}${a.live ? ` · ${a.live} active` : ""}`, a.live ? "live" : null, a.live ? `${a.live} active source(s)` : null),
+    h("td", { class: "loc" }),
+    h("td", { class: "type muted", text: "Folder" }),
+    h("td", { class: "num", text: a.records ? num(a.records) : "" }),
+    h("td", { class: "num", text: a.bytes ? bytes(a.bytes) : "" }),
+    h("td", { class: "last", title: a.newest ? fmtFull(a.newest) : null, text: a.newest ? ago(a.newest) : "" }));
+}
+
+function sourceRow(s, i) {
+  const [act, actText] = activity(s);
+  const sub = [s.service && s.service !== s.name ? s.service : null, s.environment].filter(Boolean).join(" · ");
+  const t = lastMs(s);
+  return h("tr", { class: "source" + (hasData(s) ? "" : " nodata") + (s.name === state.ns ? " current" : ""), "data-i": i, onclick: () => selectRow(i), ondblclick: () => hasData(s) && openSource(s.name), title: s.path || s.name },
+    nameCell(icon(kindOf(s).icon, "k-" + (s.kind || "store")), s.name, sub || null, act, actText),
+    h("td", { class: "loc", text: locationText(s) }),
+    h("td", { class: "type", text: kindLabel(s) }),
+    h("td", { class: "num", text: hasData(s) ? num(s.records) : "–" }),
+    h("td", { class: "num", text: s.bytes ? bytes(s.bytes) : "" }),
+    h("td", { class: "last", title: t ? fmtFull(t) : null, text: t ? ago(t) : (hasData(s) ? "" : "no events yet") }));
+}
+
+function selectRow(i, scroll = false) {
+  const r = ex.rows[i];
+  if (!r) return;
+  ex.sel = { type: r.type, key: r.key };
+  markSelection(scroll);
+  renderPreview();
+}
+
+function selectedIndex() { return ex.sel ? ex.rows.findIndex((r) => r.type === ex.sel.type && r.key === ex.sel.key) : -1; }
+
+function markSelection(scroll = false) {
+  const i = selectedIndex();
+  for (const tr of $("ex-list").tBodies[0].rows) {
+    const on = Number(tr.dataset.i) === i;
+    tr.classList.toggle("selected", on);
+    tr.setAttribute("aria-selected", String(on));
+    if (on && scroll) tr.scrollIntoView({ block: "nearest" });
+  }
+}
+
+function goFolder(id) {
+  if (!ex.nodes.has(id)) return;
+  ex.node = id;
+  ex.filter = "";
+  $("ex-filter").value = "";
+  $("ex-clear").hidden = true;
+  for (let n = ex.nodes.get(id); n; n = n.parent) ex.open.add(n.id);
+  ex.sel = null;
+  renderExplorerParts();
+}
+
+function goUp() {
+  if (ex.filter) { goFolder(ex.node); return; }
+  const n = ex.nodes.get(ex.node);
+  if (n?.parent) { const from = n.id; goFolder(n.parent.id); ex.sel = { type: "folder", key: from }; markSelection(true); renderPreview(); }
+}
+
+function renderCrumbs() {
+  const box = $("ex-crumbs");
+  if (ex.filter.trim()) {
+    box.replaceChildren(h("span", { class: "crumb here" }, `Search results for “${ex.filter.trim()}”`));
+    $("ex-up").disabled = false;
+    return;
+  }
+  const chain = [];
+  for (let n = ex.nodes.get(ex.node); n; n = n.parent) chain.unshift(n);
+  const parts = [];
+  chain.forEach((n, i) => {
+    if (i) parts.push(icon("chevron", "sep"));
+    const last = i === chain.length - 1;
+    parts.push(h("button", { type: "button", class: "crumb" + (last ? " here" : ""), title: n.title, onclick: () => goFolder(n.id) }, i === 0 ? icon(n.icon) : null, n.label));
+  });
+  box.replaceChildren(...parts);
+  $("ex-up").disabled = !chain.length || !chain[chain.length - 1].parent;
+}
+
+function renderTree() {
+  const tree = $("ex-tree");
+  const item = (node, depth) => {
+    const kids = [...node.children.values()].sort(FOLDER_SORTS.name);
+    const open = ex.open.has(node.id);
+    const a = aggregate(node);
+    const row = h("div", { class: "tn" + (ex.node === node.id && !ex.filter.trim() ? " active" : ""), role: "treeitem", tabindex: "0", title: node.title, "aria-expanded": kids.length ? String(open) : null,
+      onclick: () => goFolder(node.id), onkeydown: (ev) => { if (ev.key === "Enter") goFolder(node.id); else if (ev.key === "ArrowRight" && kids.length && !open) toggleOpen(node.id); else if (ev.key === "ArrowLeft" && open) toggleOpen(node.id); } },
+    kids.length ? h("button", { type: "button", class: "tw" + (open ? " open" : ""), tabindex: "-1", "aria-label": open ? "Collapse" : "Expand", onclick: (ev) => { ev.stopPropagation(); toggleOpen(node.id); } }, icon("chevron")) : h("span", { class: "tw" }),
+    icon(node.icon, "k-" + node.icon), h("span", { class: "tl", text: node.label }), h("span", { class: "tc", text: a.sources ? num(a.sources) : "" }));
+    row.style.paddingLeft = `${6 + depth * 14}px`;
+    const out = [row];
+    if (open) for (const k of kids) out.push(...item(k, depth + 1));
+    return out;
+  };
+  const tops = [...ex.nodes.values()].filter((n) => n.top);
+  const order = (n) => (n.id.startsWith("loc:") ? 0 : n.id.startsWith("proj:") ? 1 : n.id === "migrated" ? 2 : 3);
+  tops.sort((a, b) => order(a) - order(b) || a.label.localeCompare(b.label));
+  const section = (title, nodes) => nodes.length ? [h("div", { class: "tsec", text: title }), ...nodes.flatMap((n) => item(n, 0))] : [];
+  tree.replaceChildren(
+    ...section("Quick access", ["all", "pinned", "recent"].map((id) => ex.nodes.get(id))),
+    ...section("Folders", tops.filter((n) => order(n) < 2)),
+    ...section("Other", tops.filter((n) => order(n) >= 2)));
+}
+
+function toggleOpen(id) {
+  if (ex.open.has(id)) ex.open.delete(id); else ex.open.add(id);
+  renderTree();
+}
+
+function kv(rows) {
+  return h("dl", { class: "kv pv-kv" }, ...rows.filter((r) => r && r[1] !== undefined && r[1] !== null && r[1] !== "").flatMap(([k, v, extra]) => [h("dt", { text: k }), h("dd", {}, h("span", { text: String(v) }), extra || null)]));
+}
+
+function copyButton(text) {
+  return h("button", { type: "button", class: "ghost small", title: "Copy", onclick: async () => {
+    try { await navigator.clipboard.writeText(text); toast("Copied"); } catch { toast("Copy is not available here"); }
+  } }, "Copy");
+}
+
+function renderPreview() {
+  const box = $("ex-preview");
+  const i = selectedIndex();
+  const r = i >= 0 ? ex.rows[i] : null;
+  if (r?.type === "source") { sourcePreview(box, r.source); return; }
+  const node = r?.type === "folder" ? r.node : ex.nodes.get(ex.node);
+  if (!node) { box.replaceChildren(); return; }
+  const a = ex.filter.trim() ? null : aggregate(node);
+  if (!a) { box.replaceChildren(h("p", { class: "muted small pv-hint", text: "Select a source to see its details." })); return; }
+  box.replaceChildren(...[
+    h("div", { class: "pv-head" }, h("div", { class: "pv-icon" }, icon(node.icon)), h("div", { class: "pv-title" }, h("h2", { text: node.label }), h("span", { class: "muted small", text: node.virtual ? "Collection" : "Folder" }))),
+    r?.type === "folder" ? h("div", { class: "pv-actions" }, h("button", { type: "button", class: "primary", onclick: () => goFolder(node.id) }, "Open folder")) : null,
+    h("div", { class: "pv-cards" },
+      miniStat("Sources", num(a.sources)), miniStat("Active now", num(a.live)),
+      miniStat("Events", compact(a.records)), miniStat("On disk", bytes(a.bytes))),
+    kv([["Newest event", a.newest ? `${ago(a.newest)} (${fmtFull(a.newest)})` : null], ["Path", node.path, node.path ? copyButton(node.path) : null]]),
+    h("p", { class: "muted small pv-hint", text: "Double-click a source (or select it and press Enter) to search its logs." })].filter(Boolean));
+}
+
+function miniStat(label, value) { return h("div", { class: "mini" }, h("span", { class: "mini-v", text: value }), h("span", { class: "mini-l", text: label })); }
+
+function sourcePreview(box, s) {
+  const [act, actText] = activity(s);
+  const pinned = lib.pins.includes(s.name);
+  const can = hasData(s);
+  const first = s.first_time ? toMs(s.first_time) : null;
+  const last = lastMs(s);
+  box.replaceChildren(...[
+    h("div", { class: "pv-head" },
+      h("div", { class: "pv-icon k-" + (s.kind || "store") }, icon(kindOf(s).icon)),
+      h("div", { class: "pv-title" }, h("h2", { text: s.name }), h("span", { class: "muted small", text: kindLabel(s) })),
+      h("button", { type: "button", class: "ghost icon-btn pin" + (pinned ? " on" : ""), title: pinned ? "Unpin" : "Pin to Quick access", "aria-pressed": String(pinned), onclick: () => togglePin(s.name) }, icon("star"))),
+    h("p", { class: "pv-activity " + act }, h("span", { class: "dot " + act }), actText),
+    h("div", { class: "pv-actions" },
+      h("button", { type: "button", class: "primary", disabled: !can, onclick: () => openSource(s.name) }, "Open logs"),
+      h("button", { type: "button", disabled: !can, onclick: () => openSource(s.name, "search", () => setLevel("ERROR")) }, "Errors"),
+      h("button", { type: "button", disabled: !can, onclick: () => openSource(s.name, "stats") }, "Overview")),
+    can ? h("div", { class: "pv-chart", id: "pv-chart" }, h("div", { class: "loading small" }, h("span", { class: "spinner" }), "Reading…")) : null,
+    kv([
+      ["Events", can ? num(s.records) : "none yet"],
+      ["Size", s.bytes ? bytes(s.bytes) : null],
+      ["From", first ? fmtFull(first) : null],
+      ["To", last ? `${fmtFull(last)} (${ago(last)})` : null],
+      ["Service", s.service && s.service !== s.name ? s.service : null],
+      ["Environment", s.environment],
+      ["Processes", s.kind === "python-local" ? s.processes : null],
+      ["Retention", s.retention],
+      ["Indexed", s.last_indexed ? ago(toMs(s.last_indexed)) : null],
+      ["Last error", s.last_error],
+      ["Folder", s.path, s.path ? copyButton(s.path) : null],
+      ["Migrated from", (s.migrated_from || []).join("\n") || null],
+      ["Note", s.records_note],
+    ])].filter(Boolean));
+  if (can) previewStats(s);
+}
+
+/** All-time level mix and events over time, for the preview. Cached per source and newest event. */
+async function previewStats(s) {
+  const key = `${s.name}|${s.last_time}|${s.records}`;
+  const seq = ++ex.seq;
+  let data = ex.stats.get(key);
+  if (!data) {
+    try {
+      const first = s.first_time ? toMs(s.first_time) : null;
+      const last = lastMs(s);
+      const span = first !== null && last !== null ? Math.max(last - first, 1e3) : null;
+      const bucket = span ? (BUCKETS.find(([w]) => w >= span / 48) || BUCKETS[BUCKETS.length - 1]) : null;
+      const [levels, time] = await Promise.all([
+        api("/v1/stats", { ns: s.name, by: "level" }),
+        bucket ? api("/v1/stats", { ns: s.name, bucket: bucket[1] }).catch(() => null) : null,
+      ]);
+      data = { levels, time, bucket, first, last };
+      ex.stats.set(key, data);
+    } catch (err) {
+      if (seq === ex.seq && $("pv-chart")) $("pv-chart").replaceChildren(h("p", { class: "muted small", text: `Could not read it: ${err.message}` }));
+      return;
+    }
+  }
+  if (seq !== ex.seq || !$("pv-chart")) return;
+  const mix = new Map();
+  for (const g of data.levels.groups || []) { const k = baseLevel(g.key) || "(none)"; mix.set(k, (mix.get(k) || 0) + g.count); }
+  const total = [...mix.values()].reduce((a, b) => a + b, 0) || 1;
+  const order = ["FATAL", "ERROR", "WARN", "INFO", "DEBUG", "TRACE"];
+  const levels = [...mix.entries()].sort((a, b) => (order.indexOf(a[0]) + 1 || 99) - (order.indexOf(b[0]) + 1 || 99));
+  const parts = [];
+  if (data.time && String(data.time.group_by).startsWith("time")) {
+    const width = data.bucket[0];
+    const counts = new Map(data.time.groups.map((g) => [toMs(g.key), g.count]));
+    const start = Math.floor(data.first / width) * width;
+    const bars = [];
+    for (let t = start; t <= data.last && bars.length < 60; t += width) bars.push([t, counts.get(t) || 0]);
+    const max = Math.max(1, ...bars.map((b) => b[1]));
+    parts.push(h("div", { class: "pv-label muted small", text: `Events over time · ${data.bucket[2]} per bar` }),
+      h("div", { class: "spark" }, ...bars.map(([t, n]) => { const sp = h("span", { title: `${fmtShort(t)}: ${num(n)} event${n === 1 ? "" : "s"}` }); sp.style.height = n ? `${Math.max(4, (100 * n) / max)}%` : "0"; return sp; })),
+      h("div", { class: "hist-axis" }, h("span", { text: fmtShort(start) }), h("span", { text: fmtShort(data.last) })));
+  }
+  parts.push(h("div", { class: "pv-label muted small", text: "Levels" }),
+    h("div", { class: "lvlbar" }, ...levels.map(([k, n]) => { const sp = h("span", { class: k, title: `${k}: ${num(n)}` }); sp.style.width = `${(100 * n) / total}%`; return sp; })),
+    h("div", { class: "lvl-legend" }, ...levels.map(([k, n]) => h("button", { type: "button", class: "lg", title: `Search ${k} events`, onclick: () => openSource(s.name, "search", () => setLevel(order.includes(k) ? k : "")) },
+      h("span", { class: "sw " + k }), h("span", { text: k }), h("b", { text: compact(n) })))));
+  $("pv-chart").replaceChildren(...parts);
+}
+
+function renderExplorerParts() {
+  for (const n of ex.nodes.values()) n.agg = null;
+  renderTree();
+  renderCrumbs();
+  renderList();
+  renderPreview();
+}
+
+/** mode: "local" redraws, "reload" fetches the source list again, "rescan" also rescans the registered folders. */
+async function renderExplorer(mode = "local") {
+  try {
+    if (mode !== "local") {
+      if (mode === "rescan") $("ex-refresh").classList.add("spinning");
+      await loadSources(mode === "rescan");
+      setStatus(state.sources.length === 1 ? "Connected · 1 source" : `Connected · ${num(state.sources.length)} sources`, "ok");
+      $("source-btn").hidden = state.sources.length === 0;
+    }
+  } catch (err) {
+    toast(`Could not rescan: ${err.message}`);
+  } finally {
+    $("ex-refresh").classList.remove("spinning");
+  }
+  renderExplorerParts();
+}
+
+/** Opens a source in Search (or another view); <paramref name="setup"/> runs first, for example to set a level. */
+async function openSource(name, view = "search", setup = null) {
+  if (!state.namespaces.includes(name)) return;
+  closePalette();
+  if (state.ns !== name) { state.ns = name; sessionStorage.setItem("ll-ns", name); closeDetail(); }
+  touchRecent(name);
+  renderSourceButton();
+  // Back in the explorer, show where this source lives (the search that found it has done its job).
+  ex.sel = { type: "source", key: name };
+  ex.filter = "";
+  $("ex-filter").value = "";
+  $("ex-clear").hidden = true;
+  const home = ex.locOf.get(name);
+  if (home) { ex.node = home.id; for (let n = home; n; n = n.parent) ex.open.add(n.id); }
+  if (setup) setup();
+  state.view = view;
+  syncTabs();
+  await sourceChanged();
+}
+
+function renderSourceButton() {
+  const s = byName(state.ns);
+  $("source-btn").replaceChildren(
+    icon(s ? kindOf(s).icon : "folder", "sb-ic"),
+    h("span", { class: "sb-name", text: s ? s.name : "Choose a source" }),
+    icon("chevron", "sb-chev"));
+}
+
+// ------------------------------------------------------------------ quick switcher (Ctrl+K)
+
+const pal = { items: [], sel: 0 };
+
+function openPalette() {
+  if ($("app").hidden || !state.sources.length) return;
+  $("palette").hidden = false;
+  $("pal-input").value = "";
+  renderPalette();
+  $("pal-input").focus();
+}
+function closePalette() { $("palette").hidden = true; }
+
+function renderPalette() {
+  const q = $("pal-input").value.trim().toLowerCase();
+  const words = q.split(/\s+/).filter(Boolean);
+  let list;
+  if (words.length) {
+    const rank = (s) => { const n = s.name.toLowerCase(); return n === q ? 0 : n.startsWith(q) ? 1 : n.includes(q) ? 2 : 3; };
+    list = state.sources.filter((s) => matchesFilter(s, words)).sort((a, b) => rank(a) - rank(b) || (hasData(b) - hasData(a)) || SORTS.name(a, b));
+  } else {
+    const recent = lib.recent.map(byName).filter(Boolean);
+    list = [...recent, ...state.sources.filter((s) => !lib.recent.includes(s.name)).sort((a, b) => (lastMs(b) || 0) - (lastMs(a) || 0))];
+  }
+  pal.items = list.slice(0, 60);
+  pal.sel = Math.min(pal.sel, Math.max(0, pal.items.length - 1));
+  if (!words.length) pal.sel = pal.items.length > 1 && pal.items[0].name === state.ns ? 1 : 0;
+  $("pal-list").replaceChildren(...(pal.items.length ? pal.items.map((s, i) => {
+    const t = lastMs(s);
+    return h("li", { class: "pal-item" + (hasData(s) ? "" : " dim"), role: "option", id: "pal-" + i, onclick: () => palPick(i), onmousemove: () => { if (pal.sel !== i) { pal.sel = i; markPalette(); } } },
+      icon(kindOf(s).icon, "k-" + (s.kind || "store")),
+      h("span", { class: "pal-name", text: s.name }),
+      h("span", { class: "pal-loc", text: locationText(s) }),
+      h("span", { class: "pal-meta", text: hasData(s) ? `${compact(s.records)} · ${t ? ago(t) : ""}` : "no events yet" }),
+      !words.length && lib.recent.includes(s.name) ? h("span", { class: "badge", text: s.name === state.ns ? "current" : "recent" }) : null);
+  }) : [h("li", { class: "pal-none muted", text: "No source matches." })]));
+  markPalette();
+}
+
+function markPalette() {
+  [...$("pal-list").children].forEach((li, i) => {
+    li.classList.toggle("sel", i === pal.sel);
+    li.setAttribute("aria-selected", String(i === pal.sel));
+    if (i === pal.sel) li.scrollIntoView({ block: "nearest" });
+  });
+  $("pal-input").setAttribute("aria-activedescendant", pal.items.length ? "pal-" + pal.sel : "");
+}
+
+function palPick(i) {
+  const s = pal.items[i];
+  if (!s) return;
+  closePalette();
+  if (!hasData(s)) { // nothing to search yet: show it in the explorer instead
+    ex.filter = ""; ex.node = ex.locOf.get(s.name)?.id || "all"; ex.sel = { type: "source", key: s.name };
+    switchView("sources");
+    return;
+  }
+  openSource(s.name, state.view === "sources" ? "search" : state.view);
+}
+
 // ------------------------------------------------------------------ views and events
+
+function syncTabs() {
+  const view = state.view;
+  for (const b of $("tabs").children) b.classList.toggle("active", b.dataset.view === view);
+  for (const v of ["sources", "search", "stats", "catalog"]) $("view-" + v).hidden = v !== view;
+  $("source-span").hidden = view === "sources";
+  $("source-btn").classList.toggle("active", view === "sources");
+  if (view !== "search") closeDetail();
+}
 
 function switchView(view) {
   state.view = view;
-  for (const b of $("tabs").children) b.classList.toggle("active", b.dataset.view === view);
-  for (const v of ["search", "stats", "catalog"]) $("view-" + v).hidden = v !== view;
-  if (view !== "search") closeDetail();
+  syncTabs();
   refreshView();
 }
 
 function refreshView(note) {
+  if (state.view === "sources") return renderExplorer("reload");
+  if (!state.ns) {
+    if (state.view !== "search") { state.view = "search"; syncTabs(); }
+    showNoSource();
+    return;
+  }
   if (state.view === "stats") return stats();
   if (state.view === "catalog") return catalog();
   return runSearch(false, note);
@@ -702,7 +1335,44 @@ $("change-token").addEventListener("click", () => showConnect("", true));
 // A new /ui#token=... opened in a tab that already shows the console (the service restarted with a new token).
 window.addEventListener("hashchange", () => { const t = takeHashToken(); if (t) { state.token = t; connect(); } });
 $("cancel-token").addEventListener("click", () => showApp());
-$("ns").addEventListener("change", () => { state.ns = $("ns").value; sessionStorage.setItem("ll-ns", state.ns); closeDetail(); sourceChanged(); });
+$("source-btn").addEventListener("click", () => switchView("sources"));
+$("ex-up").addEventListener("click", goUp);
+$("ex-refresh").addEventListener("click", () => renderExplorer("rescan"));
+$("ex-filter").addEventListener("input", () => {
+  ex.filter = $("ex-filter").value;
+  $("ex-clear").hidden = !ex.filter;
+  ex.sel = null;
+  renderTree();
+  renderCrumbs();
+  renderList();
+  if (ex.filter.trim() && ex.rows.length) selectRow(0); else renderPreview();
+});
+$("ex-filter").addEventListener("keydown", (ev) => {
+  if (ev.key === "ArrowDown" || ev.key === "ArrowUp") { ev.preventDefault(); moveSelection(ev.key === "ArrowDown" ? 1 : -1); }
+  else if (ev.key === "Enter") { ev.preventDefault(); activateSelection(); }
+});
+$("ex-clear").addEventListener("click", () => { $("ex-filter").value = ""; $("ex-filter").dispatchEvent(new Event("input")); $("ex-filter").focus(); });
+$("pal-input").addEventListener("input", () => { pal.sel = 0; renderPalette(); });
+$("pal-input").addEventListener("keydown", (ev) => {
+  if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+    ev.preventDefault();
+    if (pal.items.length) { pal.sel = (pal.sel + (ev.key === "ArrowDown" ? 1 : -1) + pal.items.length) % pal.items.length; markPalette(); }
+  } else if (ev.key === "Enter") { ev.preventDefault(); palPick(pal.sel); }
+});
+$("palette").addEventListener("mousedown", (ev) => { if (ev.target === $("palette")) closePalette(); });
+$("pal-browse").addEventListener("click", () => { closePalette(); switchView("sources"); setTimeout(() => $("ex-filter").focus(), 0); });
+
+function moveSelection(delta) {
+  if (!ex.rows.length) return;
+  const i = selectedIndex();
+  selectRow(i < 0 ? (delta > 0 ? 0 : ex.rows.length - 1) : Math.min(ex.rows.length - 1, Math.max(0, i + delta)), true);
+}
+function activateSelection() {
+  const r = ex.rows[selectedIndex()];
+  if (!r) return;
+  if (r.type === "folder") goFolder(r.key);
+  else if (hasData(r.source)) openSource(r.source.name);
+}
 for (const b of $("tabs").children) b.addEventListener("click", () => switchView(b.dataset.view));
 
 $("query").addEventListener("submit", (ev) => { ev.preventDefault(); state.view === "search" ? runSearch() : refreshView(); });
@@ -732,6 +1402,12 @@ $("copy-json").addEventListener("click", async (ev) => {
 
 document.addEventListener("keydown", (ev) => {
   const typing = ev.target instanceof HTMLInputElement || ev.target instanceof HTMLSelectElement || ev.target instanceof HTMLTextAreaElement;
+  if ((ev.ctrlKey || ev.metaKey) && !ev.altKey && (ev.key === "k" || ev.key === "K")) {
+    ev.preventDefault();
+    if ($("palette").hidden) openPalette(); else closePalette();
+    return;
+  }
+  if (ev.key === "Escape" && !$("palette").hidden) { closePalette(); return; }
   if (ev.key === "Escape") {
     if (typing) { ev.target.blur(); return; }
     if (!$("detail").hidden) closeDetail();
@@ -739,6 +1415,15 @@ document.addEventListener("keydown", (ev) => {
     return;
   }
   if (typing || ev.ctrlKey || ev.metaKey || ev.altKey || $("app").hidden) return;
+  if (!$("palette").hidden) return;
+  if (state.view === "sources") {
+    if (ev.key === "/") { ev.preventDefault(); $("ex-filter").focus(); $("ex-filter").select(); }
+    else if (ev.key === "ArrowDown" || ev.key === "j") { ev.preventDefault(); moveSelection(1); }
+    else if (ev.key === "ArrowUp" || ev.key === "k") { ev.preventDefault(); moveSelection(-1); }
+    else if (ev.key === "Enter" && !(ev.target instanceof HTMLButtonElement) && ev.target.getAttribute("role") !== "treeitem") { ev.preventDefault(); activateSelection(); }
+    else if (ev.key === "Backspace") { ev.preventDefault(); goUp(); }
+    return;
+  }
   if (ev.key === "/") { ev.preventDefault(); if (state.view !== "search") switchView("search"); $("where").focus(); $("where").select(); }
   else if (state.view === "search" && (ev.key === "j" || ev.key === "ArrowDown")) { ev.preventDefault(); selectEvent(state.selected + 1); }
   else if (state.view === "search" && (ev.key === "k" || ev.key === "ArrowUp")) { ev.preventDefault(); if (state.selected > 0) selectEvent(state.selected - 1); }

@@ -518,23 +518,49 @@ public sealed class ServiceHost : IDisposable
 
     // ------------------------------------------------------------------ status
 
+    /// <summary>One source as <c>list_sources</c> describes it, plus what the service knows: last indexed time, last
+    /// error and retention.</summary>
+    private JsonObject DescribeWithStatus(SourceInfo s, CatalogRefresher r)
+    {
+        var o = SourceCatalog.Describe(s);
+        if (_status.TryGetValue(s.StoreRoot, out var st))
+        {
+            if (st.LastIndexedUtc is { } li) o["last_indexed"] = Time(li);
+            if (st.LastImportUtc is { } lim) o["last_new_records"] = Time(lim);
+            o["records_indexed_by_service"] = st.RecordsImported;
+            if (st.LastError is not null) { o["last_error"] = st.LastError; o["last_error_time"] = Time(st.LastErrorUtc!.Value); }
+        }
+        else if (s.Kind is SourceKind.Python || (s.Kind is SourceKind.Migrated && s.Follow)) o["last_indexed"] = null;
+        if (s.Kind != SourceKind.DotNet && r.Catalog.Config.RetentionFor(s.Name) is { } ret) o["retention"] = ret.ToString();
+        return o;
+    }
+
+    /// <summary>
+    /// What the console's source explorer shows: every source (with or without data yet), the registered roots (also
+    /// the empty ones) and the data folder. <paramref name="discover"/> rescans the roots first, so a service folder
+    /// created a moment ago appears without waiting for the background refresh.
+    /// </summary>
+    public JsonObject Sources(bool discover = false)
+    {
+        var entries = Entries();
+        if (discover) foreach (var e in entries) e.Refresher.Discover();
+        var roots = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var e in entries) foreach (var root in e.Refresher.Catalog.Config.Roots) roots.Add(PathPolicy.Normalize(root));
+        return new JsonObject
+        {
+            ["format"] = "latticelog.sources.v1",
+            ["served_by"] = "service",
+            ["sources"] = new JsonArray(AllSources().Select(x => (JsonNode?)DescribeWithStatus(x.Source, x.Refresher)).ToArray()),
+            ["roots"] = new JsonArray(roots.Select(x => (JsonNode?)JsonValue.Create(x)).ToArray()),
+            ["data_folder"] = DataDir,
+            ["warnings"] = new JsonArray(entries.SelectMany(e => e.Refresher.Catalog.Warnings).Distinct().Select(w => (JsonNode?)JsonValue.Create(w)).ToArray()),
+        };
+    }
+
     public JsonObject Status()
     {
         var sources = new JsonArray();
-        foreach (var (s, r) in AllSources())
-        {
-            var o = SourceCatalog.Describe(s);
-            if (_status.TryGetValue(s.StoreRoot, out var st))
-            {
-                if (st.LastIndexedUtc is { } li) o["last_indexed"] = Time(li);
-                if (st.LastImportUtc is { } lim) o["last_new_records"] = Time(lim);
-                o["records_indexed_by_service"] = st.RecordsImported;
-                if (st.LastError is not null) { o["last_error"] = st.LastError; o["last_error_time"] = Time(st.LastErrorUtc!.Value); }
-            }
-            else if (s.Kind is SourceKind.Python || (s.Kind is SourceKind.Migrated && s.Follow)) o["last_indexed"] = null;
-            if (s.Kind != SourceKind.DotNet && r.Catalog.Config.RetentionFor(s.Name) is { } ret) o["retention"] = ret.ToString();
-            sources.Add((JsonNode)o);
-        }
+        foreach (var (s, r) in AllSources()) sources.Add((JsonNode)DescribeWithStatus(s, r));
         var entries = Entries();
         var lastRefresh = entries.Select(e => e.Refresher.LastRefreshUtc).DefaultIfEmpty(DateTime.MinValue).Max();
         var warnings = entries.SelectMany(e => e.Refresher.Catalog.Warnings).Distinct().ToList();

@@ -325,6 +325,11 @@ warning with the exact redirected path and how to apply the change where the ser
   - `/ui` serves the web console.
   - The read API the console uses treats each source as a namespace: `/v1/namespaces`, `/v1/search`,
     `/v1/traces/{id}`, `/v1/stats`, `/v1/catalog`. `/v1/status` returns the status document.
+  - `/v1/sources` feeds the console's source explorer: every source as `list_sources` describes it (also the ones
+    with nothing indexed yet), plus `last_indexed`/`last_error`/`retention` from the service, the registered `roots`
+    (also the empty ones) and the data folder. `?refresh=1` rescans the roots first. The console builds its folder
+    tree from each source's `origin` (`root:`/`toml-root:` folder, `toml:` project file, `migrated` grouped by the
+    original file's folder) and falls back to `/v1/namespaces` (a flat list) against a server or an older service.
   - Every `/v1/*` route except `/v1/health` needs `Authorization: Bearer <token>`.
   - The `Host` header must be `127.0.0.1`, `localhost` or `[::1]` with the service's port, which blocks DNS rebinding.
     No CORS headers are sent.

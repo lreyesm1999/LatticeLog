@@ -393,6 +393,23 @@ public class ServiceTests(ITestOutputHelper output)
         Assert.Equal(HttpStatusCode.BadRequest, (await http.GetAsync("v1/stats?ns=orders&bucket=soon")).StatusCode);
         Assert.NotEmpty(JsonNode.Parse(await http.GetStringAsync("v1/catalog?ns=orders"))!["segments"]!.AsArray());
 
+        // The source explorer: every source with where it was found, and the registered roots.
+        var sources = JsonNode.Parse(await http.GetStringAsync("v1/sources"))!;
+        var orders = sources["sources"]!.AsArray().Single(s => (string?)s!["name"] == "orders")!;
+        Assert.Equal("python-local", (string?)orders["kind"]);
+        Assert.Equal("ok", (string?)orders["status"]);
+        Assert.Equal(30, (long)orders["records"]!);
+        Assert.StartsWith("root:", (string)orders["origin"]!, StringComparison.Ordinal);
+        Assert.Contains(sources["roots"]!.AsArray(), r => string.Equals((string?)r, PathPolicy.Normalize(env.Root), StringComparison.OrdinalIgnoreCase));
+        // refresh=1 rescans the roots: a service folder created a moment ago is listed before it has any data.
+        PythonSource(env.Root, "billing");
+        var rescanned = JsonNode.Parse(await http.GetStringAsync("v1/sources?refresh=1"))!;
+        var billing = rescanned["sources"]!.AsArray().Single(s => (string?)s!["name"] == "billing")!;
+        Assert.NotEqual("ok", (string?)billing["status"]);
+        Assert.Equal(0, (long)billing["records"]!);
+        using (var anonymous = new HttpClient { BaseAddress = host.Endpoint.BaseUri })
+            Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync("v1/sources")).StatusCode);
+
         // DNS rebinding: a page on another host name reaching this port is refused.
         using var rebound = new HttpRequestMessage(HttpMethod.Get, "v1/status");
         rebound.Headers.Host = "attacker.example:" + host.Port;
