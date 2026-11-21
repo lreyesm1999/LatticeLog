@@ -322,6 +322,21 @@ public static class StructuredJsonlImporter
 
     public sealed record Options(bool PreserveRawLine = false, string? DefaultService = null, int MaxLineBytes = 1 << 20);
 
+    /// <summary>Where a top-level JSON key lands in the record (for migration previews). The first matching key of each kind wins.</summary>
+    public static string DescribeKey(string key)
+    {
+        if (Array.IndexOf(TimeKeys, key) >= 0) return "time";
+        if (Array.IndexOf(LevelKeys, key) >= 0) return "severity";
+        if (Array.IndexOf(MessageKeys, key) >= 0) return "body (message)";
+        if (Array.IndexOf(TemplateKeys, key) >= 0) return "attribute message_template";
+        if (Array.IndexOf(ExceptionKeys, key) >= 0) return "exception (type parsed from the text, Python tracebacks included)";
+        if (Array.IndexOf(TraceKeys, key) >= 0) return "trace_id";
+        if (Array.IndexOf(SpanKeys, key) >= 0) return "span_id";
+        if (Array.IndexOf(EventKeys, key) >= 0) return "event name when identifier-like, else body (message)";
+        if (Array.IndexOf(ServiceKeys, key) >= 0) return "service.name";
+        return "attribute (typed)";
+    }
+
     public static IEnumerable<LogRecord> Read(Stream input, Options options, LossReport loss, long importTimeNanos)
     {
         var services = new Dictionary<string, ContextSnapshot>(StringComparer.Ordinal);

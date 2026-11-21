@@ -164,67 +164,80 @@ public sealed class JsonlExchangeReader
 
     public string? StoreId { get; private set; }
 
+    private bool _sawHeader;
+
     /// <summary>Parses the stream. Malformed lines raise FormatException with the line number (no silent skipping).</summary>
     public IEnumerable<LogRecord> Read(TextReader input)
     {
         var lineNo = 0;
-        var sawHeader = false;
         while (input.ReadLine() is { } line)
         {
             lineNo++;
-            if (line.Length == 0) continue;
             LogRecord? rec;
-            try
-            {
-                using var doc = JsonDocument.Parse(line);
-                var e = doc.RootElement;
-                var type = e.GetProperty("type").GetString();
-                rec = null;
-                switch (type)
-                {
-                    case "header":
-                        if (e.GetProperty("format").GetString() != "latticelog.jsonl") throw new FormatException("Unknown exchange format.");
-                        if (e.GetProperty("version").GetInt32() != 1) throw new FormatException("Unsupported exchange version.");
-                        StoreId = e.TryGetProperty("store_id", out var sid) ? sid.GetString() : null;
-                        sawHeader = true;
-                        break;
-                    case "schema":
-                        {
-                            var fields = e.GetProperty("fields").EnumerateArray().Select(f => new EventField(
-                                f.GetProperty("name").GetString()!,
-                                Enum.Parse<ValueKind>(f.GetProperty("kind").GetString()!),
-                                f.TryGetProperty("sensitivity", out var s) ? Enum.Parse<Sensitivity>(s.GetString()!) : Sensitivity.None,
-                                f.TryGetProperty("description", out var d) ? d.GetString() : null)).ToArray();
-                            _schemas[e.GetProperty("ref").GetInt32()] = new EventDescriptor(
-                                e.GetProperty("id").GetUInt32(), e.GetProperty("name").GetString()!, e.GetProperty("version").GetUInt16(),
-                                (Severity)e.GetProperty("severity_number").GetByte(),
-                                e.TryGetProperty("template", out var t) ? t.GetString() : null, fields,
-                                e.TryGetProperty("description", out var desc) ? desc.GetString() : null);
-                            break;
-                        }
-                    case "context":
-                        {
-                            var parent = e.TryGetProperty("parent", out var p) ? _contexts[p.GetInt32()] : null;
-                            _contexts[e.GetProperty("ref").GetInt32()] = new ContextSnapshot(
-                                Enum.Parse<ContextKind>(e.GetProperty("kind").GetString()!),
-                                e.TryGetProperty("name", out var n) ? n.GetString() : null,
-                                CanonicalJson.ReadPairs(e.GetProperty("attributes")), parent);
-                            break;
-                        }
-                    case "record":
-                        rec = ParseRecord(e);
-                        break;
-                    default:
-                        throw new FormatException($"Unknown line type '{type}'.");
-                }
-            }
-            catch (Exception ex) when (ex is JsonException or KeyNotFoundException or InvalidOperationException or FormatException or ArgumentException)
-            {
-                throw new FormatException($"latticelog.jsonl line {lineNo}: {ex.Message}", ex);
-            }
-            if (!sawHeader) throw new FormatException("latticelog.jsonl must start with a header line.");
+            try { rec = ReadLine(line); }
+            catch (FormatException ex) { throw new FormatException($"latticelog.jsonl line {lineNo}: {ex.Message}", ex); }
             if (rec is not null) yield return rec;
         }
+    }
+
+    /// <summary>
+    /// Parses one line with the definitions (header, schemas, contexts) seen so far. Returns the record for record lines,
+    /// null for definition and empty lines. Throws FormatException for a malformed line; the reader stays usable, so
+    /// incremental importers can keep such a line as text instead of losing the rest of the file.
+    /// </summary>
+    public LogRecord? ReadLine(string line)
+    {
+        if (line.Length == 0) return null;
+        LogRecord? rec = null;
+        try
+        {
+            using var doc = JsonDocument.Parse(line);
+            var e = doc.RootElement;
+            var type = e.GetProperty("type").GetString();
+            switch (type)
+            {
+                case "header":
+                    if (e.GetProperty("format").GetString() != "latticelog.jsonl") throw new FormatException("Unknown exchange format.");
+                    if (e.GetProperty("version").GetInt32() != 1) throw new FormatException("Unsupported exchange version.");
+                    StoreId = e.TryGetProperty("store_id", out var sid) ? sid.GetString() : null;
+                    _sawHeader = true;
+                    break;
+                case "schema":
+                    {
+                        var fields = e.GetProperty("fields").EnumerateArray().Select(f => new EventField(
+                            f.GetProperty("name").GetString()!,
+                            Enum.Parse<ValueKind>(f.GetProperty("kind").GetString()!),
+                            f.TryGetProperty("sensitivity", out var s) ? Enum.Parse<Sensitivity>(s.GetString()!) : Sensitivity.None,
+                            f.TryGetProperty("description", out var d) ? d.GetString() : null)).ToArray();
+                        _schemas[e.GetProperty("ref").GetInt32()] = new EventDescriptor(
+                            e.GetProperty("id").GetUInt32(), e.GetProperty("name").GetString()!, e.GetProperty("version").GetUInt16(),
+                            (Severity)e.GetProperty("severity_number").GetByte(),
+                            e.TryGetProperty("template", out var t) ? t.GetString() : null, fields,
+                            e.TryGetProperty("description", out var desc) ? desc.GetString() : null);
+                        break;
+                    }
+                case "context":
+                    {
+                        var parent = e.TryGetProperty("parent", out var p) ? _contexts[p.GetInt32()] : null;
+                        _contexts[e.GetProperty("ref").GetInt32()] = new ContextSnapshot(
+                            Enum.Parse<ContextKind>(e.GetProperty("kind").GetString()!),
+                            e.TryGetProperty("name", out var n) ? n.GetString() : null,
+                            CanonicalJson.ReadPairs(e.GetProperty("attributes")), parent);
+                        break;
+                    }
+                case "record":
+                    rec = ParseRecord(e);
+                    break;
+                default:
+                    throw new FormatException($"Unknown line type '{type}'.");
+            }
+        }
+        catch (Exception ex) when (ex is JsonException or KeyNotFoundException or InvalidOperationException or ArgumentException)
+        {
+            throw new FormatException(ex.Message, ex);
+        }
+        if (!_sawHeader) throw new FormatException("latticelog.jsonl must start with a header line.");
+        return rec;
     }
 
     private LogRecord ParseRecord(JsonElement e)

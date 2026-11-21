@@ -37,35 +37,91 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
+      - name: structlog (Python SDK local-mode tests, and SourcesTests' Python end-to-end test)
+        run: python -m pip install structlog
       - run: dotnet build LatticeLog.sln -c Release
       - run: dotnet test LatticeLog.sln -c Release --no-build
+      - name: Python SDK tests (local mode, structlog)
+        run: python -m unittest discover -s sdks/python/tests
       - name: Independent reader on golden files (gate G4)
         run: python -I tools/pyllog/llog.py verify-golden tests/GoldenFiles/v0.1 tests/GoldenFiles/v0.2
       - name: Lab smoke (round trips must verify)
         run: dotnet run -c Release --no-build --project research/LatticeLog.Lab -- baseline --events 5000 --reps 1 --out lab-smoke
 
-  aot-and-pack:
-    # Native AOT needs a native toolchain (clang on the Linux runner); it could not be verified on the Windows dev box.
-    runs-on: ubuntu-latest
+  aot:
+    # The single-file Native AOT executable that `latticelog setup` installs: built per OS (a native linker is needed:
+    # MSVC on the Windows runner, clang on Linux), then smoke-tested with dotnet removed from PATH and every DOTNET_*
+    # variable unset, and again inside a container image that has no .NET at all. The smoke test runs list_sources and
+    # get_error_groups through `latticelog mcp` (auto-started background service) and in-process (--no-service).
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: windows-2022
+            rid: win-x64
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
       - name: Native AOT publish of the CLI (warnings are errors for src/ via Directory.Build.targets)
-        run: dotnet publish src/LatticeLog.Cli -c Release -r linux-x64 -p:PublishAot=true -o aot
-      - name: AOT binary smoke test
+        run: dotnet publish src/LatticeLog.Cli -c Release -r ${{ matrix.rid }} -p:PublishAot=true -o aot
+      - name: Store commands on the AOT binary
+        if: runner.os == 'Linux'
         run: |
           dotnet run -c Release --project examples/dotnet-console -- demo-store 2000
           ./aot/latticelog verify demo-store --format json
           ./aot/latticelog query demo-store --where "level >= ERROR" --limit 3 --format jsonl
           ./aot/latticelog stats demo-store --by event --format json
+      - name: Smoke test, no .NET reachable (Linux)
+        if: runner.os == 'Linux'
+        run: sh scripts/smoke-aot.sh aot/latticelog
+      - name: Smoke test, no .NET reachable (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/smoke-aot.ps1 -Exe aot/latticelog.exe
+      - name: Smoke test in a container without .NET (debian; OpenSSL is the only library added)
+        if: runner.os == 'Linux'
+        run: docker run --rm -v "$PWD:/w" -w /w debian:bookworm-slim sh -c "apt-get update -qq && apt-get install -y -qq libssl3 >/dev/null && sh scripts/smoke-aot.sh aot/latticelog"
+      - name: Smoke test in a container without .NET (Windows Server Core)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: docker run --rm -v "${PWD}:C:\w" -w "C:\w" mcr.microsoft.com/windows/servercore:ltsc2022 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke-aot.ps1 -Exe aot\latticelog.exe
+      - uses: actions/upload-artifact@v7
+        with:
+          name: latticelog-${{ matrix.rid }}
+          path: |
+            aot/latticelog
+            aot/latticelog.exe
+
+  pack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
       - name: Pack (verification only; packages are not published from CI)
         run: dotnet pack LatticeLog.sln -c Release -o packages
       - uses: actions/upload-artifact@v7
         with:
           name: packages
           path: packages
+
+  aot-and-pack:
+    # The former single job of this name was split into aot (per platform) and pack. Branch protection requires a
+    # check called aot-and-pack, so this one stands for both: it passes only when every aot build and pack passed.
+    needs: [aot, pack]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: aot and pack passed
+        run: |
+          echo "aot: ${{ needs.aot.result }}, pack: ${{ needs.pack.result }}"
+          test "${{ needs.aot.result }}" = success && test "${{ needs.pack.result }}" = success
 
   container:
     # Builds the server image, scans it, and runs it over real TLS: health, ingestion with the Python SDK, queries,

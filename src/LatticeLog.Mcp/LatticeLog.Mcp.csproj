@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\LatticeLog.Evidence\LatticeLog.Evidence.csproj" />
+    <ProjectReference Include="..\LatticeLog.Sources\LatticeLog.Sources.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

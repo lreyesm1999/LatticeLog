@@ -2,6 +2,57 @@
 
 ## Unreleased — public repository under the MIT license
 
+- **Install once: background service and single-file install** ([`specs/local-sources.md` §6](specs/local-sources.md#6-background-service),
+  new library `LatticeLog.Service`, README "Install once"):
+  - `latticelog service run|start|stop|restart|status|install|uninstall|ui`: one per-user process on 127.0.0.1
+    (token-protected, endpoint file in the data folder) that owns the catalogs. It does background refresh and Python
+    indexing, follows `follow=true` migrations, and compacts and applies per-source retention
+    (`latticelog sources retention`) to LatticeLog's own stores only. All of its writes share one gate, so concurrent
+    editors no longer contend for index locks. Registration is per user, with no administrator rights: a Task
+    Scheduler logon task running a console-less copy (`latticelogw.exe`) or the Run key, a systemd user unit, or a
+    launchd agent.
+  - `latticelog mcp` is now a thin stdio shim to the service, which it starts when it is not running. It falls back to
+    in-process when the service cannot start (`--no-service` forces it). It survives a service restart by
+    reconnecting, replaying `initialize` and resending in-flight requests. Tools and results are unchanged;
+    `list_sources` adds `served_by`.
+  - `latticelog service status` shows sources, last indexed time, disk use and errors. `/ui` (the web console) and
+    `/v1/status` are served on loopback, with Host-header checks against DNS rebinding.
+  - `latticelog setup`: copies the Native AOT single-file executable to a per-user folder and onto `PATH`, registers
+    and starts the service, and runs `mcp install` for the chosen clients. `latticelog setup --uninstall` undoes it,
+    and `mcp uninstall` removes one entry. Scripts: `scripts/publish-aot.ps1`, `scripts/install.ps1`,
+    `scripts/install.sh`, `scripts/smoke-aot.ps1|.sh`.
+  - Short command `llog` (installed by `setup` next to the executable) and `llog ui`, which opens the web console in
+    the browser; one-letter flags `-o`, `-h`, `-y`.
+  - CI builds the AOT executable for win-x64 and linux-x64 and smoke-tests list_sources and get_error_groups with
+    dotnet removed from PATH, then again in containers without .NET (Windows Server Core, Debian).
+  - `StoreWriter.ApplyRetention(..., keepNewest)` and `SourceCatalog` thread safety (snapshot warnings, serialized
+    discovery) support the service.
+
+- **Developer flow: logs by service name** ([`specs/local-sources.md`](specs/local-sources.md), new library
+  `LatticeLog.Sources`, example [`examples/developer-flow`](examples/developer-flow)):
+  - Python **local mode** without a server: `latticelog.open(folder, service=..., environment=...)` writes official
+    `latticelog.jsonl` v1 records next to a `latticelog.source.json` manifest, one `p-N` subfolder per live process
+    (shown as one source), dense sequence across restarts, durability modes, retention by age/size that never deletes
+    the file being written.
+  - `latticelog.structlog_processor(log)`: one line in `structlog.configure`; `event` → event name, other keys typed
+    attributes, exceptions with their real Python type. `LatticeLogHandler` keeps structlog's event dict under
+    `ProcessorFormatter.wrap_for_formatter` instead of flattening it with `getMessage()`.
+  - Discovery by name: `latticelog roots add|remove|list`, optional project `latticelog.toml` (`roots`, `[sources]`,
+    `[migrate] allow`), `latticelog sources`. Python folders get an incremental `.llog` index (checkpoints per file,
+    complete lines only, crash-safe, no duplicates); .NET stores are read directly.
+  - MCP: `latticelog mcp` without a store serves every source; new `list_sources`; every tool takes `source` (name,
+    list or `*`), results merged by time and tagged with their source; composite cursors page across sources.
+    `latticelog mcp <dir>` keeps the single-store, read-only server.
+  - Migration on request: `preview_migration` (read-only: format, line count, 5 samples as stored, field mapping,
+    estimated size, loss report) and `migrate_logs` (`readOnlyHint: false`, `destructiveHint: false`): only inside the
+    registered roots or the allowlist (`latticelog allow add`), originals never modified, staged then registered by one
+    rename (a cancelled run leaves nothing), idempotent with rotation/truncation detection, unparsed lines kept as
+    text, compaction at the end, progress and cancellation over MCP. CLI parity: `latticelog migrate <path|glob>
+    --name <source> [--follow] | --preview`. A copy of a real 378 MB structlog file: 1,762,702 records, 7.9 MB, 7 s.
+  - `latticelog mcp install --client claude-desktop|claude-code|cursor|vscode` merges the client configuration, asks
+    before overwriting an entry and keeps a backup.
+  - `JsonlExchangeReader.ReadLine` parses one line at a time (resumable reads; a malformed line can be kept as text).
+
 - **MIT** license (`LICENSE`): the project is free and open, with no commercial editions. Package metadata
   (`PackageLicenseExpression`, repository) in `Directory.Build.props`, `pyproject.toml` and `composer.json`.
 - Clean-up before publishing: zero build warnings (`CancellationToken` ordering, `Dispose` of the wrapper stream, the

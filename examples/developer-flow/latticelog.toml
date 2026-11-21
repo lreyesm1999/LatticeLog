@@ -1,0 +1,7 @@
+# Project file for the developer-flow demo (specs/local-sources.md).
+# Every folder under "logs" that a service writes with latticelog.open(...) is a source, named after its service.
+roots = ["logs"]
+
+[migrate]
+# Traditional log files here may be previewed and migrated on request. Originals are never modified.
+allow = ["old-logs"]

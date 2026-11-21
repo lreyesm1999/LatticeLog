@@ -2,6 +2,13 @@
 // textContent, never as HTML. The token lives only in sessionStorage of this tab.
 "use strict";
 const $ = (id) => document.getElementById(id);
+// "latticelog service ui" opens /ui#token=...: the fragment never reaches the server; it is moved to sessionStorage and
+// removed from the address bar.
+const hashToken = new URLSearchParams(location.hash.slice(1)).get("token");
+if (hashToken) {
+  sessionStorage.setItem("ll-token", hashToken);
+  history.replaceState(null, "", location.pathname + location.search);
+}
 const state = { token: sessionStorage.getItem("ll-token") || "", ns: sessionStorage.getItem("ll-ns") || "", cursor: null };
 
 async function api(path, params = {}) {
@@ -33,11 +40,21 @@ async function loadNamespaces() {
     sel.appendChild(o);
   }
   if (namespaces.includes(state.ns)) sel.value = state.ns; else state.ns = sel.value;
-  status(namespaces.length ? `${namespaces.length} namespace(s)` : "no namespaces with data");
+  status(namespaces.length ? `${namespaces.length} source(s)` : "Connected.");
+}
+
+// With no source holding data yet there is nothing to ask the API for: say how to add one instead of showing a 404.
+const NOTHING_YET = "Nothing to show yet: no source has data. On this PC, register the folder your services log into " +
+  "(llog roots add <folder>) or convert an old log file (llog migrate <file> --name <name>), then reload this page.";
+function noSource(show) {
+  if (state.ns) return false;
+  show(NOTHING_YET);
+  return true;
 }
 
 async function search(more = false) {
   if (!more) { state.cursor = null; $("events").tBodies[0].replaceChildren(); }
+  if (noSource((t) => { $("coverage").textContent = t; })) return;
   try {
     const res = await api("/v1/search", { where: $("where").value, since: $("since").value, order: $("order").value, limit: 100, cursor: more ? state.cursor : null });
     const tbody = $("events").tBodies[0];
@@ -78,6 +95,7 @@ function showEvent(e) {
 async function stats() {
   const box = $("bars");
   box.replaceChildren();
+  if (noSource((t) => { box.textContent = t; })) return;
   try {
     const res = await api("/v1/stats", { by: $("by").value, where: $("statswhere").value });
     const max = Math.max(1, ...res.groups.map((g) => g.count));
@@ -95,6 +113,7 @@ async function stats() {
 async function catalog() {
   const tbody = $("segments").tBodies[0];
   tbody.replaceChildren();
+  if (noSource(status)) return;
   try {
     const res = await api("/v1/catalog");
     for (const s of res.segments) {

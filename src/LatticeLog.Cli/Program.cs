@@ -50,11 +50,16 @@ public sealed class Args
                 if (i + 1 < list.Count && !list[i + 1].StartsWith("--", StringComparison.Ordinal) && !Flags.Contains(name)) _opts[name] = list[++i];
                 else _opts[name] = null;
             }
+            else if (a.Length == 2 && a[0] == '-' && ShortFlags.TryGetValue(a[1], out var longName)) _opts[longName] = null;
             else Positional.Add(a);
         }
     }
 
-    private static readonly HashSet<string> Flags = ["follow", "no-index", "force", "stdout", "pretty", "help", "preserve-raw", "no-redact", "desc", "explain"];
+    private static readonly HashSet<string> Flags = ["follow", "no-index", "force", "stdout", "pretty", "help", "preserve-raw", "no-redact", "desc", "explain", "preview", "yes", "dry-run", "no-refresh",
+        "no-service", "no-start", "no-project", "no-path", "open", "no-open", "verbose", "uninstall", "remove-data", "clear"];
+
+    /// <summary>One-letter forms of common flags: <c>llog ui -o</c>, <c>-h</c>, <c>-y</c>.</summary>
+    private static readonly Dictionary<char, string> ShortFlags = new() { ['o'] = "open", ['h'] = "help", ['y'] = "yes" };
 
     public bool Has(string name) => _opts.ContainsKey(name);
     public string? Get(string name) => _opts.TryGetValue(name, out var v) ? v : null;
@@ -94,12 +99,23 @@ public static class Program
         ["export"] = "export <dir> --format llog-jsonl|otlp-json|raw (--output FILE | --stdout) [--where Q]",
         ["import"] = "import <dir> <file> --format llog-jsonl|otlp-json|jsonl|text [--service NAME] [--preserve-raw]",
         ["tail"] = "tail <dir> [--lines N] [--where Q] [--follow]",
-        ["mcp"] = "mcp <dir>                          Read-only MCP server over stdio for external tools.",
+        ["roots"] = "roots add|remove|list [<folder>]   Per-user folders searched for sources (service folders, .NET stores).",
+        ["allow"] = "allow add|remove|list [<folder>]   Extra folders whose log files may be previewed/migrated.",
+        ["sources"] = "sources [--project DIR] [--no-refresh] [--format json]   List sources by name (indexes Python folders first).",
+        ["migrate"] = "migrate <path|glob> --name <source> [--follow] | --preview   Convert traditional logs into a source; originals untouched.",
+        ["sources retention"] = "sources retention [<name>|*] [--max-age 30d] [--max-mb N] [--clear]   Retention the service applies to indexes and migrations.",
+        ["mcp"] = "mcp [<dir>] [--project DIR] [--no-service]   MCP over stdio via the background service (auto-started; in-process if it cannot start).",
+        ["mcp install"] = "mcp install --client claude-desktop|claude-code|cursor|vscode [--scope user|project] [--yes] [--dry-run]",
+        ["mcp uninstall"] = "mcp uninstall --client claude-desktop|claude-code|cursor|vscode [--scope user|project]",
+        ["ui"] = "ui [-o] [--no-open]                 Open the web console in your browser (starts the service if needed). Short: llog ui.",
+        ["service"] = "service status|start|stop|restart|install|uninstall|ui [--open]|run [--port N] [--verbose]   Per-user background service on 127.0.0.1.",
+        ["setup"] = "setup [--clients a,b|none] [--install-dir DIR] [--no-service] [--no-path] [--method task|run-key] | setup --uninstall [--remove-data]",
     };
 
     public static int Main(string[] argv)
     {
-        Console.OutputEncoding = new UTF8Encoding(false);
+        try { Console.OutputEncoding = new UTF8Encoding(false); }
+        catch (IOException) { } // no console (the service started as latticelogw.exe)
         if (argv.Length == 0 || argv[0] is "-h" or "--help" or "help") { PrintHelp(); return argv.Length == 0 ? ExitCodes.Usage : ExitCodes.Ok; }
         if (argv[0] is "--version" or "version") { Console.WriteLine("latticelog " + Version); return ExitCodes.Ok; }
         var cmd = argv[0];
@@ -128,7 +144,14 @@ public static class Program
                 "export" => Export(args),
                 "import" => Import(args),
                 "tail" => Tail(args),
-                "mcp" => Mcp.McpServer.Run(Store(args), Console.OpenStandardInput(), Console.OpenStandardOutput(), Console.Error),
+                "roots" => SourceCommands.FolderList(args, "roots"),
+                "allow" => SourceCommands.FolderList(args, "allow"),
+                "sources" => SourceCommands.Sources(args),
+                "migrate" => SourceCommands.Migrate(args),
+                "mcp" => SourceCommands.Mcp(args),
+                "service" => ServiceCommands.Service(args),
+                "ui" => ServiceCommands.OpenUi(args),
+                "setup" => ServiceCommands.Setup(args),
                 _ => throw new CliException(ExitCodes.Usage, $"Unknown command '{cmd}'. Run 'latticelog help'."),
             };
         }

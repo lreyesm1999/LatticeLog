@@ -503,12 +503,15 @@ public sealed class StoreWriter : IRecordSink
     /// Applies <paramref name="policy"/> now (writer thread or with the writer idle). Only sealed segments whose seal
     /// has completed are candidates; the active segment and segments still being sealed are skipped.
     /// </summary>
-    public RetentionResult ApplyRetention(RetentionPolicy policy, long? nowUnixNanos = null, bool dryRun = false)
+    /// <param name="keepNewest">Never delete the newest segment, so the store keeps its last sequence number (stores fed by
+    /// a checkpointed importer).</param>
+    public RetentionResult ApplyRetention(RetentionPolicy policy, long? nowUnixNanos = null, bool dryRun = false, bool keepNewest = false)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         var reader = StoreReader.Open(_root);
         var current = _current?.SegmentId;
-        var plan = Retention.Plan(reader, policy, nowUnixNanos ?? UnixTime.NowUnixNanos(), id => id != current);
+        var newest = keepNewest && reader.SegmentIds.Count > 0 ? reader.SegmentIds.Max() : (ulong?)null;
+        var plan = Retention.Plan(reader, policy, nowUnixNanos ?? UnixTime.NowUnixNanos(), id => id != current && id != newest);
         if (!dryRun)
         {
             Retention.Execute(_root, plan);

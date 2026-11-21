@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\LatticeLog.Mcp\LatticeLog.Mcp.csproj" />
+    <ProjectReference Include="..\LatticeLog.Query\LatticeLog.Query.csproj" />
+    <ProjectReference Include="..\LatticeLog.Evidence\LatticeLog.Evidence.csproj" />
+    <ProjectReference Include="..\LatticeLog.Sources\LatticeLog.Sources.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Description>LatticeLog background service: one per-user process on 127.0.0.1 that owns the source catalog (incremental indexing, compaction, retention, follow), serves MCP sessions for the thin 'latticelog mcp' shim and the web console, plus per-user registration (scheduled task / systemd user unit / launchd agent).</Description>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="LatticeLog.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The same web console the server ships (src/LatticeLog.Server/ui), served by the service on loopback. -->
+    <EmbeddedResource Include="..\LatticeLog.Server\ui\**" LogicalName="ui/%(Filename)%(Extension)" Link="ui\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>
