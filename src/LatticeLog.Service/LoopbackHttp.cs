@@ -236,8 +236,11 @@ internal static class LoopbackHttp
 
     private static JsonObject Stats(QueryEngine engine, Request req, string source)
     {
-        var by = req.Query.GetValueOrDefault("by") is { Length: > 0 } g ? g : "event";
-        var res = engine.Aggregate(Scope(req, 100), by, null, 50);
+        // bucket=5m groups by time (the console's histogram), like the server's /v1/stats.
+        TimeSpan? bucket = req.Query.GetValueOrDefault("bucket") is { Length: > 0 } b ? Durations.Parse(b) : null;
+        var by = req.Query.GetValueOrDefault("by") is { Length: > 0 } g ? g : bucket is null ? "event" : "time";
+        var top = req.Query.GetValueOrDefault("top") is { Length: > 0 } t && int.TryParse(t, NumberStyles.None, CultureInfo.InvariantCulture, out var n) ? Math.Clamp(n, 1, 1_000) : 50;
+        var res = engine.Aggregate(Scope(req, 100), by, bucket, top);
         return new JsonObject
         {
             ["format"] = "latticelog.stats.v1",
@@ -265,6 +268,7 @@ internal static class LoopbackHttp
                 seg["last_seq"] = x.LastSequence.ToString(CultureInfo.InvariantCulture);
                 seg["min_time"] = UnixTime.FormatRfc3339(x.MinTimestamp);
                 seg["max_time"] = UnixTime.FormatRfc3339(x.MaxTimestamp);
+                seg["services"] = new JsonArray(x.Services.Select(s => (JsonNode?)JsonValue.Create(s)).ToArray());
             }
             try { seg["bytes"] = new FileInfo(store.SegmentPath(id)).Length; } catch (IOException) { }
             segments.Add((JsonNode?)seg);
