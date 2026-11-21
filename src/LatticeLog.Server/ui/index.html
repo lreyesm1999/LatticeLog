@@ -12,11 +12,9 @@
     <svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4z"/><path class="logo-accent" d="M14 14h6v6h-6z"/></svg>
     <span>LatticeLog</span>
   </div>
-  <label class="source" id="source-picker" hidden>
-    <span class="source-label">Source</span>
-    <select id="ns" aria-label="Source"></select>
-  </label>
+  <button type="button" id="source-btn" class="source-btn" title="Browse sources (Ctrl+K to jump to one)" aria-label="Current source: browse sources" hidden></button>
   <nav class="tabs" id="tabs" hidden>
+    <button type="button" data-view="sources">Sources</button>
     <button type="button" data-view="search" class="active">Search</button>
     <button type="button" data-view="stats">Overview</button>
     <button type="button" data-view="catalog">Storage</button>
@@ -46,6 +44,41 @@
 
 <main id="app" hidden>
   <p id="source-span" class="source-span muted"></p>
+
+  <section id="view-sources" class="explorer-view" hidden>
+    <div class="ex-toolbar">
+      <button type="button" id="ex-up" class="ghost icon-btn" title="Up one level (Backspace)" aria-label="Up one level">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+      </button>
+      <nav id="ex-crumbs" class="crumbs" aria-label="Location"></nav>
+      <div class="search-box ex-filter">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+        <input id="ex-filter" spellcheck="false" placeholder="Search sources by name, service or folder" aria-label="Search sources">
+        <button type="button" id="ex-clear" class="ghost icon-btn small" title="Clear" aria-label="Clear source search" hidden>×</button>
+      </div>
+      <button type="button" id="ex-refresh" class="ghost icon-btn" title="Rescan the registered folders" aria-label="Rescan the registered folders">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>
+      </button>
+    </div>
+    <div class="explorer card">
+      <nav id="ex-tree" class="ex-tree" role="tree" aria-label="Folders"></nav>
+      <div class="ex-main">
+        <div class="ex-list-wrap">
+          <table id="ex-list" class="ex-list">
+            <thead><tr id="ex-head"></tr></thead>
+            <tbody></tbody>
+          </table>
+          <div id="ex-empty" class="empty" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+            <h2 id="ex-empty-title"></h2>
+            <p id="ex-empty-text" class="muted"></p>
+          </div>
+        </div>
+        <div id="ex-status" class="ex-status muted small"></div>
+      </div>
+      <aside id="ex-preview" class="ex-preview" aria-label="Details"></aside>
+    </div>
+  </section>
 
   <section id="view-search">
     <form id="query" class="querybar">
@@ -185,6 +218,20 @@
     </details>
   </div>
 </aside>
+<div id="palette" class="palette-backdrop" hidden>
+  <div class="palette card" role="dialog" aria-label="Jump to a source">
+    <div class="search-box">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+      <input id="pal-input" spellcheck="false" placeholder="Jump to a source…" aria-label="Source name" aria-controls="pal-list">
+      <kbd>Esc</kbd>
+    </div>
+    <ul id="pal-list" class="pal-list" role="listbox" aria-label="Sources"></ul>
+    <div class="pal-foot muted small">
+      <span><kbd>↑</kbd> <kbd>↓</kbd> move · <kbd>Enter</kbd> open</span>
+      <button type="button" id="pal-browse" class="ghost small">Browse all sources</button>
+    </div>
+  </div>
+</div>
 <div id="toast" class="toast" role="status" hidden></div>
 <script src="/ui/app.js"></script>
 </body>
