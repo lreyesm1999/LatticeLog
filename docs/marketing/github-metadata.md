@@ -1,7 +1,12 @@
 # GitHub metadata to set by hand
 
-These settings live on GitHub, not in the repository, so they need the owner's account. Nothing below has been applied.
-Current values were read with `gh repo view` on 2026-11-21.
+These settings live on GitHub, not in the repository, so they need the owner's account. "Current" values were read
+with `gh repo view` on 2026-11-21.
+
+**Applied on 2026-11-21:** description, website, the 8 added topics, Discussions on (default categories, including Q&A
+and Ideas, linked from the issue chooser and `SUPPORT.md`), Wiki off (it had no pages), and the labels below. Private
+vulnerability reporting was already enabled. **Still to do by hand:** the social preview upload, the author profile, and
+the release notes.
 
 ## Description (About → Description)
 
@@ -42,7 +47,7 @@ Current: `binary-format`, `dotnet`, `logging`, `mcp`, `observability`, `php`, `p
 | `observability` | keep, with care | true for logs; there are no metrics or tracing backend |
 | `python`, `php` | keep | SDKs exist |
 
-GitHub allows 20 topics; this list has 18.
+GitHub allows 20 topics; this list has 16.
 
 ```bash
 gh repo edit lreyesm1999/LatticeLog --add-topic csharp,log-analysis,log-compression,model-context-protocol,developer-tools,local-first,source-generator,opentelemetry
