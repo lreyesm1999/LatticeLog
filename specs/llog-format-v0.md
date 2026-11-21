@@ -1,6 +1,6 @@
-# `.llog` binary format — version 0.2 (draft, normative)
+# `.llog` binary format — version 0.3 (draft, normative)
 
-Status: **draft v0.2** (0.1 files remain readable; see §12 for the changes). Breaking changes are allowed until 1.0 but every change must bump `format_minor` (compatible)
+Status: **draft v0.3** (0.1 and 0.2 files remain readable; see §12 and §13 for the changes). Breaking changes are allowed until 1.0 but every change must bump `format_minor` (compatible)
 or `format_major` (incompatible) and ship new golden files (`tests/GoldenFiles/`). This document is sufficient to
 write an independent reader; `tools/pyllog/llog.py` is such a reader written only from this text (gate G4).
 
@@ -33,9 +33,9 @@ Schema/Context block of the same file.
 |---:|---:|---|---|
 | 0 | 8 | magic | `4C 4C 4F 47 0D 0A 1A 0A` ("LLOG\r\n\x1a\n") |
 | 8 | 2 | format_major | 0 |
-| 10 | 2 | format_minor | 2 (writers of this version); readers accept 1 and 2 |
+| 10 | 2 | format_minor | 3 (writers of this version); readers accept 1, 2 and 3 |
 | 12 | 4 | required_features | 0 in v0.1. A reader MUST refuse a file with unknown required bits. |
-| 16 | 4 | optional_features | bit 0 = footer carries a catalog copy (§7.3); unknown bits are ignored |
+| 16 | 4 | optional_features | bit 0 = footer carries a catalog copy (§7.3); bit 1 = footer carries block summaries (§7.4); unknown bits are ignored |
 | 20 | 8 | segment_id | u64 |
 | 28 | 8 | created_unix_nanos | i64 |
 | 36 | 4 | header_crc | crc32 of bytes 0..35 |
@@ -212,7 +212,13 @@ varint n_blocks; n × (varint offset; varint total_length; u8 block_type; varint
 varint bloom_bits (0 = absent); [u8 hash_count; bloom_bits/8 bytes]
 varint catalog_section_length (0 = absent)              ; format 0.2, see §7.3; absent in 0.1 footers
 [catalog_section]
+extension*                                              ; format 0.3, see §7.4; absent in 0.1/0.2 footers
 ```
+
+`extension := varint tag; varint length; length bytes`. Extensions run to the end of the footer payload, with
+strictly ascending tags. Readers MUST skip extensions whose tag they do not know, so later minor versions can add
+footer data without breaking 0.3 readers. A 0.3 footer always contains the catalog length (0 when absent), so the
+extension area never starts where a 0.1 footer ends.
 
 ### 7.1 Block directory and random access
 
@@ -232,6 +238,40 @@ payload is the **complete catalog of the segment**: a schema entry list (§5, `v
 context entry list (§5), with the same 1-based numbering as the Schema/Context blocks. Limits of §2.2 apply
 (`decoded_length ≤ 64 MiB`, expansion ratio ≤ 1100). A 0.1 reader sees trailing bytes in the footer, treats the
 segment as unsealed and still decodes every record by scanning (compatible degradation).
+
+### 7.4 Block summaries (format 0.3, extension tag 1)
+
+Per Records block, the set of severities, events and services its records contain, so that a reader can skip blocks
+that cannot match a severity, event or service filter without decoding them (§7.1 only allows time and sequence).
+
+```
+varint n                                    ; MUST equal the number of Records entries in the block directory
+n × ( varint severity_mask                  ; bit s set <=> some record of the block has severity s (0..24)
+      set events                            ; indexes into the footer events list (0 = first entry)
+      set services )                        ; indexes into the footer services list
+set := varint h
+       h even : h/2 strictly ascending indexes; the first is stored as is, each next one as (index - previous - 1)
+       h == 1 : bitmap of ceil(N/8) bytes, N = length of the list; index i <=> byte[i >> 3] & (1 << (i & 7))
+```
+
+Summaries are listed in directory order of the Records entries. A record contributes the footer events entry
+`(event_id, event_name)` it is counted under (the schema's id and name when it has a schema, otherwise its own
+`event_id` and `event_name`, an absent name being the empty string), and its `service.name` if it has one (the
+value of the nearest context in its chain that defines it, the last definition inside a context winning; only
+string values count). Summaries are exact: no index may be listed for a block that does not contain it.
+
+Writers choose the shorter set encoding (the list on a tie) and write the extension for every sealed segment that
+has at least one Records block. Readers MUST treat the whole footer as invalid (§2.3) when `n` differs from the
+number of Records entries, a mask is 0 or has bits above 24, an index is out of range or not ascending, or bitmap
+padding bits are set. Pruning with summaries is an optimisation: a reader that ignores them loses nothing.
+
+**Compatibility.** A 0.1 or 0.2 reader sees bytes after the catalog section, rejects the footer and treats the
+segment as unsealed: it still decodes every record by scanning, without index pruning (the same degradation as a 0.1
+reader on 0.2 files, §7.3), and its `verify` reports the segment (missing footer, unexpected footer block, torn
+tail). A 0.1/0.2 *store writer* that opens such a store runs unsealed-segment recovery on these segments: it moves
+the 0.3 footer frame and the trailer to `recovered/` and appends a footer of its own version. Every record is kept,
+but the file is rewritten and loses its block summaries until a 0.3 writer rewrites it (compaction or re-import). Do not open a
+0.3 store for writing with an older writer.
 
 ## 8. Logical model mapping
 
@@ -264,7 +304,7 @@ Readers order live segments by `first_seq` (unsealed segments last).
 
 ## 11. Hexadecimal example
 
-File header of `tests/GoldenFiles/v0.2/structural.llog` (segment 1, created_unix_nanos 0):
+File header of `tests/GoldenFiles/v0.3/structural.llog` (segment 1, created_unix_nanos 0):
 
 ```
 offset 0   4C 4C 4F 47 0D 0A 1A 0A   magic "LLOG
@@ -272,17 +312,18 @@ offset 0   4C 4C 4F 47 0D 0A 1A 0A   magic "LLOG
 
 "
 offset 8   00 00                     format_major = 0
-offset 10  02 00                     format_minor = 2
+offset 10  03 00                     format_minor = 3
 offset 12  00 00 00 00               required_features = 0
-offset 16  01 00 00 00               optional_features = 1 (footer catalog copy)
+offset 16  03 00 00 00               optional_features = 3 (footer catalog copy, block summaries)
 offset 20  01 00 00 00 00 00 00 00   segment_id = 1
 offset 28  00 00 00 00 00 00 00 00   created_unix_nanos = 0
-offset 36  87 5B B8 FF               crc32(bytes 0..35) = 0xFFB85B87
+offset 36  9C 8B 6B D2               crc32(bytes 0..35) = 0xD26B8B9C
 ```
 
-Complete vectors: `tests/GoldenFiles/v0.1/` (frozen) and `tests/GoldenFiles/v0.2/` (current): one file per codec ×
+Complete vectors: `tests/GoldenFiles/v0.1/` and `tests/GoldenFiles/v0.2/` (frozen) and `tests/GoldenFiles/v0.3/` (current): one file per codec ×
 compression, `expected.llog.jsonl` (decoded records in the lossless exchange format) and two corrupt files that readers
-must report. `tools/pyllog/llog.py verify-golden tests/GoldenFiles/v0.1 tests/GoldenFiles/v0.2` checks all of them.
+must report. `tools/pyllog/llog.py verify-golden tests/GoldenFiles/v0.1 tests/GoldenFiles/v0.2 tests/GoldenFiles/v0.3` checks all
+of them, and recomputes the 0.3 block summaries from the decoded records.
 
 ## 12. Changes from 0.1 to 0.2
 
@@ -291,3 +332,11 @@ must report. `tools/pyllog/llog.py verify-golden tests/GoldenFiles/v0.1 tests/Go
 - Schema/Context blocks may be DEFLATE-compressed when the segment uses compression (allowed by the 0.1 frame
   format already, not used by 0.1 writers).
 - Reading rule §3.6. No change to values, records, codecs or the trailer.
+
+## 13. Changes from 0.2 to 0.3
+
+- Footer extension area (§7): tagged, length-prefixed sections after the catalog section; unknown tags are skipped.
+- Block summaries (§7.4, extension tag 1, optional feature bit 1): severity, event and service filters can skip
+  individual Records blocks instead of only whole segments.
+- No change to values, records, codecs, catalogs or the trailer. 0.2 segments gain summaries only when rewritten
+  (compaction or re-import).

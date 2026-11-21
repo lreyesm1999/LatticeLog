@@ -273,12 +273,26 @@ public sealed class PruningConstraints
         return null;
     }
 
-    public string? ExcludeBlock(BlockIndexEntry b)
+    /// <summary>
+    /// Returns null when the block may contain matches, or the reason it cannot. Severity, event and service are
+    /// checked only when the block has a format 0.3 summary and <paramref name="idx"/> (its segment footer) is given.
+    /// </summary>
+    public string? ExcludeBlock(BlockIndexEntry b, SegmentIndex? idx = null)
     {
         if (b.Type != BlockType.Records) return null;
         if (b.MaxTimestamp < MinTime || b.MinTimestamp > MaxTime) return "time";
         if (AfterSequence is { } a && b.LastSequence <= a) return "cursor";
         if (BeforeSequence is { } bs && b.FirstSequence >= bs) return "cursor";
+        if (idx is null || b.Summary is not { } s) return null;
+        if (MinSeverity is { } ms && !s.HasSeverityAtLeast(ms)) return "severity";
+        if (Events is not null && !AnyNamed(s.EventIndexes, i => idx.Events[i].Name, Events)) return "event";
+        if (Services is not null && !AnyNamed(s.ServiceIndexes, i => idx.Services[i], Services)) return "service";
         return null;
+    }
+
+    private static bool AnyNamed(int[] indexes, Func<int, string> name, HashSet<string> wanted)
+    {
+        foreach (var i in indexes) if (wanted.Contains(name(i))) return true;
+        return false;
     }
 }

@@ -12,7 +12,7 @@ namespace LatticeLog.Tests;
 /// </summary>
 public class GoldenFileTests
 {
-    public const string CurrentVersion = "v0.2";
+    public const string CurrentVersion = "v0.3";
 
     public static string Dir(string version)
     {
@@ -154,6 +154,7 @@ public class GoldenFileTests
     [Theory]
     [InlineData("v0.1")]
     [InlineData("v0.2")]
+    [InlineData("v0.3")]
     public void Golden_files_decode_to_expected_records(string version)
     {
         var dir = Dir(version);
@@ -168,6 +169,8 @@ public class GoldenFileTests
             using var reader = SegmentReader.Open(Path.Combine(dir, name + ".llog"));
             Assert.True(reader.IsSealed, name);
             Assert.Equal(version == "v0.1", reader.FooterCatalog is null);
+            // 0.3: every Records block carries a summary; older footers have none.
+            Assert.All(reader.Index!.Blocks.Where(b => b.Type == BlockType.Records), b => Assert.Equal(version is not ("v0.1" or "v0.2"), b.Summary is not null));
             var report = new ScanReport();
             var got = reader.ReadBlocks(report).SelectMany(b => b.Records).ToList();
             Assert.True(report.IsClean, name + ": " + string.Join("; ", report.Issues));
@@ -189,6 +192,7 @@ public class GoldenFileTests
     [Theory]
     [InlineData("v0.1")]
     [InlineData("v0.2")]
+    [InlineData("v0.3")]
     public void Corrupt_golden_files_are_reported_never_silent(string version)
     {
         var dir = Dir(version);

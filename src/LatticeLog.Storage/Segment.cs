@@ -55,7 +55,7 @@ public sealed class SegmentWriter : IDisposable
         SegmentId = segmentId;
         CreatedUnixNanos = _options.CreatedUnixNanos ?? UnixTime.NowUnixNanos();
         Span<byte> h = stackalloc byte[Llog.FileHeaderSize];
-        new FileHeader(Llog.FormatMajor, Llog.FormatMinor, 0, Llog.OptionalFooterCatalog, segmentId, CreatedUnixNanos).Write(h);
+        new FileHeader(Llog.FormatMajor, Llog.FormatMinor, 0, Llog.OptionalFooterCatalog | Llog.OptionalBlockSummaries, segmentId, CreatedUnixNanos).Write(h);
         if (publishAfterHeader)
         {
             var staging = path + ".tmp";

@@ -52,6 +52,16 @@
   - `latticelog mcp install --client claude-desktop|claude-code|cursor|vscode` merges the client configuration, asks
     before overwriting an entry and keeps a backup.
   - `JsonlExchangeReader.ReadLine` parses one line at a time (resumable reads; a malformed line can be kept as text).
+- **Format `.llog` 0.3: block summaries.** The footer now records, for each Records block, the severities, events
+  and services it contains (`specs/llog-format-v0.md` §7.4), so `level >= ERROR`, `event = '…'` and `service = '…'`
+  skip individual blocks instead of only whole segments. The footer gains a tagged extension area that readers skip
+  when they don't know a tag, so later additions won't break 0.3 readers. 0.1/0.2 segments stay readable and gain
+  summaries when compacted or re-imported; 0.2 readers fall back to a full scan of 0.3 segments, and an older store
+  writer must not open a 0.3 store (it keeps every record but moves the 0.3 footers to `recovered/` and rewrites
+  them). New golden files in `tests/GoldenFiles/v0.3/`, and `pyllog` recomputes the summaries from the decoded
+  records. On a real 1.76M-record structlog store (1 segment, 431 Records blocks), `level >= ERROR AND event = '…'`
+  now decodes 4,096 records in ~12 ms to the first hit, down from 1,687,552 records in ~500 ms; the footer grows by
+  2.2 KB.
 
 - **MIT** license (`LICENSE`): the project is free and open, with no commercial editions. Package metadata
   (`PackageLicenseExpression`, repository) in `Directory.Build.props`, `pyproject.toml` and `composer.json`.
