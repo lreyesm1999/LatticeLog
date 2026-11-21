@@ -16,9 +16,11 @@ body:
         - Storage (.llog format, recovery, compaction, retention)
         - Query / CLI
         - Evidence / MCP
+        - Per-user service / web console / setup
         - Server (ingest, read API, admin, console)
         - Python SDK
         - PHP SDK
+        - Examples
         - Docs
     validations:
       required: true

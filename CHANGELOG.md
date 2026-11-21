@@ -2,6 +2,21 @@
 
 ## Unreleased — public repository under the MIT license
 
+- **Docs and onboarding for a public launch:**
+  - the README is now a short landing page: a real incident investigated in three commands, a five-minute quick start,
+    measured benefits with links to their reports, a comparison with Serilog/NLog/Seq/OpenTelemetry/Loki, benchmarks
+    with their hardware and limits, an architecture diagram and a status table. The long sections moved to
+    `docs/guides/install.md` and `docs/features.md`;
+  - new guides in `docs/guides/`: getting started, ASP.NET Core and `ILogger`, MCP setup (Claude Code, Cursor, Claude
+    Desktop, VS Code), investigating an incident with an agent, migrating from text logs, troubleshooting; plus
+    `docs/benchmarks.md`, `docs/comparison.md` and a docs index;
+  - new example `examples/aspnetcore`: a minimal API with the `ILogger` bridge and `[LatticeEvent]` side by side, and
+    a `--smoke` self-check;
+  - `scripts/check-examples.sh` runs the commands the docs show; CI runs it on every platform, and the independent
+    reader now also verifies the `v0.3` golden files;
+  - logo, GitHub social preview image and real console screenshots in `docs/assets/`
+    (`scripts/render-assets.ps1`, `scripts/screenshots/`);
+  - `SUPPORT.md`, a Question issue template, and a first-contribution path in `CONTRIBUTING.md`.
 - **A histogram that tells you something** (web console, Search):
   - **Errors in red:** each bar shows its errors as a red part, so you see when things went wrong, not only how
     busy it was.

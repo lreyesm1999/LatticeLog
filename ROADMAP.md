@@ -1,5 +1,16 @@
 # Roadmap
 
+## In plain words (2026-11-21)
+
+| Now | Next | Later | Out of scope |
+|---|---|---|---|
+| Local engine, CLI, MCP server, per-user service, web console, Python/PHP SDKs: usable, alpha. Closing Local v1.0 (P14) | Measurements on stable hardware and Linux; server over a real network; encryption at rest and an external pentest; runbook drills; external evaluation of the AI-facing evidence | Cluster, object-storage tiers, Java/Go/Node SDKs, a fuller console with user testing, published packages and a stable release | Running AI models inside LatticeLog |
+
+What blocks a stable 1.0 is listed per phase below: mainly P14 (signing, N-1 compatibility, a release candidate) and
+measurements on other hardware. Suggestions and votes: open an issue.
+
+## Phase status
+
 Updated 2026-11-18. This is the source of truth for the status of each phase; details are in
 `docs/decisions/PHASE-XX-REVIEW.md`.
 Statuses: PASS · CONDITIONAL (gate met with explicit open items) · NOT PASSED · NOT STARTED · N/A.

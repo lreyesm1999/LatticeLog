@@ -44,7 +44,10 @@ jobs:
       - name: Python SDK tests (local mode, structlog)
         run: python -m unittest discover -s sdks/python/tests
       - name: Independent reader on golden files (gate G4)
-        run: python -I tools/pyllog/llog.py verify-golden tests/GoldenFiles/v0.1 tests/GoldenFiles/v0.2
+        run: python -I tools/pyllog/llog.py verify-golden tests/GoldenFiles/v0.1 tests/GoldenFiles/v0.2 tests/GoldenFiles/v0.3
+      - name: Documented examples (README and getting-started commands, ASP.NET Core self-check)
+        shell: bash
+        run: sh scripts/check-examples.sh "$RUNNER_TEMP/examples"
       - name: Lab smoke (round trips must verify)
         run: dotnet run -c Release --no-build --project research/LatticeLog.Lab -- baseline --events 5000 --reps 1 --out lab-smoke
 

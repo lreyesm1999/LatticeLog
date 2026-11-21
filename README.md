@@ -4,82 +4,107 @@
 
 <h1>LatticeLog</h1>
 
-<p><strong>Typed, local-first logs in an open binary format. Read only what you need, and hand over evidence anyone can verify.</strong></p>
+<p><strong>Typed, local-first logs for .NET, stored in an open binary format you can query by index<br>
+and hand to people, scripts or coding agents (over MCP) as evidence that points back to every record.</strong></p>
 
 [![CI](https://github.com/lreyesm1999/LatticeLog/actions/workflows/ci.yml/badge.svg)](https://github.com/lreyesm1999/LatticeLog/actions/workflows/ci.yml)
-[![.NET](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
-[![Python SDK](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](sdks/python)
-[![PHP SDK](https://img.shields.io/badge/php-8.1%2B-777BB4?logo=php&logoColor=white)](sdks/php)
-[![Status](https://img.shields.io/badge/status-alpha-F4B740)](ROADMAP.md)
-[![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/lreyesm1999/LatticeLog?include_prereleases&sort=semver&label=release)](https://github.com/lreyesm1999/LatticeLog/releases)
+[![.NET 10](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)](global.json)
+[![Status: alpha](https://img.shields.io/badge/status-alpha-F4B740)](#project-status)
+[![License: MIT](https://img.shields.io/github/license/lreyesm1999/LatticeLog)](LICENSE)
 
 <p>
-  <a href="#quick-start">Quick Start</a> ·
-  <a href="#try-it-on-demo-data">Demo</a> ·
-  <a href="#how-it-works">How It Works</a> ·
-  <a href="#capabilities">Capabilities</a> ·
-  <a href="#measured-results">Results</a> ·
-  <a href="#project-status">Status</a> ·
-  <a href="#documentation">Docs</a>
+  <a href="#quick-start">Quick start</a> ·
+  <a href="docs/guides/getting-started.md">Tutorial</a> ·
+  <a href="docs/guides/mcp.md">MCP setup</a> ·
+  <a href="examples">Examples</a> ·
+  <a href="docs/benchmarks.md">Benchmarks</a> ·
+  <a href="docs/README.md">Docs</a>
 </p>
 
 </div>
 
 ---
 
-**LatticeLog** is a log and event engine for .NET 10. Your application writes **typed events** with very low overhead. They go to an **open binary format (`.llog`)** on local disk that rebuilds every event exactly as it was written. Queries use **indexes** to skip everything they don't need, and the engine produces **deterministic evidence** for whoever reads next: a person, a script or an external AI.
+## What it looks like
 
-> [!NOTE]
-> **LatticeLog runs no AI.** It structures, filters, groups and retrieves. Interpreting the result is up to the reader, and every answer points back to the exact records it came from.
+**The problem.** An order service fails intermittently. The logs are there, but finding *which* failures are the same
+failure, and handing that to a teammate or a coding agent, means grepping text and pasting fragments.
 
-<table>
-  <tr>
-    <td width="33%"><strong>1. Capture with types</strong><br>Events declared once, generated at compile time. A <code>long</code> stays a <code>long</code>. 56 ns per event on the hot path.</td>
-    <td width="33%"><strong>2. Store in the open</strong><br>Append-only <code>.llog</code> segments with per-block CRCs, crash recovery, and an independent Python reader that proves the spec.</td>
-    <td width="33%"><strong>3. Read precisely</strong><br>Indexes skip blocks that cannot match. Every answer says what it covered and whether anything is missing.</td>
-  </tr>
-</table>
+**The implementation.** Events are declared once; a source generator writes the logging method at compile time, and
+the attribute types (`long`, `int`, `string`…) are kept in storage:
+
+```csharp
+[LatticeEvent(Id = 2102, Name = "order.failed", Level = Severity.Error, Message = "Order {orderId} failed: {reason}")]
+public static partial void OrderFailed(ILatticeLogger logger, long orderId, string reason, Exception? error);
+```
+
+**The result.** One command groups the failures deterministically and states what it covered: no sampling, nothing silently truncated. This is real
+output from [`examples/dotnet-console`](examples/dotnet-console) (8,037 records, one injected incident), checked on every
+CI run by [`scripts/check-examples.sh`](scripts/check-examples.sh):
+
+```text
+$ latticelog errors demo-store --format markdown          # excerpt; ids shortened with …
+| coverage | value |
+|---|---|
+| matched_events | 16 |
+| returned_events | 2 |
+| truncated | False |
+| partial_results | False |
+| sampling | none |
+| exhaustive | yes |
+
+## Error groups (deterministic fingerprints, not root causes)
+
+- `4971c8d6ee1067be` ×8 ERROR `order.failed` exception=`System.TimeoutException`, first llog://c17423fc…/e/196
+- `a85a07c80de55c35` ×8 ERROR `inventory.stock.timeout`, first llog://c17423fc…/e/195
+
+$ latticelog stats demo-store --by event                  # excerpt
+order.received            2000
+order.failed              8
+-- total 8037 (from footer indexes, no block decoded)
+```
+
+Every `llog://` reference resolves to the original record (`latticelog event demo-store <ref>`). The same tools are
+available to Claude Code, Cursor, Claude Desktop or VS Code as an [MCP server](docs/guides/mcp.md) that finds logs
+**by service name**. LatticeLog runs no AI itself; it structures, filters and retrieves, and marks log text as untrusted
+data.
+
+<p align="center">
+  <img src="docs/assets/screenshots/console-search.png" alt="LatticeLog web console: a day of events with an incident's errors highlighted in red" width="88%"><br>
+  <sub>The local web console (<code>llog ui</code>) on <a href="docs/assets/screenshots/README.md">synthetic demo data</a>: a day of events, the incident's errors in red.</sub>
+</p>
 
 ---
 
-## The Problem It Solves
+## Quick start
 
-| Plain-text / JSON logs | LatticeLog |
-|---|---|
-| `42`, `"42"` and `42.0` all end up as text; searching means `grep` and regexes. | Every attribute keeps its type: `long`, `decimal`, UUID, timestamp, bytes, maps. |
-| The same JSON keys are repeated millions of times; filtering one hour of errors means decompressing and parsing everything. | Columnar blocks with a key catalog; time/severity/service/trace indexes skip whole blocks. |
-| Results are silently truncated, sampled or incomplete. | Each response states its **coverage**: segments scanned, partial or not and why, storage issues found. |
-| Handing context to a teammate or an AI means copy-pasting fragments. | **Context Packs** and an **MCP server** that finds logs **by service name**, with references back to every source record. |
-| Retries can duplicate or lose data. | Each record carries `(producer, sequence)`: retries are idempotent, and an ACK reports the durability actually reached. |
-| Your data is locked into a vendor's storage. | Documented format, independent reader, and a lossless export to `latticelog.jsonl` or OTLP. |
-
-### Is it a good fit?
-
-| Good fit today | Not a fit yet |
-|---|---|
-| .NET services that want typed, structured events without a logging backend | Workloads that need a cluster, sharding or object-storage tiers |
-| Edge, desktop or on-prem apps that must keep logs locally and survive crashes | Environments that require encryption at rest or an external security audit |
-| Teams that hand incident evidence to people, scripts or AI tools and need it to be traceable | Anyone who needs packages from NuGet, PyPI or Packagist today |
-
----
-
-## Quick Start
-
-> [!IMPORTANT]
-> Packages are not on NuGet, PyPI or Packagist yet, so you build from source. You need the [.NET 10 SDK](https://dotnet.microsoft.com/download) (the exact version is pinned in [`global.json`](global.json)).
+You need the [.NET 10 SDK](https://dotnet.microsoft.com/download) (exact version in [`global.json`](global.json)).
+Packages are not on NuGet yet, so you build from source. About five minutes on a typical machine:
 
 ```bash
 git clone https://github.com/lreyesm1999/LatticeLog.git
 cd LatticeLog
 dotnet build LatticeLog.sln -c Release
+
+# 1. write ~8,000 events from a simulated order service with an injected incident
+dotnet run -c Release --no-build --project examples/dotnet-console -- demo-store 2000
+
+# 2. investigate it (alias the CLI to keep commands short)
+alias latticelog="dotnet run -c Release --no-build --project src/LatticeLog.Cli --"   # PowerShell: see the tutorial
+latticelog errors demo-store --top 3
+latticelog query  demo-store --where "level >= ERROR" --limit 3 --explain
+latticelog trace  demo-store --trace-id <id printed by step 1> --format markdown
 ```
 
-### 1. Reference LatticeLog from your app
+The [tutorial](docs/guides/getting-started.md) walks through the same incident step by step, then connects your
+coding agent. To install the CLI once as a single executable (no .NET needed to run it), download it from
+[Releases](https://github.com/lreyesm1999/LatticeLog/releases) (Windows x64, Linux x64) and run `latticelog setup`:
+see [Install](docs/guides/install.md).
 
-Add two project references. The second one runs the source generator that turns `[LatticeEvent]` declarations into code; it is not needed until step 4.
+### Use it in your app
 
 ```xml
-<!-- YourApp.csproj -->
 <ItemGroup>
   <ProjectReference Include="path/to/LatticeLog/src/LatticeLog.Core/LatticeLog.Core.csproj" />
   <ProjectReference Include="path/to/LatticeLog/src/LatticeLog.Generator/LatticeLog.Generator.csproj"
@@ -87,409 +112,130 @@ Add two project references. The second one runs the source generator that turns 
 </ItemGroup>
 ```
 
-### 2. Write your first event
-
 ```csharp
-using LatticeLog;
-using LatticeLog.Core;
-
-using var logger = LatticeLogger.CreateLocal("./logs");
+using var logger = LatticeLogger.CreateLocal("./logs", o => o.Resource.Add(new("service.name", "orders-api")));
 logger.Info("Hello, LatticeLog");
 ```
 
-### 3. Read it back
+Already on `ILogger`? Keep your code and add one line: `builder.Logging.AddLatticeLog(logger)`. The
+[ASP.NET Core example](examples/aspnetcore) shows both side by side, with the request's trace id on every record.
 
-The `.llog` file is binary, so you read it through a tool rather than a text editor. Install the `latticelog` CLI as a .NET tool from a locally built package:
-
-```bash
-dotnet pack src/LatticeLog.Cli -c Release -o ./nupkg
-dotnet tool install --global LatticeLog.Cli --add-source ./nupkg --prerelease
-```
-
-```bash
-latticelog tail ./logs
-```
-
-```text
-2026-11-19T03:17:49.539769700Z INFO  Hello, LatticeLog #1
-```
-
-The `#1` at the end is the record's sequence number. To run the CLI without installing it, use `dotnet run --project src/LatticeLog.Cli -- tail ./logs`.
-
-### 4. Go typed
-
-Declare an event once. The source generator writes the method at compile time, so there is no reflection and no string formatting on the hot path:
-
-```csharp
-using var logger = LatticeLogger.CreateLocal("./logs", o =>
-{
-    o.Durability = DurabilityMode.Balanced;              // Fast | Balanced | Durable
-    o.Resource.Add(new("service.name", "orders-api"));
-});
-
-using (logger.BeginOperation("PlaceOrder", "order-991"))
-    AppEvents.StockTimeout(logger, productId: 42, elapsedMs: 12_000);
-
-var ack = await logger.FlushAsync(AckLevel.FsyncConfirmed);
-Console.WriteLine(ack.Level);                            // the level actually reached, not the one requested
-
-static partial class AppEvents
-{
-    [LatticeEvent(Id = 2101, Name = "inventory.stock.timeout", Level = Severity.Error,
-                  Message = "Stock query for {productId} timed out after {elapsedMs} ms")]
-    public static partial void StockTimeout(ILatticeLogger logger, long productId, int elapsedMs);
-}
-```
-
-```bash
-latticelog query ./logs --where "level >= ERROR AND service = 'orders-api'"
-```
-
-```text
-2026-11-19T03:17:49.541620100Z ERROR [orders-api] inventory.stock.timeout: Stock query for 42 timed out after 12000 ms productId=42 elapsedMs=12000 #2
--- 1 event(s); scanned 1/1 segments, 2 records decoded in 14.5 ms
-```
-
-`productId` is stored as a 64-bit integer and `elapsedMs` as a 32-bit one, not as text, so `attr.productId = 42` is an exact typed comparison.
-
-### Already using `ILogger`?
-
-Keep your code: reference `src/LatticeLog.Extensions.Logging` as well and register the bridge.
-
-```csharp
-builder.Logging.AddLatticeLog(LatticeLogger.CreateLocal("./logs"));
-```
-
-### Python services, old log files and your AI tools
-
-A Python service writes LatticeLog's own format into its own folder, with no server: one line for the folder and one
-for structlog ([`sdks/python`](sdks/python)).
-
-```python
-log = latticelog.open("logs/orders-api", service="orders-api", environment="dev")
-structlog.configure(processors=[..., latticelog.structlog_processor(log), structlog.dev.ConsoleRenderer()])
-```
-
-Register the folder that holds your services once (or list them in a project [`latticelog.toml`](specs/local-sources.md#project-file-latticelogtoml-optional)),
-connect your AI client, and ask about a service **by name**: no paths, no formats.
-
-```bash
-latticelog roots add ./logs                      # per-user; .NET stores under it are found too
-latticelog mcp install --client claude-code      # or claude-desktop, cursor, vscode (asks before overwriting)
-latticelog sources                               # orders-api  python-local  12,840 records ...
-```
-
-Old text or JSON logs are converted only when you ask (the MCP tools `preview_migration` and `migrate_logs`, or the
-CLI). The originals are never modified, moved or deleted; re-running imports only new lines.
-
-```bash
-latticelog allow add D:/old-service/logs
-latticelog migrate "D:/old-service/logs/app.log*" --name legacy-app   # 378 MB structlog file -> 7.9 MB, 1,762,702 records
-```
-
-The whole flow, scripted end to end: [`examples/developer-flow`](examples/developer-flow). To have it all start with
-your session and serve every editor from one background process, see [Install once](#install-once).
-
----
-
-## Install once
-
-Like Redis or Ollama: install one file per user, connect your AI tools once, and from then on every service that
-writes LatticeLog format into its folder can be asked about **by name**. No .NET, no administrator rights, nothing
-system-wide, and nothing listens beyond `127.0.0.1`.
-
-**Windows (PowerShell).** Build the single-file executable once, or take `latticelog.exe` from the `latticelog-win-x64`
-CI artifact, then run `setup`. Building needs the .NET 10 SDK and Visual Studio 2022 Build Tools with *Desktop
-development with C++* (the native linker). Running needs neither.
-
-```powershell
-pwsh scripts/publish-aot.ps1                        # -> artifacts\aot\win-x64\latticelog.exe (Native AOT, one file)
-.\artifacts\aot\win-x64\latticelog.exe setup        # asks which MCP clients to configure
-# without questions: latticelog.exe setup --clients claude-desktop,claude-code --yes
-```
-
-**Linux / macOS.** Run `sh scripts/install.sh --build`, which needs the .NET 10 SDK plus clang (or the Xcode command
-line tools), or `sh scripts/install.sh ./latticelog` with a prebuilt binary.
-
-`setup` does three things and prints each one:
-
-1. **Copies the executable** to `%LOCALAPPDATA%\Programs\LatticeLog` (Linux/macOS: `~/.local/bin`) and adds that
-   folder to your user `PATH`.
-2. **Registers and starts the background service** for your user. On Windows it is a Task Scheduler task at logon (or
-   `--method run-key`); on Linux a systemd user unit; on macOS a launchd agent. The service owns the source catalog:
-   - indexes Python sources incrementally;
-   - follows migrations made with `follow=true`;
-   - compacts and applies retention to LatticeLog's own copies, never to your original files;
-   - serves every MCP client from one process, so several editors at once never contend for an index.
-3. **Adds a `latticelog` MCP server entry** to the clients you pick: Claude Desktop, Claude Code, Cursor, VS Code.
-   Existing config files are backed up first, and an existing entry is replaced only after you confirm.
-
-Then register the folder your services write into, and ask:
-
-```bash
-latticelog roots add C:/dev/my-services/logs   # once; services under it are found by name
-latticelog service status                      # sources, last indexed time, disk use, errors
-llog ui                                        # web console in your browser (short for latticelog service ui --open)
-```
-
-`latticelog mcp`, the command the clients run, is a thin shim. It forwards to the service and starts it when it isn't
-running. If the service cannot start, the shim serves in-process as before; `--no-service` forces that. If the service
-restarts mid-session, the shim reconnects and resends the requests that were in flight.
-
-| | |
+| Guide | |
 |---|---|
-| service control | `latticelog service status`, `start`, `stop`, `restart`, `install`, `uninstall`, `ui` |
-| retention | `latticelog sources retention '*' --max-age 30d` (default for all), `latticelog sources retention legacy-app --max-mb 500` |
-| service files | endpoint and log in `<data>/service/` (`%LOCALAPPDATA%\LatticeLog\service`, `~/.local/share/latticelog/service`) |
-
-**Update.** `llog update` installs the newest release from GitHub Releases:
-
-```bash
-llog update --check     # what is installed, what is available; changes nothing
-llog update             # asks, then installs (-y to skip the question)
-```
-
-1. It downloads the executable for your platform (Windows x64, Linux x64) and `SHA256SUMS`, and refuses the file if
-   the hash does not match.
-2. It runs the downloaded executable's own `setup`, which stops the service, swaps the executable (a running one, such
-   as an editor's MCP server, is moved aside), and registers and restarts the service.
-
-Data, config and the MCP entries in your editors are kept. Restart your AI tools to load the new MCP server. Use
-`--version 0.2.0` for a specific release, or `--prerelease` to include pre-releases.
-
-Releases are published by [`release.yml`](.github/workflows/release.yml) when a version tag is pushed: run
-`git tag v0.2.0` and then `git push origin v0.2.0`. A tag with a hyphen (`v0.2.0-beta.1`) becomes a pre-release.
-
-**Uninstall.** Run `latticelog setup --uninstall`. It:
-
-- stops and unregisters the service;
-- removes the `latticelog` entry from the four clients' user configs, keeping a backup;
-- takes the folder off your `PATH`;
-- deletes the executable.
-
-Indexes and migrated sources stay in the data folder unless you add `--remove-data`. Your original log files are never
-touched. To remove only the service, run `latticelog service uninstall`.
-
-Design and protocol: [`specs/local-sources.md` §6](specs/local-sources.md#6-background-service).
+| [Getting started](docs/guides/getting-started.md) | The incident above, step by step, then your own app |
+| [ASP.NET Core and `ILogger`](docs/guides/aspnetcore.md) | Minimal API, `[LoggerMessage]` and `[LatticeEvent]` side by side |
+| [MCP: Claude Code, Cursor, Claude Desktop, VS Code](docs/guides/mcp.md) | One command per client, logs found by service name |
+| [Investigating an incident with an agent](docs/guides/investigate-with-an-agent.md) | Which tools an agent calls, and what it gets back |
+| [Migrating from text or JSON logs](docs/guides/migrating-from-text-logs.md) | Keep your files; convert them on request, losslessly where possible |
+| [Python](sdks/python) · [PHP](sdks/php) | Local folders (Python) and server shipping (Python, PHP) |
+| [Troubleshooting](docs/guides/troubleshooting.md) | Common errors and what they mean |
 
 ---
 
-## Try It on Demo Data
+## Why LatticeLog?
 
-The console example writes about 8,000 records from a simulated order service, including an injected stock-timeout incident:
+| If you need… | LatticeLog gives you | Evidence |
+|---|---|---|
+| Logging that stays off the hot path | Source-generated typed events: **56 ns, 5 B** per enabled event, **1.1 ns, 0 B** when the level is off | [hot path benchmark](reports/benchmarks-hotpath.md) (null sink, one machine) |
+| To find the slice you need without decompressing everything | Time, severity, event and service indexes skip blocks; window queries **20–40×** faster than a full scan | [baseline §3](reports/baseline-v1.md#3-selective-queries-ms-median-of-3-segments--readtotal) |
+| Smaller logs than compressed text, for typed events | **−25 %** vs. the same content as CSV + zstd-3 on 14 public Loghub-2.0 datasets (but **+17 %** vs. zstd-19) | [Loghub-2.0 report](reports/loghub2-v1.md) |
+| Answers you can trust | Every response states its coverage (truncated? partial? sampled?) and links each item to its source record | [evidence protocol](specs/evidence-protocol.md) |
+| Your coding agent to read logs safely | Read-only MCP server, sources by service name, log text marked as untrusted | [MCP guide](docs/guides/mcp.md) |
+| No lock-in | Documented format, an independent Python reader that verifies golden files in CI, lossless export to JSONL or OTLP/JSON | [format spec](specs/llog-format-v0.md) · [`tools/pyllog`](tools/pyllog) |
+| No infrastructure to start | Files in a folder; an optional per-user service and an optional single-node server | [install](docs/guides/install.md) · [server](docs/deploy/single-node.md) |
 
-```bash
-dotnet run -c Release --project examples/dotnet-console -- demo-store 2000
-latticelog errors demo-store --top 3
-latticelog query demo-store --where "level >= ERROR" --limit 3 --explain
-```
+Where it does **not** win: storing raw, unstructured text is **+83 %** larger than zstd-3 (it keeps the exact bytes
+and makes them queryable, not smaller), and zstd-19 beats it on size everywhere. Both are in the reports.
 
-`errors` groups failures deterministically and states exactly what it covered. An excerpt:
+## How it compares
 
-```json
-"coverage": { "matched_events": 16, "returned_events": 2, "truncated": false,
-              "partial_results": false, "sampling": "none", "exhaustive": "yes" },
-"groups": [{
-  "count": 8, "event": "order.failed", "exception_type": "System.TimeoutException",
-  "message_shape": "Order {orderId} failed: {reason}",
-  "first_ref": "llog://bd01f6703c9544fe9a34c5ecf02569f5/e/196"
-}]
-```
+Different tools solve different layers. LatticeLog is a library **and** a storage/query engine, so it overlaps with
+several of them partly and replaces none of them in general.
 
-Every `llog://` reference resolves to the original record with `latticelog event demo-store <ref>`. The output also lists which fields hold text copied from logs, so downstream tools can treat it as data rather than instructions.
+| | LatticeLog | Serilog / NLog | Seq | OpenTelemetry .NET | Grafana Loki |
+|---|---|---|---|---|---|
+| Category | Logging library + local store + query engine | Logging libraries | Log server with UI | Telemetry SDK and protocol | Log aggregation backend |
+| Structured, typed attributes | Yes, types kept on disk | Structured properties; storage depends on the sink | Structured events (JSON) | Typed attributes on the wire (OTLP) | Labels indexed; line content as text |
+| Compile-time generated log methods | `[LatticeEvent]` generator | Not built in (MEL's `[LoggerMessage]` works with both) | n/a | n/a | n/a |
+| Storage and query included | Yes, local files | No (sinks write elsewhere) | Yes, server | No (exports to a backend) | Yes, server + object storage |
+| Runs with no server | Yes | Yes | No | Yes (needs a backend to store) | No |
+| Open on-disk format, independent reader | Yes | Depends on the sink (text and JSON files are open) | Server-internal storage | n/a (OTLP is an open wire format) | Server-internal storage |
+| Access for coding agents (MCP) | Built in, read-only | Not built in | Community MCP servers (not from Datalust) | Not built in | Through Grafana's MCP server |
+| Maturity | **Alpha**, one maintainer, no cluster | Mature, widely used | Mature commercial product | Stable, CNCF project | Mature, horizontally scalable |
+
+LatticeLog already exports to OTLP/JSON and imports OTLP, so it can sit next to an OpenTelemetry pipeline rather than
+replace it. A longer, sourced comparison is in [docs/comparison.md](docs/comparison.md).
 
 ---
 
-## How It Works
+## Benchmarks
+
+All numbers come from **one machine** (Intel i9-14900KF, Windows 11, .NET 10.0.15, local SSD) and the reports say so.
+That machine is unstable under all-core load, so concurrency runs were pinned to 4 CPUs. They are not a sizing guide.
+
+| What | Result | Method | Reproduce |
+|---|---|---|---|
+| Enabled typed event, producer side | 55.6 ns, 5 B allocated | BenchmarkDotNet, null sink, 1 thread | [report](reports/benchmarks-hotpath.md) |
+| Disabled event | 1.12 ns, 0 B | same | same |
+| Typed events vs CSV+zstd-3 (Loghub-2.0) | −25 % total (−5 % to −58 %) | first 200k lines of 14 datasets | [report](reports/loghub2-v1.md) |
+| `.llog` vs JSONL+zstd-3 (synthetic) | smaller on 7 of 8 workloads (−1.4 % to −23.4 %) | 100k records × 8 workloads | [report](reports/baseline-v1.md) |
+| Server ingest, binary body | ~1.15 M records/s | 4 producers, loopback | [report](reports/ingest-v1.md) |
+| Log call latency at a fixed rate | p50 0.1–0.3 µs, p99 ≤ 1.5 µs; **intermittent stalls of up to seconds** traced to that machine's nearly full SSD | real store, 10k–500k events/s, coordinated-omission-aware | [report](reports/latency-v1.md) |
+
+Methodology, datasets, versions, raw CSVs and known limitations: **[docs/benchmarks.md](docs/benchmarks.md)**.
+[`scripts/reproduce.sh`](scripts/reproduce.sh) reruns the tests, the baseline and the latency benchmark.
+
+---
+
+## Architecture
 
 ```mermaid
 flowchart LR
-    A["Your app<br/><sub>.NET · Python · PHP SDK</sub>"] -->|bounded queue| B[("Local store<br/><sub>.llog segments</sub>")]
-    B -->|Forwarder<br/><sub>idempotent retries</sub>| C["latticelog-server<br/><sub>namespaces · tokens</sub>"]
-    B --> D["CLI<br/><sub>query · trace · stats</sub>"]
-    B --> E["MCP<br/><sub>read-only, for external AI</sub>"]
-    C --> F["HTTP API · Web console<br/><sub>/v1/search · /ui · /metrics</sub>"]
-    C -.->|async replication| G["Replica server"]
+    subgraph app["Your process"]
+      A["Typed events<br/><sub>[LatticeEvent] · ILogger bridge</sub>"] --> Q["Bounded ring<br/><sub>producer does no I/O</sub>"]
+    end
+    Q --> S[(".llog segments<br/><sub>blocks · catalog · CRC · footer index</sub>")]
+    PY["Python SDK, local mode<br/><sub>latticelog.jsonl files</sub>"] -->|indexed by name| SVC
+    T["Old text / JSON logs"] -->|migrate, originals untouched| S
+    S --> CLI["CLI<br/><sub>query · errors · trace · verify</sub>"]
+    S --> SVC["Per-user service<br/><sub>sources by name · web console</sub>"]
+    SVC --> MCP["MCP server<br/><sub>read-only, for coding agents</sub>"]
+    S -->|Forwarder · idempotent| SRV["latticelog-server<br/><sub>namespaces · tokens · HTTP API</sub>"]
+    SRV -.->|async| R["Replica"]
+    PH["Python / PHP SDKs<br/><sub>server mode, durable spool</sub>"] -->|HTTP ingest| SRV
 ```
 
-- **Local first.** The application never waits on the network to log. With a server configured, the local store doubles as a durable outbox: if the network or server is down, records wait on disk.
-- **Exactly once at the server.** Every record has a `(producer, sequence)` pair. The server deduplicates and rebuilds that state from its own data after a crash, so a retry is always safe.
-- **Honest acknowledgements.** `Fast`, `Balanced` or `Durable` (fsync). `FlushAsync` returns the level that was *actually* reached, never the one you hoped for.
+- **Local first.** The application never waits on the network to log. With a server configured, the local store is a
+  durable outbox.
+- **Honest acknowledgements.** `Fast`, `Balanced` or `Durable` (fsync); `FlushAsync` returns the level actually reached.
+- **Exactly once at the server.** Every record carries `(producer, sequence)`, so retries are deduplicated.
+
+Details: [features](docs/features.md) · [format spec](specs/llog-format-v0.md) · [architecture decisions](docs/decisions).
 
 ---
 
-## Capabilities
+## Project status
 
-<details open>
-<summary><strong>Capture: SDKs</strong></summary>
+**Alpha** (latest pre-release on [Releases](https://github.com/lreyesm1999/LatticeLog/releases)). 232 automated tests,
+including real-process crash tests and end-to-end TLS, run in CI on Windows x64, Linux x64, Linux ARM64 and macOS ARM64.
+Not production-hardened: the per-phase truth, including what did **not** pass, is in [`ROADMAP.md`](ROADMAP.md).
 
-| | .NET | Python | PHP |
+| Implemented | Experimental | Known limitations | On the [roadmap](ROADMAP.md) |
 |---|---|---|---|
-| Typed events | Source-generated (`[LatticeEvent]`, diagnostics LL0001–LL0007) | Typed values (`int` → Int64/UInt64, `Decimal`, `UUID`, `datetime`…) | Typed values |
-| Integration | `ILogger` bridge, `Activity` / trace context | `logging.Handler` | Scopes and operations |
-| Storage | Writes `.llog` directly | Durable JSONL spool | Spool shared across PHP processes (`flock`) |
-| Shipping | `Forwarder` (binary body, falls back to JSONL) | Background thread, backoff + jitter | At request end, after `fastcgi_finish_request` |
+| .NET logger, generator, `ILogger` bridge | Lattice-C context encoding (opt-in) | No NuGet / PyPI / Packagist packages | Published packages, stable release (later) |
+| `.llog` 0.3 format, recovery, compaction, retention, backup | Async replication with manual failover | No encryption at rest, no external security review | Encryption at rest, external pentest (next) |
+| CLI (also Native AOT), MCP server, per-user service | Web console (no browser E2E tests yet) | Benchmarks from one unstable machine | Measurements on stable hardware and Linux (next) |
+| Python (local + server) and PHP (server) SDKs | Migration of text/JSON logs | No cluster or object storage | Cluster, object-storage tiers (later) |
+| Single-node server: namespaces, tokens, audit, metrics | | Prebuilt executables for Windows x64 and Linux x64 only | Fuller console with user testing |
 
-See the [Python](sdks/python) and [PHP](sdks/php) READMEs for setup.
-
-</details>
-
-<details>
-<summary><strong>Storage: the <code>.llog</code> format</strong></summary>
-
-- Append-only **segments** of **blocks**; a segment is sealed when it grows and is immutable afterwards.
-- **Lattice-S** codec: keys, names and templates go to a catalog; values are grouped by field, then compressed.
-- **Integrity**: CRC per block; after a power cut, everything valid is recovered and the torn segment is sealed.
-- **Open**: normative spec in [`specs/llog-format-v0.md`](specs/llog-format-v0.md) and an [independent Python reader](tools/pyllog) that verifies frozen golden files on every CI run.
-- Online **compaction**, **retention** by age or size, verified **hot backup**.
-
-</details>
-
-<details>
-<summary><strong>Query and evidence</strong></summary>
-
-```bash
-latticelog query   ./logs --where "level >= ERROR AND service = 'orders-api'" --since 1h --explain
-latticelog trace   ./logs --trace-id 4bf92f3577b34da6a3ce929d0e0e4736 --format markdown
-latticelog stats   ./logs --by event --bucket 1m
-latticelog errors  ./logs --since 24h --top 10
-latticelog context ./logs --where "level >= WARN" --budget-bytes 32000 --format json
-latticelog export  ./logs --format llog-jsonl --output logs.jsonl
-latticelog verify  ./logs                       # exit code 3 when integrity issues are found
-latticelog mcp     ./logs                       # read-only MCP server over stdio, bound to one store
-latticelog mcp                                  # MCP server over every source, found by name
-latticelog sources                              # list sources (Python folders are indexed first)
-latticelog roots   add ./services               # per-user folders searched for sources
-latticelog migrate ./old/app.log --preview      # what a migration would keep, nothing written
-latticelog migrate "./old/app.log*" --name legacy-app [--follow]
-latticelog mcp install --client claude-desktop  # merge LatticeLog into an MCP client's config
-```
-
-- A small [query language](specs/query-language.md) with fields, attributes (`attr.name`), time ranges and traces. `--explain` shows which indexes pruned the scan.
-- **Context Packs**: error groups, traces and samples within a byte budget, each with an `llog://` reference to the original record.
-- **Untrusted-content marking**: evidence lists which fields contain text copied from logs, so downstream tools treat it as data.
-- Run `latticelog --help` for every command, including `inspect`, `repair`, `compact`, `backup`, `retention` and `import`.
-
-</details>
-
-<details>
-<summary><strong>Server: <code>latticelog-server</code></strong></summary>
-
-| Area | What you get |
-|---|---|
-| Multi-tenant | Namespaces `tenant/project/env`, each with an isolated store |
-| Access | Hashed bearer tokens with `ingest` / `read` / `admin` scopes per namespace; hot reload; brute-force brake |
-| Read API | Search with HMAC-signed, expiring cursors · events · traces · stats · context packs · lossless export · catalog ([spec](specs/server-api.md)) |
-| Online admin | Retention, compaction, verification, privacy erasure, hot backup, all without stopping ingestion and all audited |
-| Operations | Prometheus `/metrics`, audit log, web console at `/ui` (strict CSP, log text rendered as text only) |
-| Replication | Asynchronous primary → replica, with manual failover and no duplicates |
-| Ingestion | Binary or JSONL bodies, group commit, quotas, bounded queues, TLS required off loopback |
-
-```bash
-dotnet run --project src/LatticeLog.ServerHost -- hash-token "<secret>"   # put the hash in tokens.json
-dotnet run --project src/LatticeLog.ServerHost -- --data ./server-data --tokens tokens.json
-# → http://127.0.0.1:7400/ui  ·  /v1/search  ·  /metrics
-```
-
-See the [single-node deployment guide](docs/deploy/single-node.md), the [operations runbook](docs/operations/runbook.md) and the [replication guide](docs/operations/replication.md).
-
-</details>
-
----
-
-## Measured Results
-
-<table>
-  <tr>
-    <td align="center" width="25%"><h3>56 ns</h3>per typed event on the .NET hot path<br><sub>5 B allocated · 1.1 ns / 0 B when the level is off</sub></td>
-    <td align="center" width="25%"><h3>−25 %</h3>size vs. the same content in CSV + zstd-3<br><sub>14 public datasets (Loghub-2.0)</sub></td>
-    <td align="center" width="25%"><h3>20–40×</h3>faster time/severity window queries<br><sub>vs. a full scan</sub></td>
-    <td align="center" width="25%"><h3>1.15 M/s</h3>records ingested by the server<br><sub>4 producers, binary body</sub></td>
-  </tr>
-</table>
-
-> [!IMPORTANT]
-> All figures come from **one machine** (Windows x64, i9-14900KF), and concurrency runs were pinned to 4 CPUs because that machine is unstable under all-core load. They are not a sizing guide. Where LatticeLog loses, it is reported too: zstd-19 (about 100× slower) is smaller on every dataset, and the aspirational −30 % vs. JSONL+zstd was not reached. Methodology and raw numbers are in [`reports/`](reports); [`scripts/reproduce.sh`](scripts/reproduce.sh) reruns the tests, the baseline, the latency benchmark and, if the dataset is present, the Loghub experiment.
-
----
-
-## Project Status
-
-**`0.1.0-alpha.1`**: functional, with 142 automated tests (including real-process crash tests, lossy networks, server restarts and end-to-end TLS) passing in CI on Windows x64, Linux x64, Linux ARM64 and macOS ARM64. CI also builds, scans and smoke-tests the server's Docker image over HTTPS, restores a backup on a different OS and CPU architecture, and runs CodeQL. Not production-hardened yet.
-
-| Works today | Not yet |
-|---|---|
-| Local engine, CLI (also Native AOT), MCP adapter | Cluster / sharding, object-storage tiers |
-| Single-node server with online admin, audit, metrics, console | Encryption at rest, external security review |
-| Async replication with manual failover | A published container image, tests across real machines |
-| .NET, Python and PHP SDKs | Published and signed packages (NuGet, PyPI, Packagist) |
-
-The per-phase truth, including what did **not** pass, is in [`ROADMAP.md`](ROADMAP.md) and [`docs/decisions/`](docs/decisions). Changes are listed in [`CHANGELOG.md`](CHANGELOG.md).
-
----
-
-## Repository Layout
-
-```text
-src/
-  LatticeLog.Abstractions         event model and public API
-  LatticeLog.Core                 logger: bounded queue, durability modes, scopes, redaction
-  LatticeLog.Generator            Roslyn source generator for typed events
-  LatticeLog.Storage              .llog format, codecs, writer/reader, recovery, compaction, retention, backup
-  LatticeLog.Query                query language, index-aware planner, cursors, aggregations
-  LatticeLog.Evidence             context packs and evidence documents
-  LatticeLog.Ingest               remote ingestion protocol, client and Forwarder
-  LatticeLog.Server               latticelog-server library (API, admin, replication, console)
-  LatticeLog.ServerHost           latticelog-server executable
-  LatticeLog.Cli                  latticelog CLI (also a dotnet tool, trimming/AOT-ready)
-  LatticeLog.Sources              sources by name: roots, latticelog.toml, Python index, migration
-  LatticeLog.Mcp                  MCP server (read tools over sources, opt-in migration)
-  LatticeLog.Service              per-user background service, MCP shim, registration (task/systemd/launchd)
-  LatticeLog.OpenTelemetry        OTLP/JSON and importers
-  LatticeLog.Extensions.Logging   Microsoft.Extensions.Logging bridge
-sdks/python  sdks/php            SDKs for other languages
-specs/                           normative specs (format, ingest protocol, server API, query language)
-examples/dotnet-console          demo workload with an injected incident
-examples/developer-flow          structlog service + migrated legacy log, asked over MCP by name
-tools/pyllog                     independent Python reader of the format
-deploy/                          server Dockerfile and its HTTPS smoke test
-tests/  benchmarks/  research/  reports/  scripts/
-```
-
----
-
-## Documentation
-
-| Topic | Where |
-|---|---|
-| Master plan (phases P00–P28, tasks and gates) | [`docs/MASTER-PLAN.md`](docs/MASTER-PLAN.md) |
-| Format, protocol, server API, query language | [`specs/`](specs) |
-| Sources by name, Python local mode, migration, MCP setup | [`specs/local-sources.md`](specs/local-sources.md) |
-| Deploying a single node | [`docs/deploy/single-node.md`](docs/deploy/single-node.md) |
-| Operations, SLIs, alerts, backup, runbooks | [`docs/operations/runbook.md`](docs/operations/runbook.md) |
-| Replication and failover | [`docs/operations/replication.md`](docs/operations/replication.md) |
-| Compatibility and versioning | [`docs/compatibility.md`](docs/compatibility.md) |
-| Threat model | [`docs/security/threat-model.md`](docs/security/threat-model.md) |
-| Architecture decisions and phase reviews | [`docs/decisions/`](docs/decisions) |
-| Benchmarks and experiments | [`reports/`](reports) |
-| Python / PHP SDKs | [`sdks/python`](sdks/python) · [`sdks/php`](sdks/php) |
-
----
-
-## Development
-
-```bash
-dotnet build LatticeLog.sln -c Release
-dotnet test  LatticeLog.sln -c Release
-python -I tools/pyllog/llog.py verify-golden tests/GoldenFiles/v0.1 tests/GoldenFiles/v0.2
-```
-
-Requires the .NET SDK pinned in [`global.json`](global.json) and Python 3.10+ for the reference reader. The SDK tests run when `python` and `php` are on the `PATH` and are skipped otherwise. CI also checks whitespace formatting (`dotnet format whitespace`), a Native AOT build of the CLI, vulnerable packages, an SBOM and the server image; see [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+Changes: [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Contributing
 
-Issues and pull requests are welcome. Read [`CONTRIBUTING.md`](CONTRIBUTING.md) first. Format changes need a spec update, new golden files and a pass of the independent reader. Participation follows the [Code of Conduct](CODE_OF_CONDUCT.md). Report vulnerabilities privately as described in [`SECURITY.md`](SECURITY.md).
+Issues and pull requests are welcome; [`CONTRIBUTING.md`](CONTRIBUTING.md) explains the local setup, the tests and
+where to start. Questions go to [`SUPPORT.md`](SUPPORT.md), vulnerabilities to [`SECURITY.md`](SECURITY.md) (privately).
+Participation follows the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
-[MIT](LICENSE). Free to use, modify and redistribute.
+[MIT](LICENSE).
