@@ -44,13 +44,15 @@ public sealed class EvidenceService(QueryEngine engine, EvidenceOptions? options
         var byEvent = Engine.Aggregate(scope, "event", top: top);
         var bySvc = Engine.Aggregate(scope, "service", top: top);
         var errorScope = scope with { Where = Combine(scope.Where, "level >= ERROR") };
-        var groups = CollectGroups(errorScope, out var matched, out var capped, out var partial);
+        var groups = CollectGroups(errorScope, out var grouped, out var capped, out var partial);
+        var errorCount = ErrorCount(bySev);
         return Render("overview", scope, w =>
         {
             WriteCoverage(w, bySev.Total, 0, capped, partial || bySev.Partial, null, 0, 0);
             w.WriteStartObject("summary");
             w.WriteNumber("total_events", bySev.Total);
-            w.WriteNumber("error_events", matched);
+            w.WriteNumber("error_events", errorCount);
+            if (capped) w.WriteNumber("error_events_grouped", grouped);
             WriteCounts(w, "by_severity", bySev.Groups);
             WriteCounts(w, "top_events", byEvent.Groups);
             WriteCounts(w, "top_services", bySvc.Groups);
@@ -62,11 +64,17 @@ public sealed class EvidenceService(QueryEngine engine, EvidenceOptions? options
 
     public EvidenceDocument ErrorGroups(QueryRequest scope, int top = 20)
     {
-        var groups = CollectGroups(scope with { Where = Combine(scope.Where, "level >= ERROR") }, out var matched, out var capped, out var partial);
+        var groups = CollectGroups(scope with { Where = Combine(scope.Where, "level >= ERROR") }, out var grouped, out var capped, out var partial);
+        // Grouping stops at the candidate limit; the total comes from a level count (index-only when the scope is
+        // just a time range), so matched_events is exact even when the groups are built from a prefix.
+        var bySev = capped ? Engine.Aggregate(scope, "level", top: SeverityExtensions.MaxNumber + 1) : null;
+        var matched = bySev is null ? grouped : ErrorCount(bySev);
+        partial |= bySev?.Partial ?? false;
         return Render("error_groups", scope, w =>
         {
             WriteCoverage(w, matched, Math.Min(top, groups.Count), capped, partial, null, 0, 0);
             w.WriteString("grouping", $"{Fingerprint.Algorithm}: event | exception type chain | normalized message shape (not a root cause)");
+            if (capped) w.WriteString("grouping_scope", $"groups built from the first {grouped} of {matched} matching events; counts are lower bounds");
             WriteGroups(w, groups.Take(top));
         }, capped || groups.Count > top, partial, 0, matched);
     }
@@ -299,6 +307,9 @@ public sealed class EvidenceService(QueryEngine engine, EvidenceOptions? options
         return GroupsOf(res.Hits.Select(h => h.Record));
     }
 
+    private static long ErrorCount(QueryEngine.AggregateResult bySeverity)
+        => bySeverity.Groups.Where(g => SeverityExtensions.TryParse(g.Key, out var s) && s >= Severity.Error).Sum(g => g.Count);
+
     private List<Group> GroupsOf(IEnumerable<LogRecord> records)
         => records.GroupBy(Fingerprint.Compute).Select(g =>
         {
@@ -306,7 +317,7 @@ public sealed class EvidenceService(QueryEngine engine, EvidenceOptions? options
             var f = list[0];
             return new Group(g.Key, f.EffectiveEventName, f.Exception?.Type, Fingerprint.MessageShape(f), list.Count, list.Max(r => r.Severity),
                 list[0].TimestampUnixNanos, list[^1].TimestampUnixNanos, list[0].Sequence, list[^1].Sequence,
-                list.Select(r => r.ServiceName ?? "(none)").Distinct().OrderBy(s => s, StringComparer.Ordinal).ToList(), Message(f));
+                list.Select(r => r.ServiceName ?? "(none)").Distinct().OrderBy(s => s, StringComparer.Ordinal).ToList(), Message(f) ?? (f.Exception?.Message is { Length: > 0 } em ? Clip(em) : null));
         }).OrderByDescending(g => g.Count).ThenBy(g => g.Fingerprint, StringComparer.Ordinal).ToList();
 
     // ------------------------------------------------------------------ rendering
@@ -512,8 +523,12 @@ public sealed class EvidenceService(QueryEngine engine, EvidenceOptions? options
             foreach (var g in groups.EnumerateArray())
             {
                 sb.Append("- `").Append(g.GetProperty("fingerprint").GetString()).Append("` ×").Append(g.GetProperty("count").GetInt64())
-                  .Append(' ').Append(g.GetProperty("max_severity").GetString()).Append(", first ").Append(g.GetProperty("first_ref").GetString()).Append('\n');
-                AppendFenced(sb, g.TryGetProperty("sample_message", out var sm) ? sm.GetString() ?? "" : g.GetProperty("message_shape").GetString() ?? "", "  ");
+                  .Append(' ').Append(g.GetProperty("max_severity").GetString());
+                if (g.TryGetProperty("event", out var gev)) sb.Append(" `").Append(gev.GetString()!.Replace("`", "'")).Append('`');
+                if (g.TryGetProperty("exception_type", out var gex)) sb.Append(" exception=`").Append(gex.GetString()!.Replace("`", "'")).Append('`');
+                sb.Append(", first ").Append(g.GetProperty("first_ref").GetString()).Append('\n');
+                var sample = g.TryGetProperty("sample_message", out var sm) ? sm.GetString() ?? "" : g.GetProperty("message_shape").GetString() ?? "";
+                if (sample.Length > 0) AppendFenced(sb, sample, "  ");
             }
             sb.Append('\n');
         }
