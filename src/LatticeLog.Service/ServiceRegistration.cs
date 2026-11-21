@@ -231,7 +231,7 @@ public sealed class ServiceRegistration
                 throw new InvalidOperationException($"'{file} {string.Join(' ', args)}' failed (exit {code}): {output}");
         }
         foreach (var path in plan.DeleteFiles)
-            try { if (File.Exists(path)) File.Delete(path); } catch (IOException) { }
+            try { if (File.Exists(path)) File.Delete(path); } catch (IOException) { /* best effort: a leftover file is rewritten by the next install */ }
     }
 
     /// <summary>The installed method, or null when the service is not registered.</summary>

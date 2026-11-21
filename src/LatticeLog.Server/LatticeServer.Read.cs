@@ -315,7 +315,7 @@ public sealed partial class LatticeServer
                 seg["max_time"] = UnixTime.FormatRfc3339(x.MaxTimestamp);
                 seg["services"] = new JsonArray(x.Services.Select(s => (JsonNode?)JsonValue.Create(s)).ToArray());
             }
-            try { seg["bytes"] = new FileInfo(store.SegmentPath(id)).Length; } catch (IOException) { }
+            try { seg["bytes"] = new FileInfo(store.SegmentPath(id)).Length; } catch (IOException) { /* file removed meanwhile (retention or compaction): left out of the total */ }
             segments.Add((JsonNode?)seg);
         }
         return WriteJsonAsync(ctx, 200, new JsonObject

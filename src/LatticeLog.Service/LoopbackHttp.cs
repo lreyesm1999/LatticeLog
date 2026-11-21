@@ -266,7 +266,7 @@ internal static class LoopbackHttp
                 seg["min_time"] = UnixTime.FormatRfc3339(x.MinTimestamp);
                 seg["max_time"] = UnixTime.FormatRfc3339(x.MaxTimestamp);
             }
-            try { seg["bytes"] = new FileInfo(store.SegmentPath(id)).Length; } catch (IOException) { }
+            try { seg["bytes"] = new FileInfo(store.SegmentPath(id)).Length; } catch (IOException) { /* file removed meanwhile (retention or compaction): left out of the total */ }
             segments.Add((JsonNode?)seg);
         }
         return new JsonObject

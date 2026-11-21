@@ -36,7 +36,7 @@ public sealed class IngestClient(HttpClient http, Uri baseUri, string token, str
             try { text = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false); }
             catch (HttpRequestException ex) { return new SendResult(SendOutcome.Retry, Error: "response lost: " + ex.Message); }
             JsonNode? json = null;
-            try { json = text.Length > 0 ? JsonNode.Parse(text) : null; } catch (System.Text.Json.JsonException) { }
+            try { json = text.Length > 0 ? JsonNode.Parse(text) : null; } catch (System.Text.Json.JsonException) { /* not JSON: the raw text is reported instead */ }
             var error = (string?)json?["error"] ?? $"HTTP {(int)resp.StatusCode}";
             var retryAfter = resp.Headers.RetryAfter?.Delta;
             switch ((int)resp.StatusCode)
@@ -267,7 +267,7 @@ public sealed class Forwarder : IAsyncDisposable
                 }
             }
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { /* cancelled by Dispose: the loop ends */ }
         catch (Exception ex)
         {
             _lastError = ex.Message;
@@ -290,7 +290,7 @@ public sealed class Forwarder : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _stop.Cancel();
-        try { await _loop.ConfigureAwait(false); } catch (OperationCanceledException) { }
+        try { await _loop.ConfigureAwait(false); } catch (OperationCanceledException) { /* the loop ended by cancellation, as Dispose asked */ }
         _http.Dispose();
         _stop.Dispose();
         _tail.Dispose();

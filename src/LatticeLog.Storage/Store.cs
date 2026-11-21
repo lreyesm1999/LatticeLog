@@ -494,7 +494,7 @@ public sealed class StoreWriter : IRecordSink
             if (_options.Retention is { IsEmpty: false } policy)
             {
                 try { ApplyRetention(policy); }
-                catch (IOException ex) { try { _options.Diagnostics?.Invoke("store: retention failed: " + ex.Message); } catch { } }
+                catch (IOException ex) { try { _options.Diagnostics?.Invoke("store: retention failed: " + ex.Message); } catch { /* a diagnostics callback must never break retention */ } }
             }
         }
     }
@@ -528,7 +528,7 @@ public sealed class StoreWriter : IRecordSink
         foreach (var id in reader.SegmentIds)
         {
             if (id == _current?.SegmentId) continue;
-            try { total += new FileInfo(reader.SegmentPath(id)).Length; } catch (IOException) { }
+            try { total += new FileInfo(reader.SegmentPath(id)).Length; } catch (IOException) { /* file removed meanwhile (retention or compaction): left out of the total */ }
         }
         Interlocked.Exchange(ref _sealedBytes, total);
     }
@@ -536,8 +536,8 @@ public sealed class StoreWriter : IRecordSink
     private static void TryDeleteFile(string path)
     {
         try { File.Delete(path); }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
+        catch (IOException) { /* best effort: the file is removed again on the next sweep */ }
+        catch (UnauthorizedAccessException) { /* best effort: the file is removed again on the next sweep */ }
     }
 
     private SegmentWriter OpenNewSegment()

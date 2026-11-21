@@ -535,6 +535,7 @@ public sealed class EvidenceService(QueryEngine engine, EvidenceOptions? options
         if (root.TryGetProperty("timeline", out var tl))
         {
             sb.Append("## Timeline\n\n");
+            var content = new StringBuilder();
             foreach (var e in tl.EnumerateArray())
             {
                 sb.Append("- `+").Append((e.GetProperty("dt_us").GetInt64() / 1000.0).ToString("0.###", CultureInfo.InvariantCulture)).Append("ms` **")
@@ -542,7 +543,7 @@ public sealed class EvidenceService(QueryEngine engine, EvidenceOptions? options
                 if (e.TryGetProperty("event", out var ev)) sb.Append('`').Append(ev.GetString()!.Replace("`", "'")).Append("` ");
                 if (e.TryGetProperty("svc", out var svc)) sb.Append("svc=`").Append(svc.GetString()!.Replace("`", "'")).Append("` ");
                 sb.Append(e.GetProperty("ref").GetString()).Append('\n');
-                var content = new StringBuilder();
+                content.Clear();
                 if (e.TryGetProperty("msg", out var m)) content.Append(m.GetString()).Append('\n');
                 if (e.TryGetProperty("body", out var b)) content.Append(b.ToString()).Append('\n');
                 if (e.TryGetProperty("attrs", out var a)) content.Append(a.ToString()).Append('\n');

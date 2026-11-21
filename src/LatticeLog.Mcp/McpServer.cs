@@ -87,11 +87,15 @@ public sealed class McpServer
                 while (reader.ReadLine() is { } line)
                 {
                     if (line.Length == 0) continue;
-                    if (TryGetCancelledRequest(line) is { } id) { if (inflight.TryGetValue(id, out var c)) c.Cancel(); continue; }
+                    if (TryGetCancelledRequest(line) is { } id)
+                    {
+                        if (inflight.TryGetValue(id, out var c)) c.Cancel();
+                        continue;
+                    }
                     queue.Add(line);
                 }
             }
-            catch (IOException) { }
+            catch (IOException) { /* stdin closed or broke: the queue is completed below and the server stops */ }
             finally { queue.CompleteAdding(); }
         })
         { IsBackground = true, Name = "latticelog-mcp-reader" };

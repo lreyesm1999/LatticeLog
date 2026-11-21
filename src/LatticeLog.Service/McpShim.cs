@@ -164,7 +164,7 @@ public sealed class McpShim
                 var start = _o.AutoStart ?? (() => ServiceLauncher.EnsureRunning(_o.ConfigDir, TimeSpan.FromSeconds(15), Log));
                 ep = start();
                 if (ep is not null) return ServiceBackend(ep);
-                reason = "it did not start";
+                reason = reason.Length > 0 ? $"it did not start; before that: {reason}" : "it did not start";
             }
             catch (ServiceRefusedException ex) { reason = ex.Message; }
             catch (Exception ex) when (ex is IOException or SocketException or InvalidOperationException or UnauthorizedAccessException)
@@ -267,7 +267,7 @@ public sealed class McpShim
                     using var r = new StreamReader(stream, new UTF8Encoding(false), false, 64 * 1024, leaveOpen: true);
                     while (r.ReadLine() is { } line) shim.FromBackend(line);
                 }
-                catch (Exception ex) when (ex is IOException or ObjectDisposedException or SocketException) { }
+                catch (Exception ex) when (ex is IOException or ObjectDisposedException or SocketException) { /* the backend connection closed: the session continues on reconnect or ends */ }
                 Closed = true;
                 shim.Lost(this);
             })
@@ -294,7 +294,7 @@ public sealed class McpShim
         public override void Dispose()
         {
             Closed = true;
-            try { _client.Dispose(); } catch (ObjectDisposedException) { }
+            try { _client.Dispose(); } catch (ObjectDisposedException) { /* already disposed */ }
         }
     }
 
@@ -316,8 +316,8 @@ public sealed class McpShim
             new Thread(() =>
             {
                 try { McpServer.Run(new McpServer(catalog), _serverIn, _serverOut, log); }
-                catch (IOException) { }
-                finally { try { _serverOut.Dispose(); } catch (IOException) { } }
+                catch (IOException) { /* the in-process pipe closed: the session ends */ }
+                finally { try { _serverOut.Dispose(); } catch (IOException) { /* already closed */ } }
             })
             { IsBackground = true, Name = "latticelog-mcp-inprocess" }.Start();
             new Thread(() =>
@@ -327,7 +327,7 @@ public sealed class McpShim
                     using var r = new StreamReader(_fromServer, new UTF8Encoding(false));
                     while (r.ReadLine() is { } line) shim.FromBackend(line);
                 }
-                catch (Exception ex) when (ex is IOException or ObjectDisposedException) { }
+                catch (Exception ex) when (ex is IOException or ObjectDisposedException) { /* the client went away: there is nobody left to answer */ }
                 Closed = true;
             })
             { IsBackground = true, Name = "latticelog-shim-inprocess-reader" }.Start();
@@ -343,7 +343,7 @@ public sealed class McpShim
         public override void Dispose()
         {
             Closed = true;
-            try { _writer.Dispose(); } catch (IOException) { }
+            try { _writer.Dispose(); } catch (IOException) { /* already closed */ }
         }
     }
 }

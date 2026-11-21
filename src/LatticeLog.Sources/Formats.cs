@@ -56,13 +56,17 @@ public static class FormatSniffer
 
     public static FormatDetection Detect(ReadOnlySpan<byte> head, bool isWholeFile, int maxLines = 64)
     {
-        if (head.StartsWith((ReadOnlySpan<byte>)[0xEF, 0xBB, 0xBF])) head = head[3..];
+        if (head.StartsWith("﻿"u8)) head = head[3..]; // UTF-8 byte order mark EF BB BF
         var lines = new List<byte[]>();
         var rest = head;
         while (rest.Length > 0 && lines.Count < maxLines)
         {
             var nl = rest.IndexOf((byte)'\n');
-            if (nl < 0) { if (isWholeFile) lines.Add(rest.ToArray()); break; } // a cut-off line is not sampled
+            if (nl < 0)
+            {
+                if (isWholeFile) lines.Add(rest.ToArray()); // else a cut-off line is not sampled
+                break;
+            }
             lines.Add(rest[..nl].TrimEnd((byte)'\r').ToArray());
             rest = rest[(nl + 1)..];
         }
@@ -118,9 +122,15 @@ public static class FormatSniffer
         try
         {
             var r = new Utf8JsonReader(line);
-            var doc = JsonDocument.ParseValue(ref r);
-            if (r.BytesConsumed < line.Length && line.AsSpan((int)r.BytesConsumed).IndexOfAnyExcept((byte)' ', (byte)'\t', (byte)'\r') >= 0) { doc.Dispose(); return null; }
-            return doc;
+            JsonDocument? doc = JsonDocument.ParseValue(ref r);
+            try
+            {
+                if (r.BytesConsumed < line.Length && line.AsSpan((int)r.BytesConsumed).IndexOfAnyExcept((byte)' ', (byte)'\t', (byte)'\r') >= 0) return null;
+                var owned = doc;
+                doc = null; // ownership passes to the caller
+                return owned;
+            }
+            finally { doc?.Dispose(); }
         }
         catch (JsonException) { return null; }
     }
@@ -193,7 +203,11 @@ internal static class RecordParsers
             lineNo++;
             if (bytes.AsSpan().IndexOfAnyExcept((byte)' ', (byte)'\t', (byte)'\r') < 0) continue;
             List<LogRecord> recs;
-            try { recs = OtlpJson.Read(new MemoryStream(bytes, writable: false), loss); }
+            try
+            {
+                using var input = new MemoryStream(bytes, writable: false);
+                recs = OtlpJson.Read(input, loss);
+            }
             catch (Exception ex) when (ex is JsonException or InvalidDataException or FormatException or InvalidOperationException or KeyNotFoundException)
             {
                 loss.Add("unparseable_otlp_line_kept_as_text");
