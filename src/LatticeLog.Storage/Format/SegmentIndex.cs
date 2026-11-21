@@ -349,7 +349,7 @@ public sealed class SegmentIndex
     public override string ToString()
     {
         var sb = new StringBuilder();
-        sb.Append($"records={RecordCount} seq=[{FirstSequence},{LastSequence}] blocks={Blocks.Count} events={Events.Count}");        return sb.ToString();
+        sb.Append($"records={RecordCount} seq=[{FirstSequence},{LastSequence}] blocks={Blocks.Count} events={Events.Count}"); return sb.ToString();
     }
 }
 
