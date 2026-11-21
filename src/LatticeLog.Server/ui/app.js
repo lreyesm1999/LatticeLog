@@ -567,23 +567,33 @@ async function histogram(where, scope, seq) {
     const nonzero = bars.filter((b) => b.n).map((b) => b.n).sort((a, b) => a - b);
     // One huge spike flattens everything else into a line: switch to a log scale so small periods stay visible.
     const log = nonzero.length > 1 && max / nonzero[Math.floor(nonzero.length / 2)] > 40;
-    const scale = (n) => (!n ? 0 : log ? Math.max(4, (100 * Math.log10(n + 1)) / Math.log10(max + 1)) : Math.max(3, (100 * n) / max));
+    const axis = histAxis(max, log);
     const peak = bars.reduce((a, b) => (b.n > a.n ? b : a), bars[0]);
     hist.bars = bars; hist.width = width; hist.errors = errorsOnly ? null : undefined;
+    // Each bar: a thin column (events) whose lower part, after a 2px gap, is the errors' share in red.
     $("hist-bars").replaceChildren(...bars.map((b, i) => {
-      const fill = h("span", { class: "fill" });
-      fill.style.height = `${scale(b.n)}%`;
-      const err = h("span", { class: "err" });
-      return h("div", { class: b.n ? "b" : "b zero", "data-i": i }, fill, err);
+      const col = h("span", { class: "col" }, h("span", { class: "ok" }), h("span", { class: "err" }));
+      col.style.height = `${axis.pos(b.n)}%`;
+      return h("div", { class: b.n ? "b" : "b zero", "data-i": i }, col);
     }));
-    hist.scale = scale;
+    $("hist-grid").replaceChildren(...[...new Set([0, ...axis.ticks])].map((v) => {
+      const line = h("div", { class: "gl" + (v === 0 ? " base" : "") }, v === 0 && log ? null : h("span", { text: compact(v) }));
+      line.style.bottom = `${axis.pos(v)}%`;
+      return line;
+    }));
+    // About six dates along the bottom, at the bars they name.
+    const step = Math.max(1, Math.ceil(bars.length / 6));
+    $("hist-xaxis").replaceChildren(...bars.map((b, i) => [b, i]).filter(([, i]) => i % step === 0).map(([b, i]) => {
+      const tick = h("span", { text: fmtBucket(b.t, width) });
+      tick.style.left = `${((i + 0.5) / bars.length) * 100}%`;
+      return tick;
+    }));
     $("hist-title").textContent = `Events over time · ${label} per bar`;
     $("hist-scale").hidden = !log;
     $("hist-peak").textContent = peak.n ? `Busiest: ${fmtBucket(peak.t, width)} (${compact(peak.n)})` : "";
     $("hist-errors").textContent = errorsOnly ? "" : "Errors: counting…";
     $("hist-errors").className = "hist-errors";
-    $("hist-from").textContent = fmtBucket(start, width);
-    $("hist-to").textContent = fmtShort(Math.min(to, start + bars.length * width));
+    $("hist-legend").hidden = errorsOnly;
     box.hidden = false;
     state.histTotal = true;
     $("summary-count").textContent = `${num(res.total)} matching event${res.total === 1 ? "" : "s"}`;
@@ -594,10 +604,14 @@ async function histogram(where, scope, seq) {
     let total = 0;
     const cells = $("hist-bars").children;
     bars.forEach((b, i) => {
-      b.e = ec.get(b.t) || 0;
+      b.e = Math.min(ec.get(b.t) || 0, b.n);
       total += b.e;
-      // The red part is the errors' share of the bar (on the same scale), at least a visible sliver.
-      if (b.e) cells[i].lastChild.style.height = `${Math.max(3, scale(b.n) * (log ? scale(b.e) / scale(b.n) : b.e / b.n))}%`;
+      // The red part is the errors' share of the bar; flex-grow splits the column (minus the gap) by count.
+      const [ok, err] = cells[i].firstChild.children;
+      ok.style.flexGrow = String(b.n - b.e);
+      err.style.flexGrow = String(b.e);
+      cells[i].classList.toggle("has-err", b.e > 0);
+      cells[i].classList.toggle("all-err", b.e > 0 && b.e === b.n);
     });
     hist.errors = total;
     $("hist-errors").textContent = total ? `Errors: ${compact(total)}` : "No errors";
@@ -607,6 +621,25 @@ async function histogram(where, scope, seq) {
 
 // Hover details for the histogram (one shared tooltip instead of a title per bar) and click to zoom.
 const hist = { bars: [], width: 0, errors: undefined, scale: null };
+/**
+ * The value axis: clean ticks and a position (0–100 %) for any count. Linear: 0 up to a round 1/2/5 step above the
+ * maximum. Log: powers of ten (1, 10, 100, …) up to the first one above the maximum.
+ */
+function histAxis(max, log) {
+  if (log) {
+    const top = 10 ** Math.ceil(Math.log10(max + 1));
+    const pos = (n) => (n <= 0 ? 0 : (100 * Math.log10(n + 1)) / Math.log10(top + 1));
+    const ticks = [];
+    for (let v = 1; v <= top; v *= 10) ticks.push(v);
+    // Keep the axis quiet: at most four labels.
+    const keep = Math.ceil(ticks.length / 4);
+    return { pos, ticks: ticks.filter((_, i) => (ticks.length - 1 - i) % keep === 0) };
+  }
+  const mag = 10 ** Math.floor(Math.log10(max));
+  const top = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((v) => v >= max) || 10 * mag;
+  return { pos: (n) => (100 * Math.max(0, n)) / top, ticks: [0, top / 2, top] };
+}
+
 // Day (and longer) bars are UTC days on the server, so they are named by their UTC date, not "May 7 19:00".
 function fmtBucket(t, width) {
   if (width < DAY) return fmtShort(t);

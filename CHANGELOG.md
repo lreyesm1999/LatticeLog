@@ -11,6 +11,14 @@
   - **Tooltip:** hovering a bar shows its period, events and errors. Clicking a bar zooms in on that period.
   - **Day labels:** day bars are named by their (UTC) date instead of "May 7 19:00".
   - **Hide:** a button folds the chart away, and the browser remembers it.
+  - **Cleaner drawing:**
+    - thin columns (at most 24 px) with air between them, rounded tops and square at the baseline;
+    - flat colors;
+    - errors stacked at the bottom after a 2 px gap;
+    - hairline gridlines with value labels (1, 10, 1K… on the log scale);
+    - about six dates along the time axis;
+    - a legend.
+  - **Other charts:** the explorer's spark chart and the Overview bars lose their gradients too.
 - **Web console redesign** (`llog ui`):
   - **Theme:** follows the system, with a header button that switches between System, Light and Dark (remembered
     per browser). The dark theme is deep graphite and the light one crisp white, both with an indigo accent.
