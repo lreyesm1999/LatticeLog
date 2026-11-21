@@ -3,6 +3,9 @@ contact_links:
   - name: Report a security vulnerability
     url: https://github.com/lreyesm1999/LatticeLog/security/advisories/new
     about: Please report security issues privately, never in a public issue.
+  - name: Ask a question or share an idea
+    url: https://github.com/lreyesm1999/LatticeLog/discussions
+    about: Usage questions (Q&A), ideas and things you built with LatticeLog.
   - name: Getting started and troubleshooting
     url: https://github.com/lreyesm1999/LatticeLog/blob/main/docs/guides/troubleshooting.md
     about: Common build, CLI and MCP problems and their fixes.
