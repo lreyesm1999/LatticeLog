@@ -1,11 +1,38 @@
 # Install once: the per-user executable, service and MCP setup
 
-> Moved here from the README. Quick path: [download a release](https://github.com/lreyesm1999/LatticeLog/releases) or
-> build it, run `latticelog setup`, then `latticelog roots add <folder>`.
+> Moved here from the README. Quick path: run the one-line installer below, then `latticelog roots add <folder>`.
 
 Like Redis or Ollama: install one file per user, connect your AI tools once, and from then on every service that
 writes LatticeLog format into its folder can be asked about **by name**. No .NET, no administrator rights, nothing
 system-wide, and nothing listens beyond `127.0.0.1`.
+
+**One-line installer.** It downloads the newest release for your platform (the newest pre-release while there is no
+stable one), refuses it unless its SHA-256 matches `SHA256SUMS`, and runs `latticelog setup`, which asks which MCP
+clients to configure.
+
+```powershell
+irm https://raw.githubusercontent.com/lreyesm1999/LatticeLog/main/scripts/install.ps1 | iex
+```
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lreyesm1999/LatticeLog/main/scripts/install.sh | sh
+```
+
+To pass options, run the script with arguments instead:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/lreyesm1999/LatticeLog/main/scripts/install.ps1))) -Clients claude-code -Yes
+# also: -Version 0.1.0, -NoService, -NoPath, -DryRun (show what setup would do, change nothing)
+```
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lreyesm1999/LatticeLog/main/scripts/install.sh | sh -s -- --clients claude-code --yes
+curl -fsSL https://raw.githubusercontent.com/lreyesm1999/LatticeLog/main/scripts/install.sh | LATTICELOG_VERSION=0.1.0 sh
+```
+
+From a checkout, the same scripts use a local build when there is one (`scripts/install.ps1 -Build`,
+`sh scripts/install.sh --build`) and download otherwise. The Windows script runs in Windows PowerShell 5.1 and
+PowerShell 7; the shell script needs `curl` or `wget`. macOS and Linux ARM64 have no release build yet: use `--build`.
 
 **Prebuilt executables.** Every [GitHub release](https://github.com/lreyesm1999/LatticeLog/releases) (pre-releases
 for now) carries `latticelog-win-x64.exe`, `latticelog-linux-x64` and `SHA256SUMS`. They are single-file Native AOT
