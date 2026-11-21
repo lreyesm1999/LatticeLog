@@ -54,6 +54,7 @@ class _ProcessLock:
                 import fcntl
                 fcntl.flock(self._f.fileno(), fcntl.LOCK_UN)
         except OSError:
+            # Already unlocked, or the handle is gone: closing the file below releases the lock either way.
             pass
         self._f.close()
 
@@ -171,6 +172,7 @@ class LocalStore:
         try:
             self._plock._f.close()
         except OSError:
+            # The child's inherited copy of the parent's lock handle may already be closed; there is nothing to release.
             pass
         self._acquire_process_folder()
 
@@ -184,6 +186,7 @@ class LocalStore:
                 try:
                     out.append((int(name[len(_PREFIX):-len(_SUFFIX)]), os.path.join(directory, name)))
                 except ValueError:
+                    # Same prefix and suffix but no sequence number: not one of our files, so it is left alone.
                     pass
         return sorted(out)
 

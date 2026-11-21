@@ -26,7 +26,7 @@ def main():
         structlog.processors.TimeStamper(fmt="iso"),
         latticelog.structlog_processor(log_store),  # LatticeLog 2/2
         structlog.dev.ConsoleRenderer(colors=False),
-    ], logger_factory=structlog.PrintLoggerFactory(file=open(os.devnull, "w", encoding="utf-8")))  # console output muted for the demo
+    ], logger_factory=structlog.ReturnLoggerFactory())  # console output muted for the demo (nothing is printed)
     log = structlog.get_logger()
     rnd = random.Random(7)
     for i in range(200):

@@ -9,15 +9,39 @@ fail() { echo "SMOKE FAILED: $*" >&2; exit 1; }
 
 [ -x "$exe" ] || fail "$exe is not executable"
 [ ! -e "$(dirname "$exe")/latticelog.dll" ] || fail "latticelog.dll next to the executable: not a single-file build"
-# No .NET for anything started from here on.
-unset DOTNET_ROOT DOTNET_HOST_PATH DOTNET_ROOT_X64 2>/dev/null || true
-PATH=$(printf '%s' "$PATH" | tr ':' '\n' | while read -r d; do [ -x "$d/dotnet" ] || printf '%s:' "$d"; done)
-export PATH
-if command -v dotnet >/dev/null 2>&1; then fail "dotnet is still reachable on PATH"; fi
-echo "native single file: $exe ($(wc -c < "$exe") bytes), dotnet not on PATH"
-
 work=$(mktemp -d)
 trap '"$exe" service stop >/dev/null 2>&1 || true; rm -rf "$work"' EXIT
+size=$(wc -c < "$exe")
+
+# No .NET for anything started from here on. A PATH folder that holds dotnet is replaced by a folder of links to
+# everything else in it: on GitHub's Ubuntu runners dotnet sits in /usr/bin next to coreutils, so dropping the whole
+# folder would also hide wc, mktemp and the rest.
+unset DOTNET_ROOT DOTNET_HOST_PATH DOTNET_ROOT_X64 2>/dev/null || true
+newpath=""
+n=0
+old_ifs=$IFS
+IFS=:
+for d in $PATH; do
+  [ -n "$d" ] || continue
+  if [ -e "$d/dotnet" ]; then
+    n=$((n + 1))
+    shadow="$work/path-$n"
+    mkdir -p "$shadow"
+    for f in "$d"/* "$d"/.[!.]*; do
+      [ -e "$f" ] || continue
+      name=${f##*/}
+      [ "$name" = dotnet ] || ln -s "$f" "$shadow/$name"
+    done
+    newpath="$newpath${newpath:+:}$shadow"
+  else
+    newpath="$newpath${newpath:+:}$d"
+  fi
+done
+IFS=$old_ifs
+PATH=$newpath
+export PATH
+if command -v dotnet >/dev/null 2>&1; then fail "dotnet is still reachable on PATH"; fi
+echo "native single file: $exe ($size bytes), dotnet not on PATH"
 export LATTICELOG_CONFIG_DIR="$work/config" LATTICELOG_DATA_DIR="$work/data"
 src="$work/logs/smoke-api"
 mkdir -p "$src/p-1" "$LATTICELOG_CONFIG_DIR"
