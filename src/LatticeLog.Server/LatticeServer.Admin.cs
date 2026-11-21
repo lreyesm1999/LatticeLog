@@ -84,12 +84,12 @@ public sealed partial class LatticeServer
     private async Task HandleCompactAsync(HttpContext ctx)
     {
         if (await AdminTargetAsync(ctx).ConfigureAwait(false) is not var (token, ns, service)) return;
-        var policy = ctx.Request.Query["policy"].ToString() switch
+        CompactionPolicy? policy = ctx.Request.Query["policy"].ToString() switch
         {
             "" or "balanced" => CompactionPolicy.Balanced,
             "fast" => CompactionPolicy.Fast,
             "compact" => CompactionPolicy.Compact,
-            _ => (CompactionPolicy?)null,
+            _ => null,
         };
         if (policy is null)
         {

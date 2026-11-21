@@ -1,0 +1,38 @@
+# CodeQL configuration for LatticeLog. Security queries all stay on; so do the quality queries that can point at a
+# real bug (empty or catch-all handlers, missing Dispose, useless assignments, null dereferences...).
+#
+# Left out: purely stylistic suggestions that were most of the open alerts and never pointed at a defect here.
+# cs/path-combine alone was 107 alerts: Path.Combine is used with folder names this code builds itself, not with
+# untrusted absolute paths; user-supplied paths go through PathPolicy instead.
+name: LatticeLog CodeQL
+
+queries:
+  - uses: security-and-quality
+
+query-filters:
+  - exclude:
+      id: cs/path-combine
+  - exclude:
+      id: cs/linq/missed-where
+  - exclude:
+      id: cs/linq/missed-select
+  - exclude:
+      id: cs/useless-tostring-call
+  - exclude:
+      id: cs/missed-ternary-operator
+  - exclude:
+      id: cs/nested-if-statements
+  - exclude:
+      id: cs/complex-block
+  - exclude:
+      id: cs/simplifiable-boolean-expression
+  - exclude:
+      id: cs/missed-readonly-modifier
+  - exclude:
+      id: cs/xmldoc/missing-summary
+
+# Experiments and benchmarks are not shipped. (For C#, which is compiled, the build itself also leaves them out:
+# the workflow builds LatticeLog.CodeQL.slnf.)
+paths-ignore:
+  - research
+  - benchmarks

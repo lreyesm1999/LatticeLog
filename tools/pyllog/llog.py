@@ -530,12 +530,17 @@ def read_expected(path):
     return out
 
 
+def _read_bytes(path):
+    with open(path, "rb") as f:
+        return f.read()
+
+
 def verify_golden(directory):
     import os
     expected = read_expected(os.path.join(directory, "expected.llog.jsonl"))
     ok = True
     for name in ["raw", "raw-deflate", "structural", "structural-deflate", "contextual", "contextual-deflate"]:
-        data = open(os.path.join(directory, name + ".llog"), "rb").read()
+        data = _read_bytes(os.path.join(directory, name + ".llog"))
         recs, issues, footer = read_segment(data)
         good = recs == expected and not issues and footer is not None and footer["records"] == len(expected)
         if footer and "bloom" in footer:
@@ -551,7 +556,7 @@ def verify_golden(directory):
                     break
         print("%-20s %s (%d records, %d issues)" % (name, "OK" if good else "FAIL", len(recs), len(issues)))
     for name in ["corrupt-truncated", "corrupt-bitflip"]:
-        recs, issues, footer = read_segment(open(os.path.join(directory, name + ".llog"), "rb").read())
+        recs, issues, footer = read_segment(_read_bytes(os.path.join(directory, name + ".llog")))
         detected = len(issues) > 0 and all(r in expected for r in recs)
         if name == "corrupt-bitflip" and footer and "catalog" in footer:
             detected = detected and recs == expected  # 0.2: footer catalog keeps every record decodable
@@ -568,7 +573,7 @@ if __name__ == "__main__":
             results.append(verify_golden(d))
         sys.exit(0 if all(results) else 1)
     if len(sys.argv) >= 3 and sys.argv[1] == "dump":
-        recs, issues, footer = read_segment(open(sys.argv[2], "rb").read())
+        recs, issues, footer = read_segment(_read_bytes(sys.argv[2]))
         for r in recs:
             print(r)
         print("issues:", issues, "footer records:", footer and footer["records"])

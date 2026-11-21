@@ -515,7 +515,7 @@ public static class RawLines
     public static IEnumerable<(byte[] Line, bool HadNewline)> Split(Stream s, int maxLineBytes)
     {
         var buf = new byte[64 * 1024];
-        var line = new MemoryStream();
+        using var line = new MemoryStream();
         int n;
         while ((n = s.Read(buf, 0, buf.Length)) > 0)
         {

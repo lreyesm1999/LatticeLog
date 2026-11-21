@@ -205,13 +205,22 @@ public readonly struct Value : IEquatable<Value>
             case ValueKind.Array:
                 sb.Append('[');
                 var arr = AsArray();
-                for (var i = 0; i < arr.Length; i++) { if (i > 0) sb.Append(", "); arr[i].AppendTo(sb); }
+                for (var i = 0; i < arr.Length; i++)
+                {
+                    if (i > 0) sb.Append(", ");
+                    arr[i].AppendTo(sb);
+                }
                 sb.Append(']');
                 break;
             case ValueKind.Map:
                 sb.Append('{');
                 var map = AsMap();
-                for (var i = 0; i < map.Length; i++) { if (i > 0) sb.Append(", "); sb.Append(map[i].Key).Append('='); map[i].Value.AppendTo(sb); }
+                for (var i = 0; i < map.Length; i++)
+                {
+                    if (i > 0) sb.Append(", ");
+                    sb.Append(map[i].Key).Append('=');
+                    map[i].Value.AppendTo(sb);
+                }
                 sb.Append('}');
                 break;
         }
