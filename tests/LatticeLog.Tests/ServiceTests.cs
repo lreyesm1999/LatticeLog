@@ -385,6 +385,12 @@ public class ServiceTests(ITestOutputHelper output)
         Assert.Equal(3, search["events"]!.AsArray().Count);
         var stats = JsonNode.Parse(await http.GetStringAsync("v1/stats?ns=orders&by=level"))!;
         Assert.Equal(30, (long)stats["total"]!);
+        // The console's histogram: bucket groups by time (keys are bucket starts) and still counts every event.
+        var hist = JsonNode.Parse(await http.GetStringAsync("v1/stats?ns=orders&bucket=1d"))!;
+        Assert.StartsWith("time", (string)hist["group_by"]!, StringComparison.Ordinal);
+        Assert.Equal(30, (long)hist["total"]!);
+        Assert.Equal(30, hist["groups"]!.AsArray().Sum(g => (long)g!["count"]!));
+        Assert.Equal(HttpStatusCode.BadRequest, (await http.GetAsync("v1/stats?ns=orders&bucket=soon")).StatusCode);
         Assert.NotEmpty(JsonNode.Parse(await http.GetStringAsync("v1/catalog?ns=orders"))!["segments"]!.AsArray());
 
         // DNS rebinding: a page on another host name reaching this port is refused.

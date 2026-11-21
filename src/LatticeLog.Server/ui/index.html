@@ -7,50 +7,185 @@
 <link rel="stylesheet" href="/ui/app.css">
 </head>
 <body>
-<header>
-  <strong>LatticeLog</strong>
-  <form id="auth" autocomplete="off">
-    <input id="token" type="password" placeholder="read token" aria-label="Token">
-    <select id="ns" aria-label="Namespace"></select>
-    <button type="submit">Connect</button>
-  </form>
-  <span id="status" role="status"></span>
+<header class="topbar">
+  <div class="brand">
+    <svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4z"/><path class="logo-accent" d="M14 14h6v6h-6z"/></svg>
+    <span>LatticeLog</span>
+  </div>
+  <label class="source" id="source-picker" hidden>
+    <span class="source-label">Source</span>
+    <select id="ns" aria-label="Source"></select>
+  </label>
+  <nav class="tabs" id="tabs" hidden>
+    <button type="button" data-view="search" class="active">Search</button>
+    <button type="button" data-view="stats">Overview</button>
+    <button type="button" data-view="catalog">Storage</button>
+  </nav>
+  <div class="spacer"></div>
+  <span id="status" class="conn" role="status"><span class="dot"></span><span id="status-text">Not connected</span></span>
+  <button type="button" id="change-token" class="ghost icon-btn" title="Change access token" aria-label="Change access token" hidden>
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3M14 9l2 2"/></svg>
+  </button>
 </header>
-<nav>
-  <button data-view="search" class="active">Search</button>
-  <button data-view="stats">Stats</button>
-  <button data-view="catalog">Catalog</button>
-</nav>
-<main>
+
+<section id="connect" class="connect" hidden>
+  <form id="auth" class="card connect-card" autocomplete="off">
+    <h1>Connect to LatticeLog</h1>
+    <p class="muted">Paste a token with read access. <code>llog ui</code> opens this page already connected.</p>
+    <label class="field">
+      <span>Access token</span>
+      <input id="token" type="password" placeholder="Paste token" aria-label="Token" autofocus>
+    </label>
+    <p id="connect-error" class="error-text" role="alert"></p>
+    <div class="row-end">
+      <button type="button" id="cancel-token" class="ghost" hidden>Cancel</button>
+      <button type="submit" class="primary">Connect</button>
+    </div>
+  </form>
+</section>
+
+<main id="app" hidden>
+  <p id="source-span" class="source-span muted"></p>
+
   <section id="view-search">
-    <form id="query">
-      <input id="where" placeholder="level >= ERROR AND service = 'orders-api'" aria-label="Filter">
-      <input id="since" placeholder="since (15m, 2h, RFC 3339)" aria-label="Since" value="24h">
-      <select id="order" aria-label="Order"><option value="desc">newest first</option><option value="asc">oldest first</option></select>
-      <button type="submit">Search</button>
+    <form id="query" class="querybar">
+      <div class="search-box">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+        <input id="where" spellcheck="false" placeholder="Search words, or filter: level >= ERROR AND service = 'orders-api'" aria-label="Search or filter">
+        <button type="button" id="clear-where" class="ghost icon-btn small" title="Clear" aria-label="Clear search" hidden>×</button>
+        <kbd title="Press / to focus">/</kbd>
+      </div>
+      <select id="range" aria-label="Time range" class="range">
+        <option value="15m">Last 15 minutes</option>
+        <option value="1h">Last hour</option>
+        <option value="6h">Last 6 hours</option>
+        <option value="24h" selected>Last 24 hours</option>
+        <option value="7d">Last 7 days</option>
+        <option value="30d">Last 30 days</option>
+        <option value="all">All time</option>
+        <option value="custom">Custom…</option>
+      </select>
+      <input id="since-custom" class="custom-since" placeholder="since: 90m, 3d or 2026-11-01T00:00:00Z" aria-label="Custom start" hidden>
+      <button type="submit" class="primary">Search</button>
     </form>
-    <p id="coverage"></p>
-    <table id="events"><thead><tr><th>time</th><th>level</th><th>service</th><th>event</th><th>message</th></tr></thead><tbody></tbody></table>
-    <button id="more" hidden>More</button>
+
+    <div class="filterbar">
+      <div class="segmented" id="levels" role="group" aria-label="Minimum level">
+        <button type="button" data-level="" class="active">All levels</button>
+        <button type="button" data-level="DEBUG">Debug+</button>
+        <button type="button" data-level="INFO">Info+</button>
+        <button type="button" data-level="WARN" class="lvl-warn">Warn+</button>
+        <button type="button" data-level="ERROR" class="lvl-error">Errors</button>
+      </div>
+      <div id="chips" class="chips"></div>
+      <div class="spacer"></div>
+      <button type="button" id="help-toggle" class="ghost">Syntax help</button>
+      <select id="order" aria-label="Order" class="compact">
+        <option value="desc">Newest first</option>
+        <option value="asc">Oldest first</option>
+      </select>
+    </div>
+
+    <div id="help" class="card help" hidden>
+      <div class="help-head">
+        <strong>Searching</strong>
+        <span class="muted">Plain words search the message, event name, attributes and exception text. Click an example to try it.</span>
+      </div>
+      <div class="examples" id="examples"></div>
+      <p class="muted small">Fields: <code>level</code> <code>service</code> <code>event</code> <code>message</code> <code>trace_id</code> <code>exception.type</code> <code>text</code> or any attribute name.
+        Operators: <code>=</code> <code>!=</code> <code>&gt;=</code> <code>CONTAINS</code> <code>STARTSWITH</code> <code>IN (…)</code> <code>EXISTS(field)</code>, joined with <code>AND</code> / <code>OR</code> / <code>NOT</code>.</p>
+    </div>
+
+    <div id="histogram" class="histogram card" hidden>
+      <div class="hist-head"><span id="hist-title" class="muted small"></span><span class="muted small">Click a bar to zoom in</span></div>
+      <div id="hist-bars" class="hist-bars"></div>
+      <div class="hist-axis"><span id="hist-from"></span><span id="hist-to"></span></div>
+    </div>
+
+    <div class="summary">
+      <span id="summary-count" class="summary-count"></span>
+      <span id="summary-meta" class="muted small"></span>
+    </div>
+    <div id="notice" class="notice" hidden></div>
+
+    <div class="table-wrap card" id="results-wrap">
+      <table id="events" class="events">
+        <colgroup><col class="c-time"><col class="c-level"><col class="c-service"><col class="c-event"><col></colgroup>
+        <thead><tr><th>Time</th><th>Level</th><th>Service</th><th>Event</th><th>Message</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div id="loading" class="loading" hidden><span class="spinner"></span>Searching…</div>
+      <div id="empty" class="empty" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4M8 11h6"/></svg>
+        <h2 id="empty-title"></h2>
+        <p id="empty-text" class="muted"></p>
+        <div id="empty-actions" class="row-center"></div>
+      </div>
+    </div>
+    <div class="row-center"><button type="button" id="more" hidden>Load more</button></div>
   </section>
+
   <section id="view-stats" hidden>
-    <form id="statsform">
-      <select id="by" aria-label="Group by"><option>event</option><option>level</option><option>service</option></select>
-      <input id="statswhere" placeholder="optional filter" aria-label="Filter">
-      <button type="submit">Group</button>
-    </form>
-    <div id="bars"></div>
+    <div class="toolbar">
+      <div class="segmented" id="groupby" role="group" aria-label="Group by">
+        <button type="button" data-by="event" class="active">By event</button>
+        <button type="button" data-by="level">By level</button>
+        <button type="button" data-by="service">By service</button>
+      </div>
+      <span class="muted small" id="stats-range"></span>
+      <div class="spacer"></div>
+      <button type="button" id="stats-refresh" class="ghost">Refresh</button>
+    </div>
+    <div class="cards" id="stat-cards"></div>
+    <div class="card">
+      <div id="bars" class="bars"></div>
+    </div>
+    <p class="muted small">Uses the time range and filter from Search. Click a row to see those events.</p>
   </section>
+
   <section id="view-catalog" hidden>
-    <table id="segments"><thead><tr><th>segment</th><th>sealed</th><th>records</th><th>sequences</th><th>from</th><th>to</th><th>bytes</th></tr></thead><tbody></tbody></table>
+    <div class="cards" id="catalog-cards"></div>
+    <div class="table-wrap card">
+      <table id="segments" class="plain">
+        <thead><tr><th>Segment</th><th>State</th><th class="num">Events</th><th>From</th><th>To</th><th class="num">Size</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p id="catalog-problems" class="error-text"></p>
   </section>
-  <aside id="detail" hidden>
-    <button id="close" aria-label="Close">×</button>
-    <h2 id="detail-title"></h2>
-    <button id="show-trace" hidden>Show trace</button>
-    <pre id="detail-json"></pre>
-  </aside>
 </main>
+
+<aside id="detail" class="drawer" hidden aria-labelledby="detail-title">
+  <div class="drawer-head">
+    <div class="drawer-title">
+      <span id="detail-level" class="pill"></span>
+      <h2 id="detail-title"></h2>
+    </div>
+    <div class="drawer-nav">
+      <button type="button" id="prev" class="ghost icon-btn" title="Previous event (k)" aria-label="Previous event">↑</button>
+      <button type="button" id="next" class="ghost icon-btn" title="Next event (j)" aria-label="Next event">↓</button>
+      <button type="button" id="close" class="ghost icon-btn" title="Close (Esc)" aria-label="Close">×</button>
+    </div>
+  </div>
+  <p id="detail-time" class="muted small"></p>
+  <div class="drawer-body">
+    <div id="detail-message" class="message-box"></div>
+    <div id="detail-exception" class="exception" hidden>
+      <div id="detail-exc-title" class="exc-title"></div>
+      <pre id="detail-exc-stack"></pre>
+    </div>
+    <div class="actions-row" id="detail-actions"></div>
+    <h3>Fields</h3>
+    <dl id="detail-fields" class="kv"></dl>
+    <h3 id="attr-heading">Attributes</h3>
+    <dl id="detail-attrs" class="kv"></dl>
+    <details class="raw">
+      <summary>Raw JSON <button type="button" id="copy-json" class="ghost small">Copy</button></summary>
+      <pre id="detail-json"></pre>
+    </details>
+  </div>
+</aside>
+<div id="toast" class="toast" role="status" hidden></div>
 <script src="/ui/app.js"></script>
 </body>
 </html>
