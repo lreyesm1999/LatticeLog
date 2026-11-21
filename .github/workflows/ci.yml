@@ -111,6 +111,18 @@ jobs:
           name: packages
           path: packages
 
+  aot-and-pack:
+    # The former single job of this name was split into aot (per platform) and pack. Branch protection requires a
+    # check called aot-and-pack, so this one stands for both: it passes only when every aot build and pack passed.
+    needs: [aot, pack]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: aot and pack passed
+        run: |
+          echo "aot: ${{ needs.aot.result }}, pack: ${{ needs.pack.result }}"
+          test "${{ needs.aot.result }}" = success && test "${{ needs.pack.result }}" = success
+
   container:
     # Builds the server image, scans it, and runs it over real TLS: health, ingestion with the Python SDK, queries,
     # an untrusted client refused, non-root user, data kept across a restart (deploy/smoke-test.sh).
