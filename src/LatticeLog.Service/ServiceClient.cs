@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json.Nodes;
+using LatticeLog.Sources;
 
 namespace LatticeLog.Service;
 
@@ -68,6 +69,27 @@ public static class ServiceClient
         }
         catch (ServiceRefusedException) { throw; }
         catch (Exception ex) when (ex is IOException or SocketException or ObjectDisposedException) { return null; }
+    }
+
+    /// <summary>
+    /// Sends one <see cref="ConfigEdit"/> to the running service for this config folder, which applies it to the
+    /// config.json it reads. Returns the reply (<c>changed</c>, <c>config</c>), or null when no service answers or it
+    /// predates the <c>config</c> operation: the caller then writes the file itself. Throws
+    /// <see cref="ServiceRefusedException"/> when the service rejects the edit.
+    /// </summary>
+    public static JsonObject? EditConfig(string? configDir, JsonObject edit)
+    {
+        var ep = Running(configDir);
+        if (ep is null) return null;
+        try
+        {
+            var extra = new JsonObject { ["edit"] = edit.DeepClone(), ["config_dir"] = ServicePaths.ResolveConfigDir(configDir) };
+            var (client, _, reply) = Connect(ep, "config", TimeSpan.FromSeconds(10), extra);
+            client.Dispose();
+            return reply;
+        }
+        catch (ServiceRefusedException ex) when (ex.Error == "unknown_op") { return null; }
+        catch (Exception ex) when (ex is not ServiceRefusedException && ex is IOException or SocketException or ObjectDisposedException) { return null; }
     }
 
     /// <summary>The endpoint of a service that answers a ping, or null.</summary>

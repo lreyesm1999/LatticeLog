@@ -447,9 +447,40 @@ public sealed class ServiceHost : IDisposable
             case "mcp":
                 ServeMcp(stream, hello);
                 return;
+            case "config":
+                Wire.WriteLine(stream, EditConfig(hello).ToJsonString());
+                return;
             default:
                 Wire.WriteLine(stream, Fail("unknown_op", $"unknown op '{op}'").ToJsonString());
                 return;
+        }
+    }
+
+    private readonly object _configLock = new();
+
+    /// <summary>
+    /// <c>config</c>: applies one <see cref="ConfigEdit"/> to this service's config.json and returns the result. Clients
+    /// send their changes here so the file the service reads is the one that changes (see <see cref="ConfigEdit"/>).
+    /// </summary>
+    private JsonObject EditConfig(JsonObject hello)
+    {
+        static JsonObject Fail(string error, string message) => new() { ["ok"] = false, ["error"] = error, ["message"] = message };
+        if ((string?)hello["config_dir"] is { Length: > 0 } cd && !PathPolicy.SamePath(Path.GetFullPath(cd), ConfigDir))
+            return Fail("config_mismatch", $"this service uses the config folder {ConfigDir}, not {cd}");
+        if (hello["edit"] is not JsonObject edit) return Fail("bad_request", "missing 'edit'");
+        try
+        {
+            lock (_configLock)
+            {
+                var config = UserConfig.Load(ConfigDir);
+                var changed = ConfigEdit.Apply(config, edit);
+                if (changed) Log.Write($"config changed by a client: {edit.ToJsonString()}");
+                return new JsonObject { ["ok"] = true, ["changed"] = changed, ["config"] = ConfigEdit.Snapshot(config) };
+            }
+        }
+        catch (Exception ex) when (ex is ArgumentException or FormatException or InvalidDataException or IOException or UnauthorizedAccessException)
+        {
+            return Fail("bad_request", ex.Message);
         }
     }
 

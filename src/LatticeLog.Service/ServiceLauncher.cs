@@ -31,7 +31,8 @@ public static class ServiceLauncher
         if (ServiceClient.Running(configDir) is { } running) return running;
         var reg = Registration(configDir);
         string? method = null;
-        try { method = reg.Detect(); } catch (Exception ex) when (ex is InvalidOperationException or IOException) { }
+        if (RegisteredServiceMatches(configDir))
+            try { method = reg.Detect(); } catch (Exception ex) when (ex is InvalidOperationException or IOException) { }
         if (method is not null && reg.StartRegistered(method))
         {
             log?.Invoke($"started the registered LatticeLog service ({method})");
@@ -40,6 +41,17 @@ public static class ServiceLauncher
         if (!SpawnDetached(configDir, log)) return null;
         return ServiceClient.WaitRunning(configDir, timeout);
     }
+
+    /// <summary>
+    /// Whether starting the registered service (Task Scheduler, systemd, launchd) can give this caller its service. The
+    /// OS starts it with the per-user default folders, so a caller pointed elsewhere (<c>--config-dir</c>,
+    /// <c>LATTICELOG_CONFIG_DIR</c>, <c>LATTICELOG_DATA_DIR</c>: tests, portable use) would only start the user's real
+    /// service and then wait for an endpoint that never appears. Such callers start their own process instead.
+    /// </summary>
+    public static bool RegisteredServiceMatches(string? configDir) =>
+        configDir is null
+        && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("LATTICELOG_CONFIG_DIR"))
+        && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("LATTICELOG_DATA_DIR"));
 
     /// <summary>
     /// Starts <c>latticelog service run</c> outside the caller's standard streams: the shim's stdin/stdout belong to the
@@ -111,13 +123,48 @@ public static class ServiceLauncher
             if (!SetGuiSubsystem(bytes)) return null;
             var tmp = copy + ".tmp";
             File.WriteAllBytes(tmp, bytes);
-            File.Move(tmp, copy, overwrite: true);
+            ReplaceFile(tmp, copy);
             return copy;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             return File.Exists(copy) ? copy : null;
         }
+    }
+
+    /// <summary>
+    /// Moves <paramref name="newFile"/> over <paramref name="target"/>. On Windows a running executable cannot be
+    /// overwritten (an editor keeps <c>latticelog.exe mcp</c> running) but it can be renamed: the old file is moved aside
+    /// as <c>&lt;name&gt;.old-&lt;timestamp&gt;</c> and removed by <see cref="DeleteOldCopies"/> once nothing runs it.
+    /// Returns the name it was moved to, or null when the target was replaced directly.
+    /// </summary>
+    public static string? ReplaceFile(string newFile, string target)
+    {
+        try
+        {
+            File.Move(newFile, target, overwrite: true);
+            return null;
+        }
+        catch (Exception ex) when (OperatingSystem.IsWindows() && File.Exists(target) && ex is UnauthorizedAccessException or IOException)
+        {
+            var aside = $"{target}.old-{DateTime.UtcNow:yyyyMMddHHmmssfff}";
+            File.Move(target, aside);
+            File.Move(newFile, target);
+            return aside;
+        }
+    }
+
+    /// <summary>Deletes the <c>*.old-*</c> copies <see cref="ReplaceFile"/> left in <paramref name="folder"/> that are no longer in use.</summary>
+    public static int DeleteOldCopies(string folder)
+    {
+        var deleted = 0;
+        if (!Directory.Exists(folder)) return 0;
+        foreach (var f in Directory.EnumerateFiles(folder, "*.old-*"))
+        {
+            try { File.Delete(f); deleted++; }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* still running: next time */ }
+        }
+        return deleted;
     }
 
     /// <summary>Flips IMAGE_SUBSYSTEM_WINDOWS_CUI (3) to IMAGE_SUBSYSTEM_WINDOWS_GUI (2) in a PE image.</summary>

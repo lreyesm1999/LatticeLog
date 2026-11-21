@@ -521,3 +521,115 @@ public class ServiceTests(ITestOutputHelper output)
         Assert.Null(ServiceClient.Running(env.ConfigDir));
     }
 }
+
+/// <summary>Fixes from a real Windows install: config edits go through the service, in-use executables, registered task.</summary>
+public class ServiceInstallFixTests
+{
+    [Fact]
+    public void Config_edits_go_through_the_running_service_and_reach_its_catalog()
+    {
+        var env = new Env(allowOld: false);
+        using var host = ServiceHost.Start(new ServiceOptions { ConfigDir = env.ConfigDir, Port = 0, MaintenanceInterval = TimeSpan.FromHours(1) });
+        Assert.DoesNotContain(PathPolicy.Normalize(env.Old), host.CatalogFor(null).Catalog.AllowedFolders);
+
+        var reply = ServiceClient.EditConfig(env.ConfigDir, ConfigEdit.Folder("allow", "add", env.Old));
+        Assert.NotNull(reply);
+        Assert.True((bool?)reply!["changed"]);
+        Assert.Contains(PathPolicy.Normalize(env.Old), ((JsonArray)reply["config"]!["allow"]!).Select(x => (string?)x));
+        // The service wrote its own config.json, and its catalog reopens on the change.
+        Assert.Contains(PathPolicy.Normalize(env.Old), UserConfig.Load(env.ConfigDir).Allow);
+        Assert.Contains(PathPolicy.Normalize(env.Old), host.CatalogFor(null).Catalog.AllowedFolders);
+
+        // The same edit again changes nothing; a malformed one is refused, not applied.
+        Assert.False((bool?)ServiceClient.EditConfig(env.ConfigDir, ConfigEdit.Folder("allow", "add", env.Old))!["changed"]);
+        var refused = Assert.Throws<ServiceRefusedException>(() => ServiceClient.EditConfig(env.ConfigDir, ConfigEdit.Folder("allow", "add", "relative/path")));
+        Assert.Equal("bad_request", refused.Error);
+
+        // Retention goes the same way.
+        Assert.True((bool?)ServiceClient.EditConfig(env.ConfigDir, ConfigEdit.Retention("*", "30d", null, clear: false))!["changed"]);
+        Assert.Equal("30d", UserConfig.Load(env.ConfigDir).Retention["*"].MaxAge);
+        Assert.True((bool?)ServiceClient.EditConfig(env.ConfigDir, ConfigEdit.Retention("*", null, null, clear: true))!["changed"]);
+        Assert.Empty(UserConfig.Load(env.ConfigDir).Retention);
+    }
+
+    [Fact]
+    public void Without_a_service_EditConfig_returns_null_so_the_caller_writes_the_file()
+    {
+        var env = new Env(allowOld: false);
+        Assert.Null(ServiceClient.EditConfig(env.ConfigDir, ConfigEdit.Get()));
+        var config = UserConfig.Load(env.ConfigDir);
+        Assert.True(ConfigEdit.Apply(config, ConfigEdit.Folder("roots", "add", env.Outside)));
+        Assert.Contains(PathPolicy.Normalize(env.Outside), UserConfig.Load(env.ConfigDir).Roots);
+        Assert.Throws<ArgumentException>(() => ConfigEdit.Apply(config, ConfigEdit.Retention("*", null, null, clear: false)));
+        Assert.Throws<ArgumentException>(() => ConfigEdit.Apply(config, new JsonObject { ["kind"] = "nonsense" }));
+    }
+
+    [Fact]
+    public void A_running_executable_is_moved_aside_instead_of_overwritten()
+    {
+        var dir = TestData.TempDir();
+        var target = Path.Combine(dir, OperatingSystem.IsWindows() ? "tool.exe" : "tool");
+        var fresh = Path.Combine(dir, "tool.new");
+        File.WriteAllText(fresh, "new version");
+        if (!OperatingSystem.IsWindows())
+        {
+            File.WriteAllText(target, "old");
+            Assert.Null(ServiceLauncher.ReplaceFile(fresh, target)); // elsewhere a running file can simply be replaced
+            Assert.Equal("new version", File.ReadAllText(target));
+            return;
+        }
+        // A real running copy of a system executable: Windows refuses to overwrite it but allows the rename.
+        File.Copy(Path.Combine(Environment.SystemDirectory, "PING.EXE"), target);
+        using var running = Process.Start(new ProcessStartInfo(target, "-n 30 127.0.0.1") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true })!;
+        try
+        {
+            var aside = ServiceLauncher.ReplaceFile(fresh, target);
+            Assert.NotNull(aside);
+            Assert.Equal("new version", File.ReadAllText(target));
+            Assert.True(File.Exists(aside));
+            Assert.Equal(0, ServiceLauncher.DeleteOldCopies(dir)); // still running: kept
+        }
+        finally
+        {
+            running.Kill();
+            running.WaitForExit();
+        }
+        Assert.Equal(1, ServiceLauncher.DeleteOldCopies(dir));
+        Assert.Empty(Directory.EnumerateFiles(dir, "*.old-*"));
+    }
+
+    [Fact]
+    public void The_registered_service_is_only_started_for_the_default_folders()
+    {
+        Assert.False(ServiceLauncher.RegisteredServiceMatches(Path.Combine(Path.GetTempPath(), "some-config")));
+        var overridden = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("LATTICELOG_CONFIG_DIR"))
+                         || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("LATTICELOG_DATA_DIR"));
+        Assert.Equal(!overridden, ServiceLauncher.RegisteredServiceMatches(null));
+    }
+}
+
+public class PackageRedirectTests
+{
+    [Fact]
+    public void A_write_redirected_into_a_package_copy_is_found()
+    {
+        var dir = TestData.TempDir();
+        var roaming = Path.Combine(dir, "Roaming");
+        var local = Path.Combine(dir, "Local");
+        var path = Path.Combine(roaming, "LatticeLog", "config.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, "{}");
+        Directory.CreateDirectory(Path.Combine(local, "Packages", "Other_123"));
+        var before = DateTime.UtcNow.AddSeconds(-2);
+        Assert.Null(PackageContext.RedirectedCopy(path, before, roaming, local));
+
+        var copy = Path.Combine(local, "Packages", "Claude_abc", "LocalCache", "Roaming", "LatticeLog", "config.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(copy)!);
+        File.WriteAllText(copy, "{\"allow\":[]}");
+        Assert.Equal(copy, PackageContext.RedirectedCopy(path, before, roaming, local));
+        // An older copy is not this write; a path outside AppData is never looked up.
+        File.SetLastWriteTimeUtc(copy, before.AddMinutes(-10));
+        Assert.Null(PackageContext.RedirectedCopy(path, before, roaming, local));
+        Assert.Null(PackageContext.RedirectedCopy(Path.Combine(dir, "elsewhere", "config.json"), before, roaming, local));
+    }
+}

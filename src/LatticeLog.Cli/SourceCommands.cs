@@ -13,21 +13,46 @@ public static class SourceCommands
 
     private static SourceCatalog Catalog(Args a) => SourceCatalog.Open(new CatalogOptions { ProjectDir = a.Get("project") });
 
+    /// <summary>
+    /// Applies a <see cref="ConfigEdit"/>: through the running service when there is one (it then writes the config.json
+    /// it reads itself), else directly. Returns whether something changed and the resulting config.
+    /// </summary>
+    internal static (bool Changed, JsonObject Config) EditConfig(Args a, JsonObject edit)
+    {
+        var configDir = ServiceCommands.ConfigDir(a);
+        JsonObject? reply;
+        try { reply = LatticeLog.Service.ServiceClient.EditConfig(configDir, edit); }
+        catch (LatticeLog.Service.ServiceRefusedException ex) { throw new CliException(ExitCodes.Usage, ex.Message); }
+        if (reply?["config"] is JsonObject served) return ((bool?)reply["changed"] ?? false, served);
+
+        var config = UserConfig.Load(configDir);
+        var before = DateTime.UtcNow.AddSeconds(-2);
+        bool changed;
+        try { changed = ConfigEdit.Apply(config, edit); }
+        catch (ArgumentException ex) { throw new CliException(ExitCodes.Usage, ex.Message); }
+        if (changed)
+        {
+            var redirected = PackageContext.RedirectedCopy(config.Path, before);
+            if (redirected is not null || PackageContext.IsPackaged) Console.Error.WriteLine(PackageContext.Warning(config.Path, redirected));
+        }
+        return (changed, ConfigEdit.Snapshot(config));
+    }
+
+    private static List<string> Strings(JsonNode? node) => (node as JsonArray ?? []).Select(x => (string?)x).OfType<string>().ToList();
+
     /// <summary><c>roots add|remove|list</c> and <c>allow add|remove|list</c>: per-user folder lists.</summary>
     public static int FolderList(Args a, string what)
     {
         var verb = a.Positional.ElementAtOrDefault(0) ?? "list";
-        var config = UserConfig.Load();
-        var list = what == "roots" ? config.Roots : config.Allow;
         switch (verb)
         {
             case "add":
                 {
                     var folder = a.Positional.ElementAtOrDefault(1) ?? throw new CliException(ExitCodes.Usage, $"Usage: latticelog {what} add <folder>");
                     if (!Directory.Exists(folder)) throw new CliException(ExitCodes.NotFound, $"Folder '{Path.GetFullPath(folder)}' does not exist.");
-                    var added = UserConfig.AddFolder(list, folder);
-                    config.Save();
-                    Console.WriteLine(added ? $"Added {PathPolicy.Normalize(folder)} to {what} ({config.Path})." : $"{PathPolicy.Normalize(folder)} is already in {what}.");
+                    var full = PathPolicy.Normalize(Path.GetFullPath(folder));
+                    var (added, config) = EditConfig(a, ConfigEdit.Folder(what, "add", full));
+                    Console.WriteLine(added ? $"Added {full} to {what} ({(string?)config["path"]})." : $"{full} is already in {what}.");
                     if (what == "roots")
                     {
                         var c = SourceCatalog.Open(new CatalogOptions { SearchProject = false });
@@ -39,19 +64,24 @@ public static class SourceCommands
             case "remove":
                 {
                     var folder = a.Positional.ElementAtOrDefault(1) ?? throw new CliException(ExitCodes.Usage, $"Usage: latticelog {what} remove <folder>");
-                    var removed = UserConfig.RemoveFolder(list, folder);
-                    config.Save();
-                    Console.WriteLine(removed ? $"Removed {PathPolicy.Normalize(folder)} from {what}." : $"{PathPolicy.Normalize(folder)} was not in {what}.");
+                    var full = PathPolicy.Normalize(Path.GetFullPath(folder));
+                    var (removed, _) = EditConfig(a, ConfigEdit.Folder(what, "remove", full));
+                    Console.WriteLine(removed ? $"Removed {full} from {what}." : $"{full} was not in {what}.");
                     return removed ? ExitCodes.Ok : ExitCodes.NotFound;
                 }
             case "list":
-                if (a.Format == "json") Console.WriteLine(new JsonArray(list.Select(r => (JsonNode?)JsonValue.Create(r)).ToArray()).ToJsonString(Indented));
-                else
                 {
-                    foreach (var r in list) Console.WriteLine(r);
-                    Console.Error.WriteLine($"-- {list.Count} folder(s) in {config.Path}");
+                    // Through the service too: it shows what the service actually uses.
+                    var (_, config) = EditConfig(a, ConfigEdit.Get());
+                    var list = Strings(config[what]);
+                    if (a.Format == "json") Console.WriteLine(new JsonArray(list.Select(r => (JsonNode?)JsonValue.Create(r)).ToArray()).ToJsonString(Indented));
+                    else
+                    {
+                        foreach (var r in list) Console.WriteLine(r);
+                        Console.Error.WriteLine($"-- {list.Count} folder(s) in {(string?)config["path"]}");
+                    }
+                    return ExitCodes.Ok;
                 }
-                return ExitCodes.Ok;
             default:
                 throw new CliException(ExitCodes.Usage, $"Usage: latticelog {what} add|remove|list [<folder>]");
         }
