@@ -26,7 +26,8 @@ function TaskExists { schtasks /Query /TN LatticeLog 2>$null | Out-Null; $LASTEX
 function Invoke-Msiexec([string[]]$argv, [string]$log) {
     $p = Start-Process msiexec -ArgumentList ($argv + @('/qn', '/l*v', "`"$log`"")) -Wait -PassThru
     # What `latticelog setup` printed, copied into the installer log by WixQuietExec.
-    if (Test-Path $log) { Get-Content $log -Encoding Unicode | Select-String 'WixQuietExec64:' | ForEach-Object { '    ' + $_.Line.Trim() } }
+    # Printed with Write-Host so that only the exit code is this function's output.
+    if (Test-Path $log) { Get-Content $log -Encoding Unicode | Select-String 'WixQuietExec64:' | ForEach-Object { Write-Host ('    ' + $_.Line.Trim()) } }
     return $p.ExitCode
 }
 
