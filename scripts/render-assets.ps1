@@ -39,7 +39,6 @@ function Export-Svg([string]$Svg, [string]$Png, [int]$W, [int]$H, [switch]$Trans
 
 # svg file → png file, at the SVG's own size
 $jobs = @(
-    @{ Svg = 'social-preview.svg'; Png = 'social-preview.png'; W = 1280; H = 640 },
     @{ Svg = 'logo.svg';           Png = 'logo-512.png';       W = 512;  H = 512 }
 )
 foreach ($j in $jobs) {
@@ -72,7 +71,9 @@ try {
     $composed = @(
         @{ Svg = 'installer-dialog.svg'; Out = Join-Path $installerAssets 'dialog.bmp'; W = 493;  H = 312; X = 26;  Y = 40; S = 112 },
         @{ Svg = 'installer-banner.svg'; Out = Join-Path $installerAssets 'banner.bmp'; W = 493;  H = 58;  X = 439; Y = 6;  S = 46 },
-        @{ Svg = 'latticelog-hero.svg';  Out = Join-Path $assets 'latticelog-hero.png'; W = 1280; H = 400; X = 904; Y = 72; S = 256; Png = $true }
+        @{ Svg = 'latticelog-hero.svg';  Out = Join-Path $assets 'latticelog-hero.png'; W = 1280; H = 400; X = 904; Y = 72; S = 256; Png = $true },
+        # GitHub's social preview takes PNG or JPG; it has no transparent corners, so -Transparent is harmless.
+        @{ Svg = 'social-preview.svg';   Out = Join-Path $assets 'social-preview.png';  W = 1280; H = 640; X = 952; Y = 192; S = 256; Png = $true }
     )
     foreach ($j in $composed) {
         $png = Join-Path $tmp ([IO.Path]::GetFileName($j.Out) + '.png')
