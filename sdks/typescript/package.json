@@ -46,7 +46,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "prepare": "tsc -p tsconfig.json",
-    "test": "tsc -p tsconfig.json && node --test --test-concurrency=1 test/",
+    "test": "tsc -p tsconfig.json && node --test --test-concurrency=1 test/values.test.mjs test/local.test.mjs test/server.test.mjs test/integrations.test.mjs",
     "bench": "node bench/bench.mjs"
   },
   "peerDependencies": {

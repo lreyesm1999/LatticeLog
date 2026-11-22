@@ -58,10 +58,17 @@ test("pino transport: a worker thread writes the folder from pino's lines", asyn
   const logger = pino({ level: "info" }, transport);
   for (let i = 0; i < 100; i++) logger.info({ i, event: "row_imported" }, "row");
   logger.error({ err: new TypeError("broken") }, "failed");
-  await new Promise((resolve) => {
-    transport.on("close", resolve);
-    transport.end();
-  });
+  // thread-stream unrefs its worker: without a ref'd timer the event loop is empty while we wait for "close", and
+  // Node.js 20's test runner cancels the file.
+  const keepAlive = setInterval(() => {}, 1000);
+  try {
+    await new Promise((resolve) => {
+      transport.on("close", resolve);
+      transport.end();
+    });
+  } finally {
+    clearInterval(keepAlive);
+  }
   const recs = records(path.join(dir, "p-1")).map((r) => r.rec);
   assert.equal(recs.length, 101);
   assert.deepEqual(
