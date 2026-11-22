@@ -375,19 +375,26 @@ export class Shipper {
   /** Waits until the server confirmed everything through `seq`. False on timeout or when shipping failed. */
   async waitFor(seq: number, timeoutMs: number): Promise<boolean> {
     const deadline = Date.now() + timeoutMs;
-    // A referenced timer keeps the process alive while someone waits for the server.
-    const keepAlive = setTimeout(() => this.#notifyAck(), Math.max(0, timeoutMs));
     this.#urgent++;
     this.#signal();
     try {
       for (;;) {
         if (this.#committed >= seq) return true;
-        if (this.#failed || this.#stopped || Date.now() >= deadline) return false;
-        await new Promise<void>((r) => this.#ackWaiters.push(r));
+        const left = deadline - Date.now();
+        if (this.#failed || this.#stopped || left <= 0) return false;
+        // Every wait holds its own referenced timer: the shipper's timers are unref'd, so without one the event loop
+        // could empty while the caller awaits and the process would exit with the promise unsettled. A timer may
+        // fire a millisecond before `Date.now()` reaches the deadline; the next turn of the loop arms a new one.
+        await new Promise<void>((resolve) => {
+          const keepAlive = setTimeout(resolve, left);
+          this.#ackWaiters.push(() => {
+            clearTimeout(keepAlive);
+            resolve();
+          });
+        });
       }
     } finally {
       this.#urgent--;
-      clearTimeout(keepAlive);
     }
   }
 
