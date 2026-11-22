@@ -35,7 +35,14 @@ internal static class RustSdk
     private static (string? Exe, string Note) Build()
     {
         var cargo = FindCargo();
-        if (cargo is null) return (null, "cargo not found: skipped");
+        if (cargo is null)
+        {
+            // Locally a missing toolchain skips the Rust tests; in CI it fails them, so a runner without cargo cannot
+            // pass the cross-language tests without running them.
+            return (null, string.IsNullOrEmpty(Environment.GetEnvironmentVariable("CI"))
+                ? "cargo not found: skipped"
+                : "CI runner without cargo: the Rust SDK tests must run in CI (install a Rust toolchain in the workflow)");
+        }
         var manifest = Path.Combine(RepoRoot(), "sdks", "rust", "Cargo.toml");
         // Plain HTTP only (no TLS): no C compiler is needed for the build.
         var psi = new ProcessStartInfo(cargo)
