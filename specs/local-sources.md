@@ -1,8 +1,11 @@
 # Local sources: logs found by service name, and migration of traditional logs
 
 Status: implemented (alpha). Code: `src/LatticeLog.Sources`, `src/LatticeLog.Mcp`, `src/LatticeLog.Cli/SourceCommands.cs`,
-`sdks/python/latticelog/_local.py`, `sdks/python/latticelog/_structlog.py`. Tests: `tests/LatticeLog.Tests/SourcesTests.cs`,
-`sdks/python/tests/test_local.py`.
+`sdks/python/latticelog/_local.py`, `sdks/python/latticelog/_structlog.py`, `sdks/rust/src/folder.rs`, `sdks/rust/src/writer.rs`.
+Tests: `tests/LatticeLog.Tests/SourcesTests.cs`, `sdks/python/tests/test_local.py`, `sdks/rust/tests/local.rs`.
+
+The Rust SDK (`latticelog::open`) writes the same layout and the same documents (section 1, *Folder layout*). In
+server mode it also keeps `cursor.json` (`{"committed_through": N}`) in each process folder it ships.
 
 The developer flow has three parts:
 
@@ -33,7 +36,8 @@ logs/orders-api/
   p-2/ ...
 ```
 
-Manifest `latticelog.source.json`:
+Manifest `latticelog.source.json` (the Rust SDK adds `"producer":"latticelog-rust"`, and `list_sources` then reports
+the kind `rust-local` instead of `python-local`; everything else is identical):
 
 ```json
 {"format": "latticelog.source", "version": 1, "service": "orders-api", "environment": "dev",
@@ -128,7 +132,7 @@ Each root is walked breadth-first (depth ≤ 8, ≤ 50,000 folders; hidden folde
 
 | marker | kind | name |
 |---|---|---|
-| `latticelog.source.json` | `python-local` | the manifest's `service` |
+| `latticelog.source.json` | `python-local` (`rust-local` when the manifest's `producer` is `latticelog-rust`) | the manifest's `service` |
 | `STORE.json` (`"format":"latticelog.store"`) | `dotnet-store` | the manifest's `service` if a `latticelog.source.json` sits next to it, else the folder name |
 
 and its subfolders are not searched further. `[sources]` entries name a folder directly. Migrated sources come from

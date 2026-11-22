@@ -2,6 +2,17 @@
 
 ## Unreleased — public repository under the MIT license
 
+- **Rust SDK** (`sdks/rust`, crate `latticelog`, Rust ≥ 1.89): local mode writes the same service folders as the
+  Python SDK (`latticelog.source.json`, `p-N`, dense sequences, recovery, retention), so the CLI and MCP server find a
+  Rust service by name; `list_sources` reports it as `rust-local` and the console labels it *Service (Rust)*. Server
+  mode ships each process folder's own lines byte for byte with ingest protocol v1 (gzip, CRC-32, retries with jitter,
+  413 split, 409 resend, `cursor.json`). Integrations: a `tracing` layer (spans → contexts, `operation_id` →
+  operations) and a `log` bridge with typed key-values; typed values (UInt64, Decimal with scale, UUID, timestamps,
+  bytes, ordered maps, raw UTF-16). Hot path: encoding into a reused thread-local buffer and one short lock per record;
+  file I/O and fsync on background threads. Measured on one machine: 4.6 M records/s end to end with one thread, 216 ns
+  per call, 0.18 ns for a disabled level (`reports/rust-sdk-v1.md`). Tests: the crate's own (33) plus
+  `SdkTests`/`SourcesTests` against the real server and catalog; a `rust-sdk` CI job (fmt, clippy, tests on Linux and
+  Windows).
 - **Docs and onboarding for a public launch:**
   - the README is now a short landing page: a real incident investigated in three commands, a five-minute quick start,
     measured benefits with links to their reports, a comparison with Serilog/NLog/Seq/OpenTelemetry/Loki, benchmarks

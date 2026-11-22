@@ -22,6 +22,8 @@ public sealed class SourceInfo
     public string? Service { get; init; }
     public required string Origin { get; init; }
     public int Processes { get; init; }
+    /// <summary>Local sources: the SDK that wrote the folder (manifest <c>producer</c>; absent = the Python SDK).</summary>
+    public string? Producer { get; init; }
     public bool Follow { get; init; }
     public IReadOnlyList<string> Patterns { get; init; } = [];
     public string? CheckpointPath { get; init; }
@@ -221,6 +223,7 @@ public sealed class SourceCatalog
                 Environment = env ?? m.Environment,
                 Origin = origin,
                 Processes = ProcessFolders(dir).Count,
+                Producer = m.Producer,
             };
         }
         if (StoreLayout.IsStore(dir))
@@ -388,7 +391,7 @@ public sealed class SourceCatalog
 
     // ------------------------------------------------------------------ helpers
 
-    internal sealed record Manifest(string Service, string? Environment, string? ProducerId);
+    internal sealed record Manifest(string Service, string? Environment, string? ProducerId, string? Producer = null);
 
     internal static Manifest? ReadManifest(string dir)
     {
@@ -398,7 +401,7 @@ public sealed class SourceCatalog
         {
             var n = JsonNode.Parse(File.ReadAllText(path)) as JsonObject;
             if (n is null || (string?)n["format"] != "latticelog.source" || (int?)n["version"] != 1 || (string?)n["service"] is not { Length: > 0 } svc) return null;
-            return new Manifest(svc, (string?)n["environment"], (string?)n["producer_id"]);
+            return new Manifest(svc, (string?)n["environment"], (string?)n["producer_id"], (string?)n["producer"]);
         }
         catch (Exception ex) when (ex is IOException or System.Text.Json.JsonException or InvalidOperationException or FormatException) { return null; }
     }
@@ -428,7 +431,12 @@ public sealed class SourceCatalog
         var o = new JsonObject
         {
             ["name"] = s.Name,
-            ["kind"] = s.Kind switch { SourceKind.Python => "python-local", SourceKind.DotNet => "dotnet-store", _ => "migrated" },
+            ["kind"] = s.Kind switch
+            {
+                SourceKind.Python => s.Producer == "latticelog-rust" ? "rust-local" : "python-local",
+                SourceKind.DotNet => "dotnet-store",
+                _ => "migrated",
+            },
             ["path"] = s.Path,
         };
         if (s.Service is not null) o["service"] = s.Service;

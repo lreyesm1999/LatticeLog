@@ -5,14 +5,14 @@
 
 ## Capture: SDKs
 
-| | .NET | Python | PHP |
-|---|---|---|---|
-| Typed events | Source-generated (`[LatticeEvent]`, diagnostics LL0001–LL0007) | Typed values (`int` → Int64/UInt64, `Decimal`, `UUID`, `datetime`…) | Typed values |
-| Integration | `ILogger` bridge, `Activity` / trace context | `logging.Handler` | Scopes and operations |
-| Storage | Writes `.llog` directly | Durable JSONL spool | Spool shared across PHP processes (`flock`) |
-| Shipping | `Forwarder` (binary body, falls back to JSONL) | Background thread, backoff + jitter | At request end, after `fastcgi_finish_request` |
+| | .NET | Python | Rust | PHP |
+|---|---|---|---|---|
+| Typed events | Source-generated (`[LatticeEvent]`, diagnostics LL0001–LL0007) | Typed values (`int` → Int64/UInt64, `Decimal`, `UUID`, `datetime`…) | Typed values (`Value` trait: integers, floats, `Bytes`, `Timestamp`, `Uuid`, `Decimal`, maps, raw UTF-16) | Typed values |
+| Integration | `ILogger` bridge, `Activity` / trace context | `logging.Handler`, structlog | `tracing` layer (spans → contexts), `log` bridge, own builder and macros | Scopes and operations |
+| Storage | Writes `.llog` directly | Local folder or durable JSONL spool | Local folder (writer thread, batched, allocation-free hot path) | Spool shared across PHP processes (`flock`) |
+| Shipping | `Forwarder` (binary body, falls back to JSONL) | Background thread, backoff + jitter | Background thread ships the folder's own lines byte for byte | At request end, after `fastcgi_finish_request` |
 
-See the [Python](../sdks/python) and [PHP](../sdks/php) READMEs for setup.
+See the [Python](../sdks/python), [Rust](../sdks/rust) and [PHP](../sdks/php) READMEs for setup.
 
 
 ## Storage: the `.llog` format
@@ -89,7 +89,7 @@ src/
   LatticeLog.Service              per-user background service, MCP shim, registration (task/systemd/launchd)
   LatticeLog.OpenTelemetry        OTLP/JSON and importers
   LatticeLog.Extensions.Logging   Microsoft.Extensions.Logging bridge
-sdks/python  sdks/php            SDKs for other languages
+sdks/python  sdks/rust  sdks/php SDKs for other languages
 specs/                           normative specs (format, ingest protocol, server API, query language)
 examples/dotnet-console          demo workload with an injected incident
 examples/developer-flow          structlog service + migrated legacy log, asked over MCP by name

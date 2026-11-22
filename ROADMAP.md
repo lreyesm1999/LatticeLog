@@ -4,7 +4,7 @@
 
 | Now | Next | Later | Out of scope |
 |---|---|---|---|
-| Local engine, CLI, MCP server, per-user service, web console, Python/PHP SDKs: usable, alpha. Closing Local v1.0 (P14) | Measurements on stable hardware and Linux; server over a real network; encryption at rest and an external pentest; runbook drills; external evaluation of the AI-facing evidence | Cluster, object-storage tiers, Java/Go/Node SDKs, a fuller console with user testing, published packages and a stable release | Running AI models inside LatticeLog |
+| Local engine, CLI, MCP server, per-user service, web console, Python/Rust/PHP SDKs: usable, alpha. Closing Local v1.0 (P14) | Measurements on stable hardware and Linux; server over a real network; encryption at rest and an external pentest; runbook drills; external evaluation of the AI-facing evidence | Cluster, object-storage tiers, Java/Go/Node SDKs, a fuller console with user testing, published packages and a stable release | Running AI models inside LatticeLog |
 
 What blocks a stable 1.0 is listed per phase below: mainly P14 (signing, N-1 compatibility, a release candidate) and
 measurements on other hardware. Suggestions and votes: open an issue.
@@ -38,7 +38,7 @@ Statuses: PASS · CONDITIONAL (gate met with explicit open items) · NOT PASSED 
 | P18 | Security, privacy and auditability | NOT PASSED (audit, erasure, brake, headers; no encryption at rest or pentest) |
 | P19 | Horizontal scalability and replication | NOT PASSED (async replica + manual failover; no cluster) |
 | P20 | Tiered storage and object storage | NOT STARTED |
-| P21 | SDKs in other languages | CONDITIONAL (Python and PHP; Java/Go/Node out of scope for now) |
+| P21 | SDKs in other languages | CONDITIONAL (Python, Rust and PHP; Java/Go/Node out of scope for now) |
 | P22 | Read-only MCP adapter | CONDITIONAL |
 | P23 | Web console | CONDITIONAL (minimal, secure console; no user testing or browser E2E) |
 | P24 | Operations, SRE, backup and DR | CONDITIONAL (metrics, verified backup, runbooks; no real drills) |

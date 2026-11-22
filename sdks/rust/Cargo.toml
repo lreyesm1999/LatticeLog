@@ -1,0 +1,57 @@
+[package]
+name = "latticelog"
+version = "0.1.0-alpha.1"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT"
+description = "LatticeLog SDK for Rust: typed, structured logs written straight into LatticeLog's format, optionally shipped to latticelog-server"
+repository = "https://github.com/lreyesm1999/LatticeLog"
+readme = "README.md"
+keywords = ["logging", "structured-logging", "tracing", "observability"]
+categories = ["development-tools::debugging"]
+
+[features]
+default = ["tracing", "log"]
+# tracing_subscriber::Layer that turns spans into contexts and events into records.
+tracing = ["dep:tracing-core", "dep:tracing-subscriber"]
+# log::Log bridge (with structured key-values).
+log = ["dep:log"]
+# Shipping to latticelog-server with ingest protocol v1 (plain HTTP).
+server = ["dep:ureq", "dep:flate2", "dep:crc32fast"]
+# HTTPS endpoints (rustls).
+tls = ["server", "ureq/rustls"]
+
+[dependencies]
+itoa = "1"
+ryu = "1"
+tracing-core = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", optional = true, default-features = false, features = ["registry", "std"] }
+log = { version = "0.4.21", optional = true, features = ["std", "kv"] }
+ureq = { version = "3", optional = true, default-features = false }
+flate2 = { version = "1", optional = true }
+crc32fast = { version = "1", optional = true }
+
+[dev-dependencies]
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std", "fmt", "json"] }
+tracing-appender = "0.2"
+serde_json = "1"
+log = { version = "0.4.21", features = ["std", "kv"] }
+flate2 = "1"
+crc32fast = "1"
+
+[[example]]
+name = "smoke"
+required-features = ["server"]
+
+[[example]]
+name = "bench"
+required-features = ["tracing"]
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+
+[profile.bench]
+codegen-units = 1
+lto = "thin"

@@ -17,3 +17,6 @@ __pycache__/
 
 # Public datasets downloaded locally (never committed, see research/dataset-manifest.yaml)
 research/data/
+
+# Rust SDK build output
+sdks/rust/target/
