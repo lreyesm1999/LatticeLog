@@ -6,6 +6,28 @@ Like Redis or Ollama: install one file per user, connect your AI tools once, and
 writes LatticeLog format into its folder can be asked about **by name**. No .NET, no administrator rights, nothing
 system-wide, and nothing listens beyond `127.0.0.1`.
 
+**Windows installer (MSI).** Releases after 0.1.0-alpha.7 include `latticelog-win-x64.msi`, a setup wizard like any
+other Windows program: welcome, license, a *Custom Setup* tree, install, finish. It installs for your user only, so it
+never asks for administrator rights.
+
+| Custom Setup entry | What it does | Default |
+|---|---|---|
+| LatticeLog | `latticelog.exe` and `llog` in `%LOCALAPPDATA%\Programs\LatticeLog` | always |
+| Background service | Task Scheduler task at logon (127.0.0.1 only), plus *LatticeLog Console* in the Start menu | on |
+| Add to PATH | your user `PATH` only | on |
+| AI tools (MCP): Claude Desktop, Claude Code, Cursor, VS Code | adds the `latticelog` MCP server to that tool's user config, after a backup | on for the tools found on this computer |
+
+The finish page offers to open the web console. Behind the wizard, the MSI runs the same `latticelog setup` described
+below, with your choices as options. Uninstall from *Settings → Apps → LatticeLog*: it runs
+`latticelog setup --uninstall --keep-files` and then removes the files. Your data folder is kept. To change your
+choices later, use `latticelog mcp install|uninstall` and `latticelog service install|uninstall`, or uninstall and
+run the MSI again.
+
+Silent install: `msiexec /i latticelog-win-x64.msi /qn` (the defaults above). Pick features with `ADDLOCAL`, for
+example `ADDLOCAL=Core,Service,Path,McpClaudeCode`. Add `/l*v install.log` for a log that includes setup's output. The
+MSI is not code-signed yet, so Windows SmartScreen may warn before it runs; check it against `SHA256SUMS` first, as
+below. To build it yourself: `pwsh scripts/build-msi.ps1 -Exe <latticelog.exe> -Version <version>`.
+
 **One-line installer.** It downloads the newest release for your platform (the newest pre-release while there is no
 stable one), refuses it unless its SHA-256 matches `SHA256SUMS`, and runs `latticelog setup`, which asks which MCP
 clients to configure.

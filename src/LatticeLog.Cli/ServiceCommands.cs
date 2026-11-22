@@ -471,7 +471,7 @@ public static class ServiceCommands
         if (dryRun)
         {
             Console.WriteLine("  stop the service, remove its registration, remove 'latticelog' from claude-desktop/claude-code/cursor/vscode user configs,");
-            Console.WriteLine($"  remove {installDir} from PATH, delete {Path.Combine(installDir, ExeName)}{(a.Has("remove-data") ? $", delete the data folder {dataDir}" : "")}.");
+            Console.WriteLine($"  remove {installDir} from PATH{(a.Has("keep-files") ? "" : $", delete {Path.Combine(installDir, ExeName)}")}{(a.Has("remove-data") ? $", delete the data folder {dataDir}" : "")}.");
             return ExitCodes.Ok;
         }
         Uninstall(new Args(["uninstall", .. configDir is null ? Array.Empty<string>() : ["--config-dir", configDir]]));
@@ -481,6 +481,22 @@ public static class ServiceCommands
             catch (CliException ex) { Console.Error.WriteLine($"{c}: {ex.Message}"); }
         }
         RemoveFromPath(installDir);
+        if (a.Has("keep-files"))
+        {
+            // The Windows installer (MSI) removes the files itself, after this command; deleting them here would race it.
+            Console.WriteLine($"Left the files in {installDir} in place (--keep-files).");
+        }
+        else DeleteInstalledFiles(installDir);
+        if (a.Has("remove-data"))
+        {
+            if (Directory.Exists(dataDir)) { Directory.Delete(dataDir, recursive: true); Console.WriteLine($"Deleted the data folder {dataDir} (indexes and migrated sources; your original logs were never inside it)."); }
+        }
+        else Console.WriteLine($"Kept the data folder {dataDir} and the config folder {ServicePaths.ResolveConfigDir(configDir)} (--remove-data deletes the data folder).");
+        return ExitCodes.Ok;
+    }
+
+    private static void DeleteInstalledFiles(string installDir)
+    {
         var oldCopies = Directory.Exists(installDir) ? Directory.EnumerateFiles(installDir, "*.old-*").Select(Path.GetFileName) : [];
         var files = new[] { ExeName, OperatingSystem.IsWindows() ? "latticelogw.exe" : null }.Concat(ShortAliasFiles).Concat(oldCopies)
             .Where(f => f is not null).Select(f => Path.Combine(installDir, f!)).Where(File.Exists).ToList();
@@ -503,12 +519,6 @@ public static class ServiceCommands
             }
             else Console.WriteLine($"Delete manually: {string.Join(", ", later)}");
         }
-        if (a.Has("remove-data"))
-        {
-            if (Directory.Exists(dataDir)) { Directory.Delete(dataDir, recursive: true); Console.WriteLine($"Deleted the data folder {dataDir} (indexes and migrated sources; your original logs were never inside it)."); }
-        }
-        else Console.WriteLine($"Kept the data folder {dataDir} and the config folder {ServicePaths.ResolveConfigDir(configDir)} (--remove-data deletes the data folder).");
-        return ExitCodes.Ok;
     }
 
     // ------------------------------------------------------------------ sources retention

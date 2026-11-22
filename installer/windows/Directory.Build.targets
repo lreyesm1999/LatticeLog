@@ -1,0 +1,2 @@
+<!-- Stops the repository's C# settings (../../Directory.Build.targets) from applying to the WiX project. -->
+<Project />

@@ -1,9 +1,13 @@
-# Renders the SVG sources in docs/assets to the PNG files GitHub and article sites need (GitHub's social preview
-# accepts PNG/JPG only). Uses a locally installed Edge or Chrome in headless mode; nothing is downloaded.
+# Renders the SVG sources in docs/assets to the image files other tools need: PNG for GitHub's social preview and
+# article sites, BMP for the Windows installer's pages (installer/windows/assets). Uses a locally installed Edge or
+# Chrome in headless mode; nothing is downloaded. Windows only for the BMP step (System.Drawing). The icon is not
+# rendered here: it is src/LatticeLog.Cli/latticelog.ico, used by the executable and the installer, and drawn onto
+# the installer pages.
 #   pwsh scripts/render-assets.ps1
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $assets = Join-Path $root 'docs/assets'
+$installerAssets = Join-Path $root 'installer/windows/assets'
 
 $browser = @(
     "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
@@ -12,23 +16,82 @@ $browser = @(
     '/usr/bin/google-chrome', '/usr/bin/chromium', '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
 if (-not $browser) { throw 'Edge or Chrome is needed to render the PNG files.' }
+$renderProfile = Join-Path ([IO.Path]::GetTempPath()) ("latticelog-render-profile-" + [Guid]::NewGuid().ToString('N'))
 
-# svg file → png file, at the SVG's own size
-$jobs = @(
-    @{ Svg = 'social-preview.svg'; Png = 'social-preview.png'; W = 1280; H = 640 },
-    @{ Svg = 'logo.svg';           Png = 'logo-512.png';       W = 512;  H = 512 }
-)
-foreach ($j in $jobs) {
-    $svg = Join-Path $assets $j.Svg
-    $png = Join-Path $assets $j.Png
+# Renders one SVG to a PNG of the given size. -Transparent keeps the corners outside the SVG transparent (for icons).
+function Export-Svg([string]$Svg, [string]$Png, [int]$W, [int]$H, [switch]$Transparent) {
     # Wrap the SVG in a page with no margins so the screenshot is exactly the image.
     $page = Join-Path ([IO.Path]::GetTempPath()) ("latticelog-render-" + [Guid]::NewGuid().ToString('N') + '.html')
-    $uri = ([Uri]$svg).AbsoluteUri
-    Set-Content -Path $page -Encoding utf8 -Value "<!doctype html><html><body style='margin:0;background:#121722'><img src='$uri' width='$($j.W)' height='$($j.H)' style='display:block'></body></html>"
+    $uri = ([Uri]$Svg).AbsoluteUri
+    $bg = if ($Transparent) { 'transparent' } else { '#121722' }
+    Set-Content -Path $page -Encoding utf8 -Value "<!doctype html><html><body style='margin:0;background:$bg'><img src='$uri' width='$W' height='$H' style='display:block'></body></html>"
     try {
-        & $browser --headless=new --disable-gpu --hide-scrollbars --force-device-scale-factor=1 `
-            "--window-size=$($j.W),$($j.H)" "--screenshot=$png" ([Uri]$page).AbsoluteUri 2>$null | Out-Null
-        if (-not (Test-Path $png)) { throw "rendering $($j.Svg) failed" }
-        Write-Host "$($j.Svg) -> $($j.Png)"
+        $extra = if ($Transparent) { @('--default-background-color=00000000') } else { @() }
+        # A profile of its own, so a browser that is already open does not take the request. msedge.exe can return before
+        # the screenshot is written; Start-Process -Wait waits for the processes it started too.
+        Remove-Item $Png -ErrorAction SilentlyContinue
+        $argv = @('--headless=new', '--disable-gpu', '--hide-scrollbars', '--force-device-scale-factor=1', "--user-data-dir=`"$renderProfile`"") + $extra +
+            @("--window-size=$W,$H", "--screenshot=`"$Png`"", ([Uri]$page).AbsoluteUri)
+        Start-Process -FilePath $browser -ArgumentList $argv -Wait -WindowStyle Hidden
+        if (-not (Test-Path $Png)) { throw "rendering $Svg failed" }
     } finally { Remove-Item $page -ErrorAction SilentlyContinue }
 }
+
+if (-not $IsWindows -and $PSVersionTable.PSEdition -eq 'Core') { Write-Host 'Skipping the images with the icon (Windows only).'; return }
+Add-Type -AssemblyName System.Drawing
+New-Item -ItemType Directory -Force $installerAssets | Out-Null
+$tmp = Join-Path ([IO.Path]::GetTempPath()) ("latticelog-assets-" + [Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory $tmp | Out-Null
+try {
+    # The icon of the executable (its 256 px PNG entry) is the logo everywhere below.
+    $ico = [IO.File]::ReadAllBytes((Join-Path $root 'src/LatticeLog.Cli/latticelog.ico'))
+    $iconPng = $null
+    for ($i = 0; $i -lt [BitConverter]::ToUInt16($ico, 4); $i++) {
+        $e = 6 + 16 * $i
+        if ($ico[$e] -eq 0 -and $ico[$e + 1] -eq 0) {   # 0 means 256
+            $len = [BitConverter]::ToUInt32($ico, $e + 8); $off = [BitConverter]::ToUInt32($ico, $e + 12)
+            $iconPng = Join-Path $tmp 'icon-256.png'
+            [IO.File]::WriteAllBytes($iconPng, $ico[$off..($off + $len - 1)])
+        }
+    }
+    if (-not $iconPng) { throw 'latticelog.ico has no 256 px PNG image.' }
+    $icon = [Drawing.Image]::FromFile($iconPng)
+
+    # The logo as files of its own: the 256 px image (the largest in the icon) and an SVG that embeds it, for places
+    # that want an SVG (a self-contained data: image, so it also works where external files are blocked).
+    Copy-Item $iconPng (Join-Path $assets 'logo-256.png') -Force
+    $b64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($iconPng))
+    $svg = "<svg xmlns=`"http://www.w3.org/2000/svg`" viewBox=`"0 0 256 256`" width=`"256`" height=`"256`" role=`"img`" aria-labelledby=`"t`">`n" +
+           "  <title id=`"t`">LatticeLog</title>`n" +
+           "  <!-- Generated by scripts/render-assets.ps1 from src/LatticeLog.Cli/latticelog.ico (256 px); edit the icon, not this file. -->`n" +
+           "  <image width=`"256`" height=`"256`" href=`"data:image/png;base64,$b64`"/>`n" +
+           "</svg>`n"
+    [IO.File]::WriteAllText((Join-Path $assets 'logo.svg'), $svg, [Text.UTF8Encoding]::new($false))
+    Write-Host 'latticelog.ico -> docs/assets/logo-256.png, docs/assets/logo.svg'
+
+    # Installer pages: 24-bit BMP, the only format Windows Installer dialogs show. README banner: PNG with transparent
+    # rounded corners.
+    $composed = @(
+        @{ Svg = 'installer-dialog.svg'; Out = Join-Path $installerAssets 'dialog.bmp'; W = 493;  H = 312; X = 26;  Y = 40; S = 112 },
+        @{ Svg = 'installer-banner.svg'; Out = Join-Path $installerAssets 'banner.bmp'; W = 493;  H = 58;  X = 439; Y = 6;  S = 46 },
+        @{ Svg = 'latticelog-hero.svg';  Out = Join-Path $assets 'latticelog-hero.png'; W = 1280; H = 400; X = 904; Y = 72; S = 256; Png = $true },
+        # GitHub's social preview takes PNG or JPG; it has no transparent corners, so -Transparent is harmless.
+        @{ Svg = 'social-preview.svg';   Out = Join-Path $assets 'social-preview.png';  W = 1280; H = 640; X = 952; Y = 192; S = 256; Png = $true }
+    )
+    foreach ($j in $composed) {
+        $png = Join-Path $tmp ([IO.Path]::GetFileName($j.Out) + '.png')
+        Export-Svg (Join-Path $assets $j.Svg) $png $j.W $j.H -Transparent:([bool]$j.Png)
+        $src = [Drawing.Image]::FromFile($png)
+        $format = if ($j.Png) { [Drawing.Imaging.PixelFormat]::Format32bppArgb } else { [Drawing.Imaging.PixelFormat]::Format24bppRgb }
+        $bmp = New-Object Drawing.Bitmap $j.W, $j.H, $format
+        $g = [Drawing.Graphics]::FromImage($bmp)
+        $g.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+        $g.PixelOffsetMode = [Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+        $g.DrawImage($src, 0, 0, $j.W, $j.H)
+        $g.DrawImage($icon, $j.X, $j.Y, $j.S, $j.S)
+        $g.Dispose(); $src.Dispose()
+        $bmp.Save($j.Out, $(if ($j.Png) { [Drawing.Imaging.ImageFormat]::Png } else { [Drawing.Imaging.ImageFormat]::Bmp })); $bmp.Dispose()
+        Write-Host "$($j.Svg) -> $([IO.Path]::GetRelativePath($root, $j.Out))"
+    }
+    $icon.Dispose()
+} finally { Remove-Item $tmp -Recurse -ErrorAction SilentlyContinue }

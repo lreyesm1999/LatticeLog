@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/latticelog-hero.svg" alt="LatticeLog: typed, local-first logs in an open binary format" width="100%">
+<img src="docs/assets/latticelog-hero.png" alt="LatticeLog: typed, local-first logs in an open binary format" width="100%">
 
 <h1>LatticeLog</h1>
 
@@ -10,7 +10,7 @@ and hand to people, scripts or coding agents (over MCP) as evidence that points 
 [![CI](https://github.com/lreyesm1999/LatticeLog/actions/workflows/ci.yml/badge.svg)](https://github.com/lreyesm1999/LatticeLog/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/lreyesm1999/LatticeLog?include_prereleases&sort=semver&label=release)](https://github.com/lreyesm1999/LatticeLog/releases)
 [![.NET 10](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)](global.json)
-[![Status: alpha](https://img.shields.io/badge/status-alpha-F4B740)](#project-status)
+[![Status: alpha](https://img.shields.io/badge/status-alpha-A855F7)](#project-status)
 [![License: MIT](https://img.shields.io/github/license/lreyesm1999/LatticeLog)](LICENSE)
 
 <p>
@@ -98,9 +98,14 @@ latticelog trace  demo-store --trace-id <id printed by step 1> --format markdown
 ```
 
 The [tutorial](docs/guides/getting-started.md) walks through the same incident step by step, then connects your
-coding agent. To install the CLI once as a single executable (no .NET, no administrator rights), run one line. It
-downloads the newest [release](https://github.com/lreyesm1999/LatticeLog/releases) (Windows x64, Linux x64), checks
-it against `SHA256SUMS` and runs `latticelog setup`:
+coding agent. To install the CLI once as a single executable (no .NET, no administrator rights):
+
+- **Windows, with a setup wizard:** download `latticelog-win-x64.msi` from the
+  [releases](https://github.com/lreyesm1999/LatticeLog/releases) and run it. You pick the background service, PATH
+  and which AI tools to connect; it appears in *Settings → Apps* for uninstalling. Releases after 0.1.0-alpha.7
+  include it.
+- **Or one line:** it downloads the newest release (Windows x64, Linux x64), checks it against `SHA256SUMS` and runs
+  `latticelog setup`:
 
 ```powershell
 irm https://raw.githubusercontent.com/lreyesm1999/LatticeLog/main/scripts/install.ps1 | iex   # Windows

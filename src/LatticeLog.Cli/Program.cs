@@ -56,7 +56,7 @@ public sealed class Args
     }
 
     private static readonly HashSet<string> Flags = ["follow", "no-index", "force", "stdout", "pretty", "help", "preserve-raw", "no-redact", "desc", "explain", "preview", "yes", "dry-run", "no-refresh",
-        "no-service", "no-start", "no-project", "no-path", "open", "no-open", "verbose", "uninstall", "remove-data", "clear",
+        "no-service", "no-start", "no-project", "no-path", "open", "no-open", "verbose", "uninstall", "remove-data", "keep-files", "clear",
         "check", "prerelease"];
 
     /// <summary>One-letter forms of common flags: <c>llog ui -o</c>, <c>-h</c>, <c>-y</c>.</summary>
@@ -117,7 +117,7 @@ public static class Program
         ["ui"] = "ui [-o] [--no-open]                 Open the web console in your browser (starts the service if needed). Short: llog ui.",
         ["service"] = "service status|start|stop|restart|install|uninstall|ui [--open]|run [--port N] [--verbose]   Per-user background service on 127.0.0.1.",
         ["update"] = "update [--check] [--version X] [--prerelease] [--force] [-y]   Install the newest GitHub release (checksum verified); keeps data, config and MCP entries.",
-        ["setup"] = "setup [--clients a,b|none] [--install-dir DIR] [--no-service] [--no-path] [--method task|run-key] | setup --uninstall [--remove-data]",
+        ["setup"] = "setup [--clients a,b|none] [--install-dir DIR] [--no-service] [--no-path] [--method task|run-key] | setup --uninstall [--remove-data] [--keep-files]",
     };
 
     public static int Main(string[] argv)

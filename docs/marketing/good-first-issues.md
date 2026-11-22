@@ -17,11 +17,12 @@ says everything in the repository is in English.
 
 ### 2. A favicon for the web console  [good first issue, area: console]
 
-The console (`src/LatticeLog.Server/ui/index.html`) has no icon, so browser tabs show a generic one. The logo is in
-`docs/assets/logo.svg`. The console's CSP allows `img-src 'self' data:`, so an inline `data:` SVG works without a new
-route.
+The console (`src/LatticeLog.Server/ui/index.html`) has no icon, so browser tabs show a generic one. The logo is
+`src/LatticeLog.Cli/latticelog.ico`, which holds PNG images from 16 to 256 px. The console's CSP allows
+`img-src 'self' data:`, so an inline `data:` image works without a new route.
 
-- **Do:** add `<link rel="icon" href="data:image/svg+xml,...">` with the (URL-encoded) logo.
+- **Do:** add `<link rel="icon" href="data:image/png;base64,...">` with the icon's 32 px image (about 3 KB; the
+  256 px `docs/assets/logo.svg` would add over 100 KB to every page).
 - **Verify:** `llog ui` (or `latticelog service run` with `LATTICELOG_CONFIG_DIR`/`LATTICELOG_DATA_DIR` set to scratch
   folders, then `latticelog ui`): the tab shows the icon and the browser console reports no CSP violation.
 

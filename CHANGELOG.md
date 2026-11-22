@@ -17,6 +17,13 @@
   - logo, GitHub social preview image and real console screenshots in `docs/assets/`
     (`scripts/render-assets.ps1`, `scripts/screenshots/`);
   - `SUPPORT.md`, a Question issue template, and a first-contribution path in `CONTRIBUTING.md`.
+- **Windows installer (MSI)** with a setup wizard: welcome, license, a *Custom Setup* tree (background service, PATH,
+  and the AI tools to connect: Claude Desktop, Claude Code, Cursor, VS Code, preselected when found), install, and a
+  finish page that opens the console. Per-user, no administrator rights; it appears in *Settings → Apps*. It runs
+  `latticelog setup` with the chosen options and `setup --uninstall` when removed. Built with WiX 5
+  (`installer/windows`, `scripts/build-msi.ps1`). Every release now attaches `latticelog-win-x64.msi`, after CI has
+  installed and uninstalled it on a clean runner (`scripts/test-msi.ps1`, also run by the new `installer` workflow on
+  pull requests). New `setup --uninstall --keep-files`, which leaves the files for the MSI to remove.
 - **One-line installer**: `irm .../scripts/install.ps1 | iex` (Windows) and `curl -fsSL .../scripts/install.sh | sh`
   (Linux x64) download the newest release, refuse it unless it matches `SHA256SUMS`, and run `latticelog setup`. From a
   checkout the scripts still prefer a local build; new `-Download`/`--download`, `-Version`/`LATTICELOG_VERSION` and

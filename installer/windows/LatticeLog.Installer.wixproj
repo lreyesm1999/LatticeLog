@@ -1,0 +1,18 @@
+<!-- Windows installer (MSI). Not part of LatticeLog.sln: it needs Windows and a Native AOT latticelog.exe.
+     Build it with: pwsh scripts/build-msi.ps1 -Exe <latticelog.exe> -Version <0.1.0-alpha.7>
+     WiX 5 is used on purpose: WiX 6 and later ask revenue-generating users for a maintenance fee. -->
+<Project Sdk="WixToolset.Sdk/5.0.2">
+  <PropertyGroup>
+    <OutputName>latticelog-win-x64</OutputName>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <ProductVersion Condition="'$(ProductVersion)' == ''">0.0.0.0</ProductVersion>
+    <!-- ICE61: same-version upgrades are intended (pre-releases differ only in the fourth field).
+         ICE91: the package is per-user only, so the per-user folder is the intended place. -->
+    <SuppressIces>ICE61;ICE91</SuppressIces>
+    <DefineConstants>ProductVersion=$(ProductVersion);ExePath=$(ExePath);LicenseRtf=$(LicenseRtf)</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="WixToolset.UI.wixext" Version="5.0.2" />
+    <PackageReference Include="WixToolset.Util.wixext" Version="5.0.2" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,192 @@
+<!--
+  LatticeLog for Windows: a per-user MSI with the usual setup wizard (welcome, license, feature tree, install, finish).
+
+  It installs one file, latticelog.exe, in %LOCALAPPDATA%\Programs\LatticeLog (the same place `latticelog setup` and
+  `llog update` use), then runs `latticelog setup` with the features the user picked. setup stays the only code that
+  registers the service, edits PATH and writes MCP client configs; this package only chooses its options. Uninstalling
+  (Settings → Apps, or msiexec /x) runs setup's uninstall with keep-files (see LL_Uninstall) and then removes the files.
+
+  No administrator rights: Scope="perUser". Built by scripts/build-msi.ps1, which passes ProductVersion, ExePath and
+  LicenseRtf.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <Package Name="LatticeLog"
+           Manufacturer="LatticeLog Contributors"
+           Version="$(ProductVersion)"
+           UpgradeCode="72D33A32-0759-4957-A3BB-6D4FF96BCD7C"
+           Scope="perUser"
+           Language="1033"
+           Compressed="yes">
+
+    <!-- Pre-releases share the first three version fields (0.1.0.7 is 0.1.0-alpha.7), which is all Windows Installer
+         compares, so same-version upgrades must be allowed. The old version is removed before the new one is copied. -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes" Schedule="afterInstallInitialize"
+                  DowngradeErrorMessage="A newer version of LatticeLog is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <!-- The executable's own icon, so Settings → Apps, the Start menu and Explorer all show the same one. -->
+    <Icon Id="LatticeLogIcon" SourceFile="..\..\src\LatticeLog.Cli\latticelog.ico" />
+    <Property Id="ARPPRODUCTICON" Value="LatticeLogIcon" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/lreyesm1999/LatticeLog" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/lreyesm1999/LatticeLog/blob/main/SUPPORT.md" />
+    <!-- To change the choices later, run the installer again or use `latticelog mcp install|uninstall` and
+         `latticelog service install|uninstall`. Repair is off because `llog update` may have replaced the executable. -->
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+
+    <!-- ===== Which AI tools are on this computer: their entries start selected when their folder exists. ===== -->
+    <Property Id="FOUND_CLAUDE_DESKTOP">
+      <DirectorySearch Id="SearchClaudeDesktop" Path="[AppDataFolder]Claude" Depth="0" />
+    </Property>
+    <Property Id="FOUND_CLAUDE_CODE">
+      <DirectorySearch Id="SearchClaudeCode" Path="[%USERPROFILE]\.claude" Depth="0" />
+    </Property>
+    <Property Id="FOUND_CURSOR">
+      <DirectorySearch Id="SearchCursor" Path="[%USERPROFILE]\.cursor" Depth="0" />
+    </Property>
+    <Property Id="FOUND_VSCODE">
+      <DirectorySearch Id="SearchVsCode" Path="[AppDataFolder]Code\User" Depth="0" />
+    </Property>
+    <!-- A latticelog.exe that `latticelog setup` installed earlier, outside this package. -->
+    <Property Id="EXISTING_EXE">
+      <DirectorySearch Id="SearchExistingDir" Path="[LocalAppDataFolder]Programs\LatticeLog" Depth="0">
+        <FileSearch Id="SearchExistingExe" Name="latticelog.exe" />
+      </DirectorySearch>
+    </Property>
+
+    <!-- ===== Files ===== -->
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsDir" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="LatticeLog" />
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+
+    <Component Id="CoreFiles" Directory="INSTALLFOLDER" Guid="9E3C1F44-6B0A-4C59-9C2B-3F1C0E7A5D21">
+      <File Id="LatticeLogExe" Name="latticelog.exe" Source="$(ExePath)" />
+      <!-- Every release reports file version 0.1.0.0, so an executable left by `latticelog setup` would be kept as
+           "same version": delete it first so this package's copy is the one installed. -->
+      <RemoveFile Id="ReplaceExistingExe" Name="latticelog.exe" On="install" />
+      <!-- Files that `latticelog setup` creates next to the executable. -->
+      <RemoveFile Id="RemoveWindowless" Name="latticelogw.exe" On="uninstall" />
+      <RemoveFile Id="RemoveShortCmd" Name="llog.cmd" On="uninstall" />
+      <RemoveFile Id="RemoveShortSh" Name="llog" On="uninstall" />
+      <RemoveFile Id="RemoveOldCopies" Name="*.old-*" On="uninstall" />
+      <RemoveFolder Id="RemoveInstallFolder" On="uninstall" />
+      <RemoveFolder Id="RemoveProgramsDir" Directory="ProgramsDir" On="uninstall" />
+      <RegistryValue Root="HKCU" Key="Software\LatticeLog\Installer" Name="InstallDir" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+    </Component>
+
+    <!-- ===== Feature tree (what the Custom Setup page shows) ===== -->
+    <Feature Id="Core" Title="LatticeLog" Level="1" AllowAbsent="no" Display="expand"
+             Description="The latticelog command and its short form llog, in %LOCALAPPDATA%\Programs\LatticeLog. Required.">
+      <ComponentRef Id="CoreFiles" />
+
+      <Feature Id="Service" Title="Background service" Level="1"
+               Description="Starts LatticeLog for your user at logon (Task Scheduler, 127.0.0.1 only). It indexes your log folders and serves every AI tool from one process. Adds LatticeLog Console to the Start menu.">
+        <Component Id="ServiceFeature" Directory="INSTALLFOLDER" Guid="C6B2E0A1-3F7D-4C1E-8A55-1D0B9E2F6A43">
+          <RegistryValue Root="HKCU" Key="Software\LatticeLog\Installer" Name="Service" Type="integer" Value="1" KeyPath="yes" />
+          <Shortcut Id="ConsoleShortcut" Directory="ProgramMenuFolder" Name="LatticeLog Console"
+                    Description="Open the LatticeLog web console in your browser"
+                    Target="[INSTALLFOLDER]latticelogw.exe" Arguments="ui" WorkingDirectory="INSTALLFOLDER" Icon="LatticeLogIcon" />
+        </Component>
+      </Feature>
+
+      <Feature Id="Path" Title="Add to PATH" Level="1"
+               Description="Lets you type latticelog and llog in any new terminal. Changes your user PATH only.">
+        <Component Id="PathFeature" Directory="INSTALLFOLDER" Guid="0F8D4B6E-2A19-4E7C-B3D0-5C7A1E9F2B84">
+          <RegistryValue Root="HKCU" Key="Software\LatticeLog\Installer" Name="Path" Type="integer" Value="1" KeyPath="yes" />
+        </Component>
+      </Feature>
+
+      <Feature Id="Mcp" Title="AI tools (MCP)" Level="1" Display="expand"
+               Description="Lets these tools read your logs through LatticeLog's read-only MCP server. A tool starts selected when it is found on this computer. Config files are backed up before they are changed.">
+        <Component Id="McpFeature" Directory="INSTALLFOLDER" Guid="7A1E5C93-8B2D-4F60-9E14-2C6D0B8A3F57">
+          <RegistryValue Root="HKCU" Key="Software\LatticeLog\Installer" Name="Mcp" Type="integer" Value="1" KeyPath="yes" />
+        </Component>
+        <Feature Id="McpClaudeDesktop" Title="Claude Desktop" Level="2" Description="Adds LatticeLog to claude_desktop_config.json.">
+          <Level Value="1" Condition="FOUND_CLAUDE_DESKTOP" />
+          <Component Id="McpClaudeDesktopFeature" Directory="INSTALLFOLDER" Guid="B4D7F2A8-5C31-4E9B-A6F0-8E2C1D7B9A35">
+            <RegistryValue Root="HKCU" Key="Software\LatticeLog\Installer\Mcp" Name="claude-desktop" Type="integer" Value="1" KeyPath="yes" />
+          </Component>
+        </Feature>
+        <Feature Id="McpClaudeCode" Title="Claude Code" Level="2" Description="Adds LatticeLog to your user-wide Claude Code config (~/.claude.json).">
+          <Level Value="1" Condition="FOUND_CLAUDE_CODE" />
+          <Component Id="McpClaudeCodeFeature" Directory="INSTALLFOLDER" Guid="E1A9C6B3-7D52-4F08-B2E4-6A3F9C1D8E70">
+            <RegistryValue Root="HKCU" Key="Software\LatticeLog\Installer\Mcp" Name="claude-code" Type="integer" Value="1" KeyPath="yes" />
+          </Component>
+        </Feature>
+        <Feature Id="McpCursor" Title="Cursor" Level="2" Description="Adds LatticeLog to ~/.cursor/mcp.json.">
+          <Level Value="1" Condition="FOUND_CURSOR" />
+          <Component Id="McpCursorFeature" Directory="INSTALLFOLDER" Guid="3C8B1E7D-9A46-4D2F-8C05-B7E2A4F6D193">
+            <RegistryValue Root="HKCU" Key="Software\LatticeLog\Installer\Mcp" Name="cursor" Type="integer" Value="1" KeyPath="yes" />
+          </Component>
+        </Feature>
+        <Feature Id="McpVsCode" Title="VS Code" Level="2" Description="Adds LatticeLog to your VS Code user mcp.json.">
+          <Level Value="1" Condition="FOUND_VSCODE" />
+          <Component Id="McpVsCodeFeature" Directory="INSTALLFOLDER" Guid="9F2D6A41-B8E3-4C7A-9D10-5E8B3C2F7A46">
+            <RegistryValue Root="HKCU" Key="Software\LatticeLog\Installer\Mcp" Name="vscode" Type="integer" Value="1" KeyPath="yes" />
+          </Component>
+        </Feature>
+      </Feature>
+    </Feature>
+
+    <!-- ===== Running `latticelog setup` =====
+         A feature counts as chosen when it is being installed (&F=3) or is installed and stays (!F=3 and &F is not 2). -->
+    <SetProperty Id="LL_CLIENT_CD" Value="claude-desktop," After="CostFinalize" Sequence="execute"
+                 Condition="&amp;McpClaudeDesktop=3 OR (!McpClaudeDesktop=3 AND &amp;McpClaudeDesktop&lt;&gt;2)" />
+    <SetProperty Id="LL_CLIENT_CC" Value="claude-code," After="CostFinalize" Sequence="execute"
+                 Condition="&amp;McpClaudeCode=3 OR (!McpClaudeCode=3 AND &amp;McpClaudeCode&lt;&gt;2)" />
+    <SetProperty Id="LL_CLIENT_CU" Value="cursor," After="CostFinalize" Sequence="execute"
+                 Condition="&amp;McpCursor=3 OR (!McpCursor=3 AND &amp;McpCursor&lt;&gt;2)" />
+    <SetProperty Id="LL_CLIENT_VS" Value="vscode," After="CostFinalize" Sequence="execute"
+                 Condition="&amp;McpVsCode=3 OR (!McpVsCode=3 AND &amp;McpVsCode&lt;&gt;2)" />
+    <SetProperty Id="LL_NOSERVICE" Value="--no-service" After="CostFinalize" Sequence="execute"
+                 Condition="NOT (&amp;Service=3 OR (!Service=3 AND &amp;Service&lt;&gt;2))" />
+    <SetProperty Id="LL_NOPATH" Value="--no-path" After="CostFinalize" Sequence="execute"
+                 Condition="NOT (&amp;Path=3 OR (!Path=3 AND &amp;Path&lt;&gt;2))" />
+
+    <!-- Deferred custom actions read their command line from the property named after them. WixQuietExec runs it
+         without a console window and copies its output into the installer log (msiexec /l*v). -->
+    <SetProperty Id="LL_StopExisting" Before="LL_StopExisting" Sequence="execute"
+                 Value="&quot;[EXISTING_EXE]&quot; service stop" />
+    <CustomAction Id="LL_StopExisting" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec64"
+                  Execute="deferred" Return="ignore" Impersonate="yes" />
+
+    <SetProperty Id="LL_Setup" Before="LL_Setup" Sequence="execute"
+                 Value="&quot;[#LatticeLogExe]&quot; setup --yes --clients &quot;[LL_CLIENT_CD][LL_CLIENT_CC][LL_CLIENT_CU][LL_CLIENT_VS]&quot; [LL_NOSERVICE] [LL_NOPATH]" />
+    <CustomAction Id="LL_Setup" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec64"
+                  Execute="deferred" Return="check" Impersonate="yes" />
+
+    <SetProperty Id="LL_Uninstall" Before="LL_Uninstall" Sequence="execute"
+                 Value="&quot;[#LatticeLogExe]&quot; setup --uninstall --keep-files" />
+    <CustomAction Id="LL_Uninstall" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec64"
+                  Execute="deferred" Return="ignore" Impersonate="yes" />
+
+    <InstallExecuteSequence>
+      <!-- A service started from an executable installed earlier holds it open: stop it before the file is replaced. -->
+      <Custom Action="LL_StopExisting" Before="RemoveFiles" Condition="EXISTING_EXE AND NOT REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="LL_Uninstall" Before="RemoveFiles" Condition="REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="LL_Setup" After="InstallFiles" Condition="NOT REMOVE~=&quot;ALL&quot;" />
+    </InstallExecuteSequence>
+
+    <!-- ===== Wizard ===== -->
+    <WixVariable Id="WixUILicenseRtf" Value="$(LicenseRtf)" />
+    <WixVariable Id="WixUIBannerBmp" Value="assets\banner.bmp" />
+    <WixVariable Id="WixUIDialogBmp" Value="assets\dialog.bmp" />
+
+    <!-- Finish page: "Open the LatticeLog console" (checked). Runs `latticelog ui`, which starts the service if needed. -->
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Open the LatticeLog console in my browser" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <SetProperty Id="WixQuietExec64CmdLine" Value="&quot;[#LatticeLogExe]&quot; ui" After="CostFinalize" Sequence="ui" />
+    <CustomAction Id="LL_OpenConsole" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec64" Execute="immediate" Return="ignore" Impersonate="yes" />
+
+    <UI>
+      <ui:WixUI Id="WixUI_FeatureTree" />
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LL_OpenConsole"
+               Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
+    </UI>
+  </Package>
+</Wix>

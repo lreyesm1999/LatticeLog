@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 493 58" width="493" height="58">
+  <!-- Windows installer: top banner of the inner pages (WixUIBannerBmp, 493×58). The page title is written over the
+       left part, so the icon sits at the right edge: scripts/render-assets.ps1 draws src/LatticeLog.Cli/latticelog.ico
+       (46 px) at x=439, y=6 on top of this and saves installer/windows/assets/banner.bmp. -->
+  <rect width="493" height="58" fill="#FFFFFF"/>
+</svg>

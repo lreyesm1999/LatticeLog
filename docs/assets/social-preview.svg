@@ -1,71 +1,48 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640" role="img" aria-labelledby="t d">
   <title id="t">LatticeLog</title>
   <desc id="d">LatticeLog: typed, local-first logs for .NET in an open binary format, with indexed queries and evidence for coding agents over MCP.</desc>
-  <!-- GitHub social preview (Settings → General → Social preview). Export: scripts/render-assets.ps1 → social-preview.png -->
+  <!-- GitHub social preview (Settings → General → Social preview). The logo is not in this file:
+       scripts/render-assets.ps1 draws src/LatticeLog.Cli/latticelog.ico (256 px) at x=952, y=192 on top and saves
+       social-preview.png, the file to upload. -->
   <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0D1226"/>
+      <stop offset="1" stop-color="#171C3D"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#22D3EE"/>
+      <stop offset="1" stop-color="#A855F7"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#7C3AED" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#7C3AED" stop-opacity="0"/>
+    </radialGradient>
     <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
-      <path d="M32 0H0V32" fill="none" stroke="#232C3D" stroke-width="1"/>
+      <path d="M32 0H0V32" fill="none" stroke="#232B52" stroke-width="1"/>
     </pattern>
   </defs>
-  <rect width="1280" height="640" fill="#121722"/>
-  <rect width="1280" height="640" fill="url(#grid)"/>
-
-  <!-- mark -->
-  <g transform="translate(80 84) scale(1.25)">
-    <rect width="64" height="64" rx="14" fill="#1B2433"/>
-    <g fill="#1E2738" stroke="#3A4762" stroke-width="1.5">
-      <rect x="9" y="9" width="13" height="13" rx="3"/><rect x="25.5" y="9" width="13" height="13" rx="3"/>
-      <rect x="42" y="9" width="13" height="13" rx="3"/><rect x="9" y="25.5" width="13" height="13" rx="3"/>
-      <rect x="42" y="25.5" width="13" height="13" rx="3"/><rect x="9" y="42" width="13" height="13" rx="3"/>
-      <rect x="25.5" y="42" width="13" height="13" rx="3"/>
-    </g>
-    <g fill="#F4B740"><rect x="25.5" y="25.5" width="13" height="13" rx="3"/><rect x="42" y="42" width="13" height="13" rx="3"/></g>
-    <path d="M32 38.5 V40.25 H48.5 V42" fill="none" stroke="#F4B740" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-  </g>
+  <rect width="1280" height="640" fill="url(#bg)"/>
+  <rect width="1280" height="640" fill="url(#grid)" opacity="0.55"/>
+  <!-- soft light behind the logo -->
+  <circle cx="1080" cy="320" r="250" fill="url(#glow)"/>
+  <rect x="0" y="632" width="1280" height="8" fill="url(#accent)"/>
 
   <g font-family="Segoe UI, Helvetica, Arial, sans-serif">
-    <text x="78" y="260" fill="#E9ECF2" font-size="92" font-weight="700" letter-spacing="-2">LatticeLog</text>
-    <text x="82" y="322" fill="#C3CAD6" font-size="32">Typed, local-first logs for .NET in an open binary format.</text>
-    <text x="82" y="366" fill="#C3CAD6" font-size="32">Indexed queries. Evidence your coding agent can verify.</text>
+    <text x="78" y="230" fill="#E9ECF2" font-size="92" font-weight="700" letter-spacing="-2">LatticeLog</text>
+    <text x="82" y="292" fill="#C3CAE6" font-size="30">Typed, local-first logs for .NET in an open binary format.</text>
+    <text x="82" y="336" fill="#C3CAE6" font-size="30">Indexed queries. Evidence your coding agent can verify.</text>
   </g>
 
-  <g font-family="Consolas, Menlo, monospace" font-size="24" fill="#A9B3C4">
-    <g transform="translate(82 448)">
-      <rect x="0" y="-18" width="10" height="10" rx="2" fill="#F4B740"/>
+  <g font-family="Consolas, Menlo, monospace" font-size="24" fill="#AEB6D6">
+    <g transform="translate(82 428)">
+      <rect x="0" y="-18" width="10" height="10" rx="2" fill="#22D3EE"/>
       <text x="24" y="-8">source-generated events · open .llog format · MCP server</text>
     </g>
-    <g transform="translate(82 494)">
-      <rect x="0" y="-18" width="10" height="10" rx="2" fill="#F4B740"/>
+    <g transform="translate(82 474)">
+      <rect x="0" y="-18" width="10" height="10" rx="2" fill="#A855F7"/>
       <text x="24" y="-8">.NET 10 · Python and PHP SDKs · no AI inside · MIT</text>
     </g>
   </g>
 
-  <text x="82" y="578" fill="#6F7A8E" font-family="Consolas, Menlo, monospace" font-size="22">github.com/lreyesm1999/LatticeLog</text>
-
-  <!-- the lattice: segments written, indexed and read (amber = the blocks a query actually reads) -->
-  <g transform="translate(900 150)">
-    <g fill="#1E2738" stroke="#33405A" stroke-width="2">
-      <rect x="0" y="0" width="80" height="48" rx="9"/><rect x="96" y="0" width="80" height="48" rx="9"/>
-      <rect x="192" y="0" width="80" height="48" rx="9"/>
-      <rect x="0" y="64" width="80" height="48" rx="9"/><rect x="192" y="64" width="80" height="48" rx="9"/>
-      <rect x="0" y="128" width="80" height="48" rx="9"/><rect x="96" y="128" width="80" height="48" rx="9"/>
-      <rect x="96" y="192" width="80" height="48" rx="9"/><rect x="192" y="192" width="80" height="48" rx="9"/>
-      <rect x="0" y="256" width="80" height="48" rx="9"/><rect x="96" y="256" width="80" height="48" rx="9"/>
-    </g>
-    <g fill="#F4B740">
-      <rect x="96" y="64" width="80" height="48" rx="9"/><rect x="192" y="128" width="80" height="48" rx="9"/>
-      <rect x="0" y="192" width="80" height="48" rx="9"/><rect x="192" y="256" width="80" height="48" rx="9"/>
-    </g>
-    <g fill="#E9ECF2" opacity="0.85">
-      <rect x="14" y="16" width="38" height="5" rx="2.5"/><rect x="14" y="27" width="24" height="5" rx="2.5"/>
-      <rect x="110" y="16" width="44" height="5" rx="2.5"/><rect x="110" y="27" width="20" height="5" rx="2.5"/>
-      <rect x="206" y="16" width="30" height="5" rx="2.5"/><rect x="206" y="27" width="40" height="5" rx="2.5"/>
-    </g>
-    <g fill="#121722">
-      <rect x="110" y="80" width="44" height="5" rx="2.5"/><rect x="110" y="91" width="26" height="5" rx="2.5"/>
-      <rect x="206" y="144" width="34" height="5" rx="2.5"/><rect x="206" y="155" width="46" height="5" rx="2.5"/>
-      <rect x="14" y="208" width="40" height="5" rx="2.5"/><rect x="14" y="219" width="22" height="5" rx="2.5"/>
-      <rect x="206" y="272" width="42" height="5" rx="2.5"/><rect x="206" y="283" width="24" height="5" rx="2.5"/>
-    </g>
-  </g>
+  <text x="82" y="566" fill="#6F7AA8" font-family="Consolas, Menlo, monospace" font-size="22">github.com/lreyesm1999/LatticeLog</text>
 </svg>

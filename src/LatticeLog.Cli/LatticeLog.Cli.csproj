@@ -13,6 +13,8 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <AssemblyName>latticelog</AssemblyName>
+    <!-- Windows: the icon Explorer, the taskbar and the installer show (Native AOT keeps it in the single file). -->
+    <ApplicationIcon>latticelog.ico</ApplicationIcon>
     <RootNamespace>LatticeLog.Cli</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>
     <TargetFramework>net10.0</TargetFramework>
