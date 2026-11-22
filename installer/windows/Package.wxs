@@ -26,7 +26,8 @@
                   DowngradeErrorMessage="A newer version of LatticeLog is already installed." />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
-    <Icon Id="LatticeLogIcon" SourceFile="assets\latticelog.ico" />
+    <!-- The executable's own icon, so Settings → Apps, the Start menu and Explorer all show the same one. -->
+    <Icon Id="LatticeLogIcon" SourceFile="..\..\src\LatticeLog.Cli\latticelog.ico" />
     <Property Id="ARPPRODUCTICON" Value="LatticeLogIcon" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/lreyesm1999/LatticeLog" />
     <Property Id="ARPHELPLINK" Value="https://github.com/lreyesm1999/LatticeLog/blob/main/SUPPORT.md" />

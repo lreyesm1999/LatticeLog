@@ -22,6 +22,29 @@ function Check([string]$what, [bool]$ok) {
 function UserPathHas([string]$d) {
     ([Environment]::GetEnvironmentVariable('Path', 'User') -split ';') | Where-Object { $_.TrimEnd('\') -ieq $d.TrimEnd('\') }
 }
+# Counts the icon groups (RT_GROUP_ICON) in an executable's Win32 resources.
+function Get-IconGroupCount([string]$path) {
+    if (-not ('IconProbe' -as [type])) {
+        Add-Type @"
+using System; using System.Runtime.InteropServices;
+public static class IconProbe {
+    delegate bool EnumResNameProc(IntPtr module, IntPtr type, IntPtr name, IntPtr param);
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern IntPtr LoadLibraryEx(string path, IntPtr file, uint flags);
+    [DllImport("kernel32.dll")] static extern bool FreeLibrary(IntPtr module);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern bool EnumResourceNames(IntPtr module, IntPtr type, EnumResNameProc proc, IntPtr param);
+    public static int Count(string path) {
+        IntPtr m = LoadLibraryEx(path, IntPtr.Zero, 0x2 | 0x20);   // as data file, as image resource
+        if (m == IntPtr.Zero) return -1;
+        int n = 0;
+        EnumResourceNames(m, (IntPtr)14, (a, b, c, d) => { n++; return true; }, IntPtr.Zero);
+        FreeLibrary(m);
+        return n;
+    }
+}
+"@
+    }
+    [IconProbe]::Count($path)
+}
 function TaskExists { schtasks /Query /TN LatticeLog 2>$null | Out-Null; $LASTEXITCODE -eq 0 }
 function Invoke-Msiexec([string[]]$argv, [string]$log) {
     $p = Start-Process msiexec -ArgumentList ($argv + @('/qn', '/l*v', "`"$log`"")) -Wait -PassThru
@@ -38,6 +61,8 @@ Check "$exe exists" (Test-Path $exe)
 if (Test-Path $exe) {
     $reported = & $exe --version
     Check "latticelog --version is '$Version' (got '$reported')" ($reported -eq "latticelog $Version")
+    $icons = Get-IconGroupCount $exe
+    Check "latticelog.exe carries its icon (icon groups: $icons)" ($icons -ge 1)
 }
 Check 'llog.cmd and latticelogw.exe were created by setup' ((Test-Path (Join-Path $dir 'llog.cmd')) -and (Test-Path (Join-Path $dir 'latticelogw.exe')))
 Check 'install folder is on the user PATH' ([bool](UserPathHas $dir))

@@ -1,6 +1,7 @@
 # Renders the SVG sources in docs/assets to the image files other tools need: PNG for GitHub's social preview and
-# article sites, BMP and ICO for the Windows installer (installer/windows/assets). Uses a locally installed Edge or
-# Chrome in headless mode; nothing is downloaded. Windows only for the BMP/ICO step (System.Drawing).
+# article sites, BMP for the Windows installer's pages (installer/windows/assets). Uses a locally installed Edge or
+# Chrome in headless mode; nothing is downloaded. Windows only for the BMP step (System.Drawing). The icon is not
+# rendered here: it is src/LatticeLog.Cli/latticelog.ico, used by the executable and the installer.
 #   pwsh scripts/render-assets.ps1
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -63,25 +64,4 @@ try {
         $bmp.Save((Join-Path $installerAssets $j.Bmp), [Drawing.Imaging.ImageFormat]::Bmp); $bmp.Dispose()
         Write-Host "$($j.Svg) -> installer/windows/assets/$($j.Bmp)"
     }
-    # Icon (Add or remove programs): PNG-compressed entries at 16, 32, 48 and 256 px.
-    $sizes = 16, 32, 48, 256
-    $images = foreach ($s in $sizes) {
-        $png = Join-Path $tmp "icon-$s.png"
-        Export-Svg (Join-Path $assets 'logo.svg') $png $s $s -Transparent
-        , [IO.File]::ReadAllBytes($png)
-    }
-    $ms = New-Object IO.MemoryStream
-    $w = New-Object IO.BinaryWriter $ms
-    $w.Write([uint16]0); $w.Write([uint16]1); $w.Write([uint16]$sizes.Count)   # ICONDIR: reserved, type icon, count
-    $offset = 6 + 16 * $sizes.Count
-    for ($i = 0; $i -lt $sizes.Count; $i++) {                                  # ICONDIRENTRY per image
-        $s = $sizes[$i]; $len = $images[$i].Length
-        $w.Write([byte]($s % 256)); $w.Write([byte]($s % 256)); $w.Write([byte]0); $w.Write([byte]0)
-        $w.Write([uint16]1); $w.Write([uint16]32); $w.Write([uint32]$len); $w.Write([uint32]$offset)
-        $offset += $len
-    }
-    foreach ($img in $images) { $w.Write($img) }
-    $w.Flush()
-    [IO.File]::WriteAllBytes((Join-Path $installerAssets 'latticelog.ico'), $ms.ToArray())
-    Write-Host 'logo.svg -> installer/windows/assets/latticelog.ico'
 } finally { Remove-Item $tmp -Recurse -ErrorAction SilentlyContinue }
