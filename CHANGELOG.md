@@ -17,6 +17,10 @@
   - logo, GitHub social preview image and real console screenshots in `docs/assets/`
     (`scripts/render-assets.ps1`, `scripts/screenshots/`);
   - `SUPPORT.md`, a Question issue template, and a first-contribution path in `CONTRIBUTING.md`.
+- **One-line installer**: `irm .../scripts/install.ps1 | iex` (Windows) and `curl -fsSL .../scripts/install.sh | sh`
+  (Linux x64) download the newest release, refuse it unless it matches `SHA256SUMS`, and run `latticelog setup`. From a
+  checkout the scripts still prefer a local build; new `-Download`/`--download`, `-Version`/`LATTICELOG_VERSION` and
+  `-DryRun`. The Windows script runs in Windows PowerShell 5.1 and never closes the window it was piped into.
 - **A histogram that tells you something** (web console, Search):
   - **Errors in red:** each bar shows its errors as a red part, so you see when things went wrong, not only how
     busy it was.
