@@ -62,3 +62,5 @@ Check 'Cursor config no longer has latticelog' (-not ((Test-Path $cursorConfig) 
 
 if ($failures.Count -gt 0) { throw "$($failures.Count) check(s) failed: $($failures -join '; ')" }
 Write-Host 'MSI install and uninstall: all checks passed.'
+# The last schtasks query fails on purpose (the task is gone); its exit code must not become this script's.
+exit 0
