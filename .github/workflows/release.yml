@@ -1,6 +1,7 @@
 # Publishes a GitHub Release when a version tag is pushed (git tag v0.1.0-alpha.2 && git push origin v0.1.0-alpha.2).
 # Builds the single-file Native AOT executable per platform with the tag as its version, checks that it reports that
-# version, and attaches the executables plus SHA256SUMS. `latticelog update` downloads from these releases and verifies
+# version, and attaches the executables, the Windows installer (latticelog-win-x64.msi, tested by installing and
+# uninstalling it) plus SHA256SUMS. `latticelog update` downloads from these releases and verifies
 # the checksum before running `setup`. A tag with a hyphen (v1.2.0-beta.1) is published as a pre-release.
 name: release
 on:
@@ -47,10 +48,18 @@ jobs:
           reported="$("dist/${{ matrix.asset }}" --version)"
           echo "$reported"
           test "$reported" = "latticelog ${GITHUB_REF_NAME#v}"
+      - name: Windows installer (MSI)
+        if: matrix.rid == 'win-x64'
+        shell: pwsh
+        run: ./scripts/build-msi.ps1 -Exe "dist/${{ matrix.asset }}" -Version "$($env:GITHUB_REF_NAME.TrimStart('v'))" -OutDir dist
+      - name: The MSI installs and uninstalls cleanly
+        if: matrix.rid == 'win-x64'
+        shell: pwsh
+        run: ./scripts/test-msi.ps1 -Msi dist/latticelog-win-x64.msi -Version "$($env:GITHUB_REF_NAME.TrimStart('v'))"
       - uses: actions/upload-artifact@v7
         with:
           name: release-${{ matrix.rid }}
-          path: dist/${{ matrix.asset }}
+          path: dist/latticelog-*
 
   publish:
     needs: build
@@ -75,5 +84,5 @@ jobs:
           prerelease=""
           case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
           gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "LatticeLog ${GITHUB_REF_NAME#v}" \
-            --notes "Install or update: download the executable for your platform and run \`latticelog setup\`, or run \`llog update\` on an installed LatticeLog. Verify downloads against SHA256SUMS." \
+            --notes "Install or update: on Windows run latticelog-win-x64.msi; elsewhere download the executable for your platform and run \`latticelog setup\`; or run \`llog update\` on an installed LatticeLog. Verify downloads against SHA256SUMS." \
             $prerelease

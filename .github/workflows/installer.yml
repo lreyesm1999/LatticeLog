@@ -1,0 +1,43 @@
+# Builds the Windows installer (MSI) from a fresh Native AOT executable, installs it silently on a clean runner with
+# every feature, checks what it set up, uninstalls it and checks that nothing is left. release.yml does the same for
+# every tag before publishing.
+name: installer
+on:
+  pull_request:
+    paths:
+      - 'installer/**'
+      - 'scripts/build-msi.ps1'
+      - 'scripts/test-msi.ps1'
+      - 'src/LatticeLog.Cli/**'
+      - 'src/LatticeLog.Service/**'
+      - '.github/workflows/installer.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  msi:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      - name: Native AOT publish
+        shell: pwsh
+        run: dotnet publish src/LatticeLog.Cli -c Release -r win-x64 -p:PublishAot=true "-p:Version=0.0.0-ci.${{ github.run_number }}" -o aot
+      - name: Build the MSI
+        shell: pwsh
+        run: ./scripts/build-msi.ps1 -Exe aot/latticelog.exe -Version "0.0.0-ci.${{ github.run_number }}" -OutDir dist
+      - name: Install, check, uninstall, check
+        shell: pwsh
+        run: ./scripts/test-msi.ps1 -Msi dist/latticelog-win-x64.msi -Version "0.0.0-ci.${{ github.run_number }}"
+      - name: Installer logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: msi-logs
+          path: ${{ runner.temp }}/msi-*.log
+          if-no-files-found: ignore

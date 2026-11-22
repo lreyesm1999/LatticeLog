@@ -98,9 +98,14 @@ latticelog trace  demo-store --trace-id <id printed by step 1> --format markdown
 ```
 
 The [tutorial](docs/guides/getting-started.md) walks through the same incident step by step, then connects your
-coding agent. To install the CLI once as a single executable (no .NET, no administrator rights), run one line. It
-downloads the newest [release](https://github.com/lreyesm1999/LatticeLog/releases) (Windows x64, Linux x64), checks
-it against `SHA256SUMS` and runs `latticelog setup`:
+coding agent. To install the CLI once as a single executable (no .NET, no administrator rights):
+
+- **Windows, with a setup wizard:** download `latticelog-win-x64.msi` from the
+  [releases](https://github.com/lreyesm1999/LatticeLog/releases) and run it. You pick the background service, PATH
+  and which AI tools to connect; it appears in *Settings → Apps* for uninstalling. Releases after 0.1.0-alpha.7
+  include it.
+- **Or one line:** it downloads the newest release (Windows x64, Linux x64), checks it against `SHA256SUMS` and runs
+  `latticelog setup`:
 
 ```powershell
 irm https://raw.githubusercontent.com/lreyesm1999/LatticeLog/main/scripts/install.ps1 | iex   # Windows
