@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/latticelog-hero.svg" alt="LatticeLog: typed, local-first logs in an open binary format" width="100%">
+<img src="docs/assets/latticelog-hero.png" alt="LatticeLog: typed, local-first logs in an open binary format" width="100%">
 
 <h1>LatticeLog</h1>
 
@@ -10,7 +10,7 @@ and hand to people, scripts or coding agents (over MCP) as evidence that points 
 [![CI](https://github.com/lreyesm1999/LatticeLog/actions/workflows/ci.yml/badge.svg)](https://github.com/lreyesm1999/LatticeLog/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/lreyesm1999/LatticeLog?include_prereleases&sort=semver&label=release)](https://github.com/lreyesm1999/LatticeLog/releases)
 [![.NET 10](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)](global.json)
-[![Status: alpha](https://img.shields.io/badge/status-alpha-F4B740)](#project-status)
+[![Status: alpha](https://img.shields.io/badge/status-alpha-A855F7)](#project-status)
 [![License: MIT](https://img.shields.io/github/license/lreyesm1999/LatticeLog)](LICENSE)
 
 <p>
