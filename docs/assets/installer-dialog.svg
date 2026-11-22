@@ -1,27 +1,21 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 493 312" width="493" height="312">
   <!-- Windows installer: background of the welcome and finish pages (WixUIDialogBmp, 493×312). The installer writes its
        text over the white area on the right, so the artwork stays in the left 164 px.
-       Export: scripts/render-assets.ps1 → installer/windows/assets/dialog.bmp -->
+       Export: scripts/render-assets.ps1 → installer/windows/assets/dialog.bmp. The script draws the icon
+       (src/LatticeLog.Cli/latticelog.ico, 112 px) at x=26, y=40 on top of this. -->
   <defs>
     <pattern id="grid" width="16" height="16" patternUnits="userSpaceOnUse">
-      <path d="M16 0H0V16" fill="none" stroke="#232C3D" stroke-width="1"/>
+      <path d="M16 0H0V16" fill="none" stroke="#1A2142" stroke-width="1"/>
     </pattern>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#22D3EE"/>
+      <stop offset="1" stop-color="#A855F7"/>
+    </linearGradient>
   </defs>
   <rect width="493" height="312" fill="#FFFFFF"/>
-  <rect width="164" height="312" fill="#121722"/>
+  <rect width="164" height="312" fill="#0D1226"/>
   <rect width="164" height="312" fill="url(#grid)"/>
-  <g transform="translate(34 52) scale(1.5)">
-    <rect width="64" height="64" rx="14" fill="#1B2433"/>
-    <g fill="#1E2738" stroke="#3A4762" stroke-width="1.5">
-      <rect x="9" y="9" width="13" height="13" rx="3"/><rect x="25.5" y="9" width="13" height="13" rx="3"/>
-      <rect x="42" y="9" width="13" height="13" rx="3"/><rect x="9" y="25.5" width="13" height="13" rx="3"/>
-      <rect x="42" y="25.5" width="13" height="13" rx="3"/><rect x="9" y="42" width="13" height="13" rx="3"/>
-      <rect x="25.5" y="42" width="13" height="13" rx="3"/>
-    </g>
-    <g fill="#F4B740"><rect x="25.5" y="25.5" width="13" height="13" rx="3"/><rect x="42" y="42" width="13" height="13" rx="3"/></g>
-    <path d="M32 38.5 V40.25 H48.5 V42" fill="none" stroke="#F4B740" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-  </g>
   <text x="82" y="186" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="600" fill="#E6EAF2">LatticeLog</text>
-  <text x="82" y="208" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="11" fill="#8A96AD">typed, local-first logs</text>
-  <rect x="0" y="309" width="164" height="3" fill="#F4B740"/>
+  <text x="82" y="208" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="11" fill="#8A96C8">typed, local-first logs</text>
+  <rect x="0" y="309" width="164" height="3" fill="url(#accent)"/>
 </svg>

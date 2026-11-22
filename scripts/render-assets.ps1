@@ -1,7 +1,8 @@
 # Renders the SVG sources in docs/assets to the image files other tools need: PNG for GitHub's social preview and
 # article sites, BMP for the Windows installer's pages (installer/windows/assets). Uses a locally installed Edge or
 # Chrome in headless mode; nothing is downloaded. Windows only for the BMP step (System.Drawing). The icon is not
-# rendered here: it is src/LatticeLog.Cli/latticelog.ico, used by the executable and the installer.
+# rendered here: it is src/LatticeLog.Cli/latticelog.ico, used by the executable and the installer, and drawn onto
+# the installer pages.
 #   pwsh scripts/render-assets.ps1
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -52,16 +53,35 @@ New-Item -ItemType Directory -Force $installerAssets | Out-Null
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ("latticelog-assets-" + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory $tmp | Out-Null
 try {
+    # The icon of the executable (its 256 px PNG entry) is drawn on top of the rendered SVG.
+    $ico = [IO.File]::ReadAllBytes((Join-Path $root 'src/LatticeLog.Cli/latticelog.ico'))
+    $iconPng = $null
+    for ($i = 0; $i -lt [BitConverter]::ToUInt16($ico, 4); $i++) {
+        $e = 6 + 16 * $i
+        if ($ico[$e] -eq 0 -and $ico[$e + 1] -eq 0) {   # 0 means 256
+            $len = [BitConverter]::ToUInt32($ico, $e + 8); $off = [BitConverter]::ToUInt32($ico, $e + 12)
+            $iconPng = Join-Path $tmp 'icon-256.png'
+            [IO.File]::WriteAllBytes($iconPng, $ico[$off..($off + $len - 1)])
+        }
+    }
+    if (-not $iconPng) { throw 'latticelog.ico has no 256 px PNG image.' }
+    $icon = [Drawing.Image]::FromFile($iconPng)
+
     # Installer pages: 24-bit BMP, the only format Windows Installer dialogs show.
-    foreach ($j in @(@{ Svg = 'installer-dialog.svg'; Bmp = 'dialog.bmp'; W = 493; H = 312 },
-                     @{ Svg = 'installer-banner.svg'; Bmp = 'banner.bmp'; W = 493; H = 58 })) {
+    foreach ($j in @(@{ Svg = 'installer-dialog.svg'; Bmp = 'dialog.bmp'; W = 493; H = 312; X = 26;  Y = 40; S = 112 },
+                     @{ Svg = 'installer-banner.svg'; Bmp = 'banner.bmp'; W = 493; H = 58;  X = 439; Y = 6;  S = 46 })) {
         $png = Join-Path $tmp ($j.Bmp + '.png')
         Export-Svg (Join-Path $assets $j.Svg) $png $j.W $j.H
         $src = [Drawing.Image]::FromFile($png)
         $bmp = New-Object Drawing.Bitmap $j.W, $j.H, ([Drawing.Imaging.PixelFormat]::Format24bppRgb)
         $g = [Drawing.Graphics]::FromImage($bmp)
-        $g.DrawImage($src, 0, 0, $j.W, $j.H); $g.Dispose(); $src.Dispose()
+        $g.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+        $g.PixelOffsetMode = [Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+        $g.DrawImage($src, 0, 0, $j.W, $j.H)
+        $g.DrawImage($icon, $j.X, $j.Y, $j.S, $j.S)
+        $g.Dispose(); $src.Dispose()
         $bmp.Save((Join-Path $installerAssets $j.Bmp), [Drawing.Imaging.ImageFormat]::Bmp); $bmp.Dispose()
         Write-Host "$($j.Svg) -> installer/windows/assets/$($j.Bmp)"
     }
+    $icon.Dispose()
 } finally { Remove-Item $tmp -Recurse -ErrorAction SilentlyContinue }

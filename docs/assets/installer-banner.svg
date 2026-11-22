@@ -1,17 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 493 58" width="493" height="58">
   <!-- Windows installer: top banner of the inner pages (WixUIBannerBmp, 493×58). The page title is written over the
-       left part, so the mark sits at the right edge.
-       Export: scripts/render-assets.ps1 → installer/windows/assets/banner.bmp -->
+       left part, so the icon sits at the right edge: scripts/render-assets.ps1 draws src/LatticeLog.Cli/latticelog.ico
+       (46 px) at x=439, y=6 on top of this and saves installer/windows/assets/banner.bmp. -->
   <rect width="493" height="58" fill="#FFFFFF"/>
-  <g transform="translate(439 7) scale(0.6875)">
-    <rect width="64" height="64" rx="14" fill="#121722"/>
-    <g fill="#1E2738" stroke="#3A4762" stroke-width="1.5">
-      <rect x="9" y="9" width="13" height="13" rx="3"/><rect x="25.5" y="9" width="13" height="13" rx="3"/>
-      <rect x="42" y="9" width="13" height="13" rx="3"/><rect x="9" y="25.5" width="13" height="13" rx="3"/>
-      <rect x="42" y="25.5" width="13" height="13" rx="3"/><rect x="9" y="42" width="13" height="13" rx="3"/>
-      <rect x="25.5" y="42" width="13" height="13" rx="3"/>
-    </g>
-    <g fill="#F4B740"><rect x="25.5" y="25.5" width="13" height="13" rx="3"/><rect x="42" y="42" width="13" height="13" rx="3"/></g>
-    <path d="M32 38.5 V40.25 H48.5 V42" fill="none" stroke="#F4B740" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-  </g>
 </svg>
