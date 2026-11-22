@@ -19,7 +19,7 @@
 | [Investigating an incident with an agent](guides/investigate-with-an-agent.md) | What an agent calls and what it gets back |
 | [Migrating from text logs](guides/migrating-from-text-logs.md) | Run side by side, then convert old files on request |
 | [Troubleshooting](guides/troubleshooting.md) | Build, CLI, MCP and service problems |
-| [Python SDK](../sdks/python) · [Rust SDK](../sdks/rust) · [PHP SDK](../sdks/php) | Other languages |
+| [Python SDK](../sdks/python) · [Rust SDK](../sdks/rust) · [TypeScript SDK](../sdks/typescript) · [PHP SDK](../sdks/php) | Other languages |
 
 ## Reference
 

@@ -524,6 +524,31 @@ public class SourcesTests(ITestOutputHelper output)
         Assert.Equal(19.5, (double)ev["attributes"]!["total"]!);
     }
 
+    [Fact]
+    public void TypeScript_service_is_found_by_name_with_real_error_types()
+    {
+        var (node, smoke, note) = TypeScriptSdk.Smoke;
+        if (node is null || smoke is null)
+        {
+            if (note.StartsWith("node not found", StringComparison.Ordinal)) { output.WriteLine(note); return; }
+            Assert.Fail(note);
+        }
+        var env = new Env();
+        var (exit, text) = Run(node, [smoke, "local", Path.Combine(env.Root, "ts-svc")]);
+        Assert.True(exit == 0, text);
+        var server = new McpServer(env.Catalog());
+        var s = Assert.Single(Ok(server, "list_sources", [])["sources"]!.AsArray())!;
+        Assert.Equal(("ts-svc", "typescript-local", 2), ((string?)s["name"], (string?)s["kind"], (int)s["processes"]!));
+        Assert.Equal("test", (string?)s["environment"]);
+        Assert.Equal(44, (long)s["records"]!); // 33 from the first writer, 11 from the second
+        var groups = Ok(server, "get_error_groups", new JsonObject { ["source"] = "ts-svc" })["groups"]!.AsArray();
+        Assert.Contains(groups, g => (string?)g!["exception_type"] == "SyntaxError" && (string?)g["event"] == "parse_failed");
+        Assert.Equal(2, groups.Where(g => (string?)g!["exception_type"] == "QuotaExceeded").Sum(g => (long)g!["count"]!)); // one per process folder
+        var ev = Ok(server, "search_events", new JsonObject { ["source"] = "ts-svc", ["where"] = "event = 'order_placed'", ["limit"] = 1 })["events"]![0]!;
+        Assert.Equal(7L, (long)ev["attributes"]!["items"]!);
+        Assert.Equal(19.5, (double)ev["attributes"]!["total"]!);
+    }
+
     private static string RepoRoot()
     {
         var d = new DirectoryInfo(AppContext.BaseDirectory);

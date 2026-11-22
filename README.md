@@ -142,7 +142,7 @@ Already on `ILogger`? Keep your code and add one line: `builder.Logging.AddLatti
 | [MCP: Claude Code, Cursor, Claude Desktop, VS Code](docs/guides/mcp.md) | One command per client, logs found by service name |
 | [Investigating an incident with an agent](docs/guides/investigate-with-an-agent.md) | Which tools an agent calls, and what it gets back |
 | [Migrating from text or JSON logs](docs/guides/migrating-from-text-logs.md) | Keep your files; convert them on request, losslessly where possible |
-| [Python](sdks/python) · [Rust](sdks/rust) · [PHP](sdks/php) | Local folders (Python, Rust) and server shipping (Python, Rust, PHP) |
+| [Python](sdks/python) · [Rust](sdks/rust) · [TypeScript](sdks/typescript) · [PHP](sdks/php) | Local folders (Python, Rust, Node.js) and server shipping (Python, Rust, Node.js, PHP) |
 | [Troubleshooting](docs/guides/troubleshooting.md) | Common errors and what they mean |
 
 ---
@@ -217,7 +217,7 @@ flowchart LR
     SVC --> MCP["MCP server<br/><sub>read-only, for coding agents</sub>"]
     S -->|Forwarder · idempotent| SRV["latticelog-server<br/><sub>namespaces · tokens · HTTP API</sub>"]
     SRV -.->|async| R["Replica"]
-    PH["Python / Rust / PHP SDKs<br/><sub>server mode, durable spool</sub>"] -->|HTTP ingest| SRV
+    PH["Python / Rust / Node.js / PHP SDKs<br/><sub>server mode, durable spool</sub>"] -->|HTTP ingest| SRV
 ```
 
 - **Local first.** The application never waits on the network to log. With a server configured, the local store is a
@@ -240,7 +240,7 @@ Not production-hardened: the per-phase truth, including what did **not** pass, i
 | .NET logger, generator, `ILogger` bridge | Lattice-C context encoding (opt-in) | No NuGet / PyPI / Packagist / crates.io packages | Published packages, stable release (later) |
 | `.llog` 0.3 format, recovery, compaction, retention, backup | Async replication with manual failover | No encryption at rest, no external security review | Encryption at rest, external pentest (next) |
 | CLI (also Native AOT), MCP server, per-user service | Web console (no browser E2E tests yet) | Benchmarks from one unstable machine | Measurements on stable hardware and Linux (next) |
-| Python and Rust (local + server) and PHP (server) SDKs | Migration of text/JSON logs | No cluster or object storage | Cluster, object-storage tiers (later) |
+| Python, Rust and Node.js (local + server) and PHP (server) SDKs | Migration of text/JSON logs | No cluster or object storage | Cluster, object-storage tiers (later) |
 | Single-node server: namespaces, tokens, audit, metrics | | Prebuilt executables for Windows x64 and Linux x64 only | Fuller console with user testing |
 
 Changes: [`CHANGELOG.md`](CHANGELOG.md).

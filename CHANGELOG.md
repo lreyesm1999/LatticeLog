@@ -2,6 +2,26 @@
 
 ## Unreleased — public repository under the MIT license
 
+- **TypeScript / Node.js SDK** (`sdks/typescript`, npm package `latticelog`, ESM + type declarations, Node.js ≥ 20, no
+  runtime dependencies):
+  - Local mode writes the same service folders as the Python and Rust SDKs, so the CLI and MCP server find a Node.js
+    service by name. `list_sources` reports it as `typescript-local`, and the console labels it *Service (Node.js)*.
+  - Node.js has no portable file lock. A process claims `p-N` with an exclusive `LOCK` holding its pid, host and start
+    time, and takes over only a LOCK whose process is certainly gone.
+  - Server mode ships each process folder's own lines byte for byte with ingest protocol v1.
+  - Typed values: safe integers → Int64, other numbers → Double, `bigint` → Int64/UInt64/Decimal, NaN bits, `Date`,
+    bytes, `Map`, lone surrogates, and wrappers for UUID/decimal/duration/timestamps. Errors keep their class name,
+    stack and `cause` chain.
+  - Contexts and operations follow async code through `AsyncLocalStorage`.
+  - Integrations: a pino destination that keeps the call's values typed, a pino transport (worker thread) and a
+    winston transport.
+  - The logging call only encodes. Batched writes and fsync run on libuv's thread pool, and records still queued are
+    written at process exit.
+  - Measured on one machine (`reports/typescript-sdk-v1.md`): 318–430 ns per call, against 1,216–1,395 ns for pino's
+    async destination; p50 300 ns. Under a flood on an HDD, the bounded queue dropped records (counted) during writer
+    stalls. On the SSD, and at a steady 100k records/s on the HDD, it dropped none.
+  - Tests: node:test suites (32 tests), plus `SdkTests`/`SourcesTests` against the real server and catalog, and a
+    `typescript-sdk` CI job (Node.js 20 and 24, Linux and Windows).
 - **Rust SDK** (`sdks/rust`, crate `latticelog`, Rust ≥ 1.89): local mode writes the same service folders as the
   Python SDK (`latticelog.source.json`, `p-N`, dense sequences, recovery, retention), so the CLI and MCP server find a
   Rust service by name; `list_sources` reports it as `rust-local` and the console labels it *Service (Rust)*. Server
