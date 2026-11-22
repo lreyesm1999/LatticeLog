@@ -3,13 +3,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import assert from "node:assert/strict";
 
-let n = 0;
-/** A fresh directory under the system temp folder. */
+/** A fresh directory under the system temp folder, with an unpredictable name and owner-only permissions. */
 export function tempDir(name) {
-  const dir = path.join(os.tmpdir(), `ll-ts-${name}-${process.pid}-${n++}`);
-  fs.rmSync(dir, { recursive: true, force: true });
-  fs.mkdirSync(dir, { recursive: true });
-  return dir;
+  return fs.mkdtempSync(path.join(os.tmpdir(), `ll-ts-${name}-`));
 }
 
 /** Data files of a process folder, sorted by first sequence. */
