@@ -21,6 +21,8 @@ public sealed record ServiceOptions
     public bool AnyPortIfTaken { get; init; } = true;
     /// <summary>Background refresh period (discovery, Python indexing, followed migrations).</summary>
     public TimeSpan RefreshInterval { get; init; } = TimeSpan.FromSeconds(5);
+    /// <summary>Background refresh period while a web console listens for changes (<c>/v1/changes</c>): live updates.</summary>
+    public TimeSpan LiveRefreshInterval { get; init; } = TimeSpan.FromSeconds(2);
     /// <summary>Tool calls refresh first when the last refresh is older than this (same as in-process mode).</summary>
     public TimeSpan QueryRefreshInterval { get; init; } = TimeSpan.FromSeconds(2);
     /// <summary>Compaction and retention period.</summary>
@@ -312,17 +314,81 @@ public sealed class ServiceHost : IDisposable
         var ct = _cts.Token;
         while (!ct.IsCancellationRequested)
         {
+            var live = Volatile.Read(ref _watchers) > 0;
             try
             {
                 RefreshAll(TimeSpan.Zero, ct);
                 if (DateTime.UtcNow - _lastMaintenanceUtc >= _options.MaintenanceInterval) RunMaintenance(ct);
+                if (live) DetectChanges();
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex)
             {
                 Error($"background work failed: {ex.GetType().Name}: {ex.Message}");
             }
-            if (ct.WaitHandle.WaitOne(_options.RefreshInterval)) break;
+            var wait = live && _options.LiveRefreshInterval < _options.RefreshInterval ? _options.LiveRefreshInterval : _options.RefreshInterval;
+            if (ct.WaitHandle.WaitOne(wait)) break;
+        }
+    }
+
+    // ------------------------------------------------------------------ change feed (the web console's live updates)
+
+    /// <summary>What changed since the previous version: the sources whose events, size, newest event, status or error
+    /// changed, and whether the list itself changed (a source or root added or removed).</summary>
+    internal sealed record Change(long Version, IReadOnlyList<string> Sources, bool ListChanged);
+
+    private readonly object _changeLock = new();
+    private Change _lastChange = new(0, [], false);
+    private Dictionary<string, string> _sourcePrints = new(StringComparer.OrdinalIgnoreCase);
+    private string _rootsPrint = "";
+    private int _watchers;
+
+    internal long ChangeVersion { get { lock (_changeLock) return _lastChange.Version; } }
+
+    internal bool Stopping => _cts.IsCancellationRequested;
+
+    /// <summary>Counts a listener while <paramref name="body"/> runs: the background refresh runs more often meanwhile.</summary>
+    internal void Watch(Action body)
+    {
+        Interlocked.Increment(ref _watchers);
+        try { body(); }
+        finally { Interlocked.Decrement(ref _watchers); }
+    }
+
+    /// <summary>The newest change after <paramref name="after"/>, waiting up to <paramref name="timeout"/>; null when
+    /// nothing changed meanwhile or the service is stopping.</summary>
+    internal Change? WaitForChange(long after, TimeSpan timeout)
+    {
+        lock (_changeLock)
+        {
+            if (_lastChange.Version <= after && !_cts.IsCancellationRequested) Monitor.Wait(_changeLock, timeout);
+            return _lastChange.Version > after && !_cts.IsCancellationRequested ? _lastChange : null;
+        }
+    }
+
+    /// <summary>
+    /// Compares what the console shows of each source (the <c>/v1/sources</c> description without the times that move
+    /// on every refresh) with the previous pass and publishes a new version when anything differs. Background thread only.
+    /// </summary>
+    private void DetectChanges()
+    {
+        var sources = Sources();
+        var prints = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var node in sources["sources"]?.AsArray() ?? [])
+        {
+            if (node is not JsonObject o || (string?)o["name"] is not { } name) continue;
+            prints[name] = string.Join('|', o["records"], o["bytes"], o["last_time"], o["status"], o["last_error"], o["path"]);
+        }
+        var roots = string.Join('|', (sources["roots"]?.AsArray() ?? []).Select(x => (string?)x));
+        var changed = prints.Where(kv => !_sourcePrints.TryGetValue(kv.Key, out var old) || old != kv.Value).Select(kv => kv.Key).ToList();
+        var list = roots != _rootsPrint || prints.Count != _sourcePrints.Count || prints.Keys.Any(k => !_sourcePrints.ContainsKey(k));
+        _sourcePrints = prints;
+        _rootsPrint = roots;
+        if (changed.Count == 0 && !list) return;
+        lock (_changeLock)
+        {
+            _lastChange = new Change(_lastChange.Version + 1, changed, list);
+            Monitor.PulseAll(_changeLock);
         }
     }
 
@@ -630,6 +696,7 @@ public sealed class ServiceHost : IDisposable
         try
         {
             _cts.Cancel();
+            lock (_changeLock) Monitor.PulseAll(_changeLock); // change listeners return now
             try { _listener.Stop(); } catch (SocketException) { /* already stopped */ }
             foreach (var c in _connections.Keys)
             {

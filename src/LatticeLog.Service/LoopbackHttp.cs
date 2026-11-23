@@ -15,7 +15,8 @@ namespace LatticeLog.Service;
 /// The service's HTTP side, on the same 127.0.0.1 port: the web console (<c>/ui</c>, the server's console) and the
 /// subset of the server's read API it uses, where each source is a "namespace" (<c>/v1/namespaces</c>,
 /// <c>/v1/search</c>, <c>/v1/traces/{id}</c>, <c>/v1/stats</c>, <c>/v1/catalog</c>), plus <c>/v1/sources</c> (the
-/// console's source explorer), <c>/v1/status</c> and <c>/v1/health</c>. GET and HEAD only, one request per connection.
+/// console's source explorer), <c>/v1/changes</c> (its live updates), <c>/v1/status</c> and <c>/v1/health</c>. GET and
+/// HEAD only, one request per connection.
 /// <list type="bullet">
 /// <item>Every <c>/v1/*</c> route except health needs <c>Authorization: Bearer &lt;service token&gt;</c>.</item>
 /// <item>The Host header must name the loopback address and port: a web page cannot reach the service through DNS
@@ -74,6 +75,9 @@ internal static class LoopbackHttp
                 case "/v1/namespaces":
                     Json(200, new JsonObject { ["namespaces"] = new JsonArray(host.AllSources().Where(x => x.Source.HasStore).Select(x => (JsonNode?)JsonValue.Create(x.Source.Name)).ToArray()) });
                     return;
+                case "/v1/changes" when !head:
+                    host.Watch(() => Changes(host, stream));
+                    return;
             }
             var ns = req.Query.GetValueOrDefault("ns") ?? "";
             var src = host.AllSources().FirstOrDefault(x => string.Equals(x.Source.Name, ns, StringComparison.OrdinalIgnoreCase));
@@ -99,6 +103,34 @@ internal static class LoopbackHttp
         catch (Exception ex) when (ex is IOException or InvalidDataException or LatticeLog.Storage.Format.LlogFormatException)
         {
             Error(500, "storage_error", ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// <c>/v1/changes</c>: a Server-Sent Events stream for the web console. <c>hello</c> carries the current version;
+    /// each <c>change</c> names the sources that changed (events, size, newest event, status) and whether the source list
+    /// changed. A comment every 20 s keeps the connection open and notices a closed tab (the write fails). The console
+    /// reads it with fetch, so the token stays in the Authorization header.
+    /// </summary>
+    private static void Changes(ServiceHost host, Stream stream)
+    {
+        stream.Write(Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\n" +
+                                             "Connection: close\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\n\r\n"));
+        var version = host.ChangeVersion;
+        void Send(string text) { stream.Write(Encoding.UTF8.GetBytes(text)); stream.Flush(); }
+        Send($"retry: 3000\nevent: hello\ndata: {new JsonObject { ["version"] = version }.ToJsonString()}\n\n");
+        while (!host.Stopping)
+        {
+            var change = host.WaitForChange(version, TimeSpan.FromSeconds(20));
+            if (change is null) { Send(": ping\n\n"); continue; }
+            version = change.Version;
+            var data = new JsonObject
+            {
+                ["version"] = change.Version,
+                ["sources"] = new JsonArray(change.Sources.Select(x => (JsonNode?)JsonValue.Create(x)).ToArray()),
+                ["list_changed"] = change.ListChanged,
+            };
+            Send($"event: change\ndata: {data.ToJsonString()}\n\n");
         }
     }
 

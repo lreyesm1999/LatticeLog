@@ -14,6 +14,12 @@ function takeHashToken() {
 }
 takeHashToken();
 
+// The open tab and explorer folder survive a reload of this tab (sessionStorage, like the token); a new tab starts in
+// the explorer.
+const VIEWS = ["sources", "search", "stats", "catalog"];
+function loadSession(key) { try { return sessionStorage.getItem(key) || ""; } catch { return ""; } }
+function saveSession(key, value) { try { sessionStorage.setItem(key, value || ""); } catch { /* blocked storage: not remembered */ } }
+
 function loadPrefs() { try { return JSON.parse(localStorage.getItem("ll-prefs") || "{}"); } catch { return {}; } }
 function savePrefs() { try { localStorage.setItem("ll-prefs", JSON.stringify({ range: state.range, order: $("order").value, by: state.statsBy })); } catch { /* private mode */ } }
 const prefs = loadPrefs();
@@ -25,7 +31,7 @@ const state = {
   sources: [],        // every source as /v1/sources describes it
   roots: [],          // registered folders, also the ones without sources yet
   fallback: false,    // talking to a server or an older service without /v1/sources
-  view: "search",
+  view: VIEWS.includes(loadSession("ll-view")) ? loadSession("ll-view") : "sources",
   cursor: null,
   loadingMore: false, // the next page of the current search is being fetched (infinite scroll)
   events: [],
@@ -36,6 +42,7 @@ const state = {
   zoom: null,         // { from, to } in ms, set by clicking the histogram
   span: null,         // what the source holds: { min, max, records, bytes, segments, sealed, services }
   statsBy: prefs.by || "event",
+  searchedWhere: "",  // the query text of the last search (a live refresh never runs one still being typed)
   seq: 0,
 };
 
@@ -250,6 +257,7 @@ function setStatus(text, kind) {
 }
 
 function showConnect(message, cancellable = false) {
+  stopLive();
   $("connect").hidden = false;
   $("app").hidden = true;
   $("tabs").hidden = true;
@@ -295,15 +303,15 @@ async function connect() {
     if (!n.includes(state.ns)) state.ns = n.length === 1 ? n[0] : "";
     sessionStorage.setItem("ll-ns", state.ns);
     if (state.ns) touchRecent(state.ns);
-    const total = state.sources.length;
-    setStatus(total === 1 ? "Connected · 1 source" : `Connected · ${num(total)} sources`, "ok");
+    connectedStatus();
     showApp();
     renderSourceButton();
-    // Several sources and none chosen in this tab: start in the explorer instead of guessing one.
-    if (!state.ns && n.length > 1) state.view = "sources";
+    // Search, Overview and Storage show one source: with none chosen in this tab, start in the explorer instead.
+    if (!state.ns && state.view !== "sources") state.view = "sources";
     syncTabs();
     if (state.view === "sources") renderExplorer();
     else await sourceChanged();
+    startLive();
   } catch (err) {
     setStatus("Not connected", "bad");
     showConnect(err.status === 401 || err.status === 403 ? "That token was not accepted. Check it and try again." : `Could not reach LatticeLog: ${err.message}`);
@@ -393,13 +401,17 @@ function notice(text, kind = "") {
  * A new search (more = false) or the next page of the current one (more = true). Pages load by themselves as the
  * list scrolls near its end (infinite scroll), shown meanwhile as placeholder rows at the bottom.
  */
-async function runSearch(more = false, note = null) {
+async function runSearch(more = false, note = null, quiet = false) {
   if (!state.ns) { showNoSource(); return; }
   if (more && (state.loadingMore || !state.cursor)) return;
   const seq = more ? state.seq : ++state.seq;
   const tbody = $("events").tBodies[0];
   let pending = [];
   if (!more) {
+    $("live-pill").hidden = true;
+    state.searchedWhere = $("where").value;
+  }
+  if (!more && !quiet) {
     state.cursor = null;
     state.events = [];
     state.selected = -1;
@@ -408,7 +420,7 @@ async function runSearch(more = false, note = null) {
     notice(note, "info");
     $("summary-count").textContent = "";
     $("summary-meta").textContent = "";
-  } else {
+  } else if (more) {
     state.loadingMore = true;
     pending = skeletonRows(3);
     tbody.append(...pending);
@@ -422,6 +434,8 @@ async function runSearch(more = false, note = null) {
     const res = await api("/v1/search", { where, ...scope.params, order: $("order").value, limit: 100, cursor: more ? state.cursor : null });
     if (seq !== state.seq) return;
     if (!more) tbody.replaceChildren();
+    // A live refresh keeps the old rows on screen until the new ones are here (no placeholder flash).
+    if (quiet) { state.events = []; state.selected = -1; $("empty").hidden = true; }
     for (const r of pending) r.remove();
     const rows = res.events.map((e) => eventRow(e, state.events.push(e) - 1));
     tbody.append(...rows);
@@ -801,7 +815,8 @@ function statCard(label, value, sub, cls, onclick) {
     h("div", { class: "label", text: label }), h("div", { class: "value", text: value }), sub ? h("div", { class: "sub", text: sub }) : null);
 }
 
-async function stats() {
+/** quiet: a live update, which keeps the current bars until the new counts arrive. */
+async function stats(quiet = false) {
   const box = $("bars");
   const cards = $("stat-cards");
   for (const b of $("groupby").children) b.classList.toggle("active", b.dataset.by === state.statsBy);
@@ -810,7 +825,7 @@ async function stats() {
   const where = buildWhere({ withLevel: false });
   const scope = timeScope();
   $("stats-range").textContent = `${rangeText()}${where ? ` · filter: ${where}` : ""}`;
-  box.replaceChildren(h("div", { class: "loading" }, h("span", { class: "spinner" }), "Counting…"));
+  if (!quiet) box.replaceChildren(h("div", { class: "loading" }, h("span", { class: "spinner" }), "Counting…"));
   const seq = ++state.seq;
   const by = state.statsBy;
   // Three counts in parallel, each drawn as soon as it arrives: level and event counts usually come from the
@@ -1001,7 +1016,7 @@ function isUnder(path, base) {
 }
 const relParts = (path, base) => pathParts(trimSep(path).slice(trimSep(base).length));
 
-const ex = { nodes: new Map(), locOf: new Map(), derived: new Map(), listKey: "", node: null, sel: null, filter: "", sort: { key: "name", dir: 1 }, open: new Set(), rows: [], stats: new Map(), seq: 0 };
+const ex = { nodes: new Map(), locOf: new Map(), derived: new Map(), listKey: "", node: loadSession("ll-folder") || null, sel: null, filter: "", sort: { key: "name", dir: 1 }, open: new Set(), rows: [], stats: new Map(), seq: 0 };
 
 /**
  * The folder tree: one location per registered root (and latticelog.toml project), its subfolders down to each
@@ -1362,6 +1377,9 @@ function miniStat(label, value) { return h("div", { class: "mini" }, h("span", {
 
 function sourcePreview(box, s) {
   const [act, actText] = activity(s);
+  // Redrawn for the same source (a live update): keep its chart until the new one is ready instead of a spinner.
+  const prev = $("pv-chart");
+  const chart = prev && prev.dataset.src === s.name ? [...prev.childNodes] : [h("div", { class: "loading small" }, h("span", { class: "spinner" }), "Reading…")];
   const pinned = lib.pins.includes(s.name);
   const can = hasData(s);
   const first = s.first_time ? toMs(s.first_time) : null;
@@ -1376,7 +1394,7 @@ function sourcePreview(box, s) {
       h("button", { type: "button", class: "primary", disabled: !can, onclick: () => openSource(s.name) }, "Open logs"),
       h("button", { type: "button", disabled: !can, onclick: () => openSource(s.name, "search", () => setLevel("ERROR")) }, "Errors"),
       h("button", { type: "button", disabled: !can, onclick: () => openSource(s.name, "stats") }, "Overview")),
-    can ? h("div", { class: "pv-chart", id: "pv-chart" }, h("div", { class: "loading small" }, h("span", { class: "spinner" }), "Reading…")) : null,
+    can ? h("div", { class: "pv-chart", id: "pv-chart", "data-src": s.name }, ...chart) : null,
     kv([
       ["Events", can ? num(s.records) : "none yet"],
       ["Size", s.bytes ? bytes(s.bytes) : null],
@@ -1445,6 +1463,7 @@ async function previewStats(s) {
 }
 
 function renderExplorerParts() {
+  saveSession("ll-folder", ex.node);
   for (const n of ex.nodes.values()) n.agg = null;
   renderTree();
   renderCrumbs();
@@ -1458,7 +1477,7 @@ async function renderExplorer(mode = "local") {
     if (mode !== "local") {
       if (mode === "rescan") $("ex-refresh").classList.add("spinning");
       await loadSources(mode === "rescan");
-      setStatus(state.sources.length === 1 ? "Connected · 1 source" : `Connected · ${num(state.sources.length)} sources`, "ok");
+      connectedStatus();
       $("source-btn").hidden = state.sources.length === 0;
     }
   } catch (err) {
@@ -1557,10 +1576,139 @@ function palPick(i) {
   openSource(s.name, state.view === "sources" ? "search" : state.view);
 }
 
+// ------------------------------------------------------------------ live updates
+
+// The service pushes a "change" on /v1/changes (Server-Sent Events) after a background pass that found new events, a
+// new source or a new error, naming the sources involved. Every open tab refreshes only what it shows from that, so
+// nothing waits for a reload. Read with fetch, not EventSource, so the token stays in the Authorization header. A
+// server or an older service without the route: no live updates, the rest works as before.
+const LIVE_MIN_GAP = 3000; // a source written to all the time refreshes the view at most this often
+const live = { ctrl: null, on: false, retry: 1000, timer: 0, version: -1, pending: null, wait: 0, busy: false, lastRun: 0 };
+
+function connectedStatus() {
+  const n = state.sources.length;
+  setStatus(`${live.on ? "Live" : "Connected"} · ${n === 1 ? "1 source" : `${num(n)} sources`}`, "ok");
+  $("status").title = live.on ? "Updates arrive by themselves: no need to reload." : "";
+}
+
+function stopLive() {
+  clearTimeout(live.timer);
+  live.ctrl?.abort();
+  live.ctrl = null;
+  live.on = false;
+}
+
+async function startLive() {
+  stopLive();
+  const ctrl = new AbortController();
+  live.ctrl = ctrl;
+  let status = 0;
+  try {
+    const resp = await fetch("/v1/changes", { headers: { Authorization: "Bearer " + state.token }, signal: ctrl.signal, cache: "no-store" });
+    status = resp.status;
+    if (resp.ok && resp.body) {
+      const reader = resp.body.pipeThrough(new TextDecoderStream()).getReader();
+      let buf = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += value;
+        for (let i = buf.indexOf("\n\n"); i >= 0; i = buf.indexOf("\n\n")) { liveMessage(buf.slice(0, i)); buf = buf.slice(i + 2); }
+      }
+    }
+  } catch { /* the service stopped or restarted, or this tab aborted the stream */ }
+  if (live.ctrl !== ctrl || ctrl.signal.aborted) return;
+  live.on = false;
+  if (status === 404) { connectedStatus(); return; } // a server or an older service: no live route
+  if (status === 401 || status === 403) {
+    // The service makes a new token each time it starts (after an update or a restart): this page's one is over.
+    setStatus("Not connected", "bad");
+    showConnect("LatticeLog restarted, so this page needs the new token. Run llog ui to open the console again.");
+    return;
+  }
+  setStatus("Reconnecting…", "");
+  live.timer = setTimeout(startLive, live.retry);
+  live.retry = Math.min(live.retry * 2, 15000);
+}
+
+function liveMessage(block) {
+  let event = "message";
+  let data = "";
+  for (const line of block.split("\n")) {
+    if (line.startsWith("event:")) event = line.slice(6).trim();
+    else if (line.startsWith("data:")) data += line.slice(5).trim();
+  }
+  let msg;
+  try { msg = JSON.parse(data); } catch { return; }
+  if (event === "hello") {
+    // A reconnect (the service restarted, the PC woke up): changes may have been missed, so refresh everything once.
+    const missed = live.version >= 0 && msg.version !== live.version;
+    live.version = msg.version;
+    live.on = true;
+    live.retry = 1000;
+    connectedStatus();
+    if (missed) queueLive({ all: true });
+  } else if (event === "change") {
+    const gap = live.version >= 0 && msg.version > live.version + 1;
+    live.version = msg.version;
+    queueLive(gap ? { all: true } : { sources: msg.sources || [], list: Boolean(msg.list_changed) });
+  }
+}
+
+/** Merges a change into the pending one and runs it when the tab is visible, at most every LIVE_MIN_GAP. */
+function queueLive(change) {
+  const p = live.pending || { all: false, list: false, sources: new Set() };
+  p.all ||= Boolean(change.all);
+  p.list ||= Boolean(change.list);
+  for (const s of change.sources || []) p.sources.add(s);
+  live.pending = p;
+  scheduleLive();
+}
+
+function scheduleLive() {
+  if (live.wait || live.busy || !live.pending || document.hidden) return; // a hidden tab catches up when shown
+  live.wait = setTimeout(async () => {
+    live.wait = 0;
+    const change = live.pending;
+    live.pending = null;
+    live.busy = true;
+    live.lastRun = Date.now();
+    try { await applyLive(change); } catch { /* the next change tries again */ } finally { live.busy = false; scheduleLive(); }
+  }, Math.max(0, live.lastRun + LIVE_MIN_GAP - Date.now()));
+}
+document.addEventListener("visibilitychange", scheduleLive);
+
+async function applyLive(change) {
+  if ($("app").hidden) return;
+  await loadSources();
+  connectedStatus();
+  $("source-btn").hidden = state.sources.length === 0;
+  renderSourceButton();
+  if (state.view === "sources") { renderExplorerParts(); return; }
+  if (!state.ns || !(change.all || change.sources.has(state.ns))) return;
+  dropStatsCache();
+  await loadSpan();
+  if (state.view === "search") return liveSearch();
+  if (state.view === "stats") return stats(true);
+  if (state.view === "catalog") return catalog();
+}
+
+/**
+ * New events in the open source. At the top of the list, with no event open and the query as last run, the list
+ * refreshes in place; otherwise (reading further down, an event open, a query being edited) a "New events" button
+ * waits so nothing moves under the reader.
+ */
+function liveSearch() {
+  const quiet = window.scrollY < 200 && state.selected < 0 && !state.loadingMore && $("where").value === state.searchedWhere;
+  if (quiet) return runSearch(false, null, true);
+  $("live-pill").hidden = false;
+}
+
 // ------------------------------------------------------------------ views and events
 
 function syncTabs() {
   const view = state.view;
+  saveSession("ll-view", view);
   for (const b of $("tabs").children) b.classList.toggle("active", b.dataset.view === view);
   for (const v of ["sources", "search", "stats", "catalog"]) $("view-" + v).hidden = v !== view;
   $("source-span").hidden = view === "sources";
@@ -1715,7 +1863,7 @@ $("change-token").addEventListener("click", () => showConnect("", true));
 // A new /ui#token=... opened in a tab that already shows the console (the service restarted with a new token).
 window.addEventListener("hashchange", () => { const t = takeHashToken(); if (t) { state.token = t; connect(); } });
 $("cancel-token").addEventListener("click", () => showApp());
-$("source-btn").addEventListener("click", () => switchView("sources"));
+$("source-btn").addEventListener("click", () => { if (state.view !== "sources") switchView("sources"); });
 $("ex-up").addEventListener("click", goUp);
 $("ex-refresh").addEventListener("click", () => renderExplorer("rescan"));
 $("ex-wrap").addEventListener("scroll", () => {
@@ -1757,7 +1905,9 @@ function activateSelection() {
   if (r.type === "folder") goFolder(r.key);
   else if (hasData(r.source)) openSource(r.source.name);
 }
-for (const b of $("tabs").children) b.addEventListener("click", () => switchView(b.dataset.view));
+// The tab already open: nothing changed, so nothing reloads (live updates keep it current).
+for (const b of $("tabs").children) b.addEventListener("click", () => { if (b.dataset.view !== state.view) switchView(b.dataset.view); });
+$("live-pill").addEventListener("click", () => { closeDetail(); scrollToTop(); runSearch(); });
 
 $("query").addEventListener("submit", (ev) => { ev.preventDefault(); dropStatsCache(); state.view === "search" ? runSearch() : refreshView(); });
 $("where").addEventListener("input", syncClear);

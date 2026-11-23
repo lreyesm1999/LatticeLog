@@ -417,6 +417,51 @@ public class ServiceTests(ITestOutputHelper output)
         Assert.Equal(HttpStatusCode.MethodNotAllowed, (await http.PostAsync("v1/status", new StringContent("{}"))).StatusCode);
     }
 
+    [Fact]
+    public async Task Change_feed_pushes_a_change_when_a_source_gets_new_events()
+    {
+        var env = new Env();
+        var file = Orders(env, 10);
+        using var host = StartHost(env);
+        host.RefreshAll();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var http = new HttpClient { BaseAddress = host.Endpoint.BaseUri, Timeout = Timeout.InfiniteTimeSpan };
+        Assert.Equal(HttpStatusCode.Unauthorized, (await http.GetAsync("v1/changes", cts.Token)).StatusCode);
+
+        http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", host.Endpoint.Token);
+        using var resp = await http.GetAsync("v1/changes", HttpCompletionOption.ResponseHeadersRead, cts.Token);
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        Assert.Equal("text/event-stream", resp.Content.Headers.ContentType?.MediaType);
+        using var reader = new StreamReader(await resp.Content.ReadAsStreamAsync(cts.Token));
+        async Task<(string Event, JsonNode Data)> Next()
+        {
+            string? ev = null, data = null;
+            while (await reader.ReadLineAsync(cts.Token) is { } line)
+            {
+                if (line.StartsWith("event: ", StringComparison.Ordinal)) ev = line[7..];
+                else if (line.StartsWith("data: ", StringComparison.Ordinal)) data = line[6..];
+                else if (line.Length == 0 && ev is not null && data is not null) return (ev, JsonNode.Parse(data)!);
+            }
+            throw new EndOfStreamException();
+        }
+
+        var hello = await Next();
+        Assert.Equal("hello", hello.Event);
+        // The first pass with a listener compares against nothing yet, so it may report every source once: wait it out.
+        var version = (long)hello.Data["version"]!;
+        var settle = Task.Delay(TimeSpan.FromSeconds(1), cts.Token);
+        var first = Next();
+        if (await Task.WhenAny(first, settle) == first) version = (long)(await first).Data["version"]!;
+
+        AppendOrders(file, 11, 5);
+        var change = first.IsCompleted ? await Next() : await first;
+        while ((long)change.Data["version"]! <= version) change = await Next();
+        Assert.Equal("change", change.Event);
+        Assert.Contains(change.Data["sources"]!.AsArray(), s => (string?)s == "orders");
+        var sources = JsonNode.Parse(await http.GetStringAsync("v1/sources", cts.Token))!;
+        Assert.Equal(15, (long)sources["sources"]!.AsArray().Single(s => (string?)s!["name"] == "orders")!["records"]!);
+    }
+
     // ------------------------------------------------------------------ registration (plans only, nothing registered)
 
     private sealed class FakeRunner(Func<string, IReadOnlyList<string>, int>? exit = null) : ICommandRunner
