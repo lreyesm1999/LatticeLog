@@ -39,6 +39,18 @@ jobs:
           python-version: '3.12'
       - name: structlog (Python SDK local-mode tests, and SourcesTests' Python end-to-end test)
         run: python -m pip install structlog
+      - name: Rust toolchain (SdkTests/SourcesTests build sdks/rust/examples/smoke.rs; they fail in CI without cargo)
+        shell: bash
+        run: |
+          if ! command -v cargo >/dev/null 2>&1 && [ ! -x "$HOME/.cargo/bin/cargo" ]; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          fi
+          if [ -d "$HOME/.cargo/bin" ]; then
+            # GITHUB_PATH takes native paths (C:\... on Windows).
+            (cygpath -w "$HOME/.cargo/bin" 2>/dev/null || echo "$HOME/.cargo/bin") >> "$GITHUB_PATH"
+          fi
+          export PATH="$HOME/.cargo/bin:$PATH"
+          cargo --version
       - run: dotnet build LatticeLog.sln -c Release
       - run: dotnet test LatticeLog.sln -c Release --no-build
       - name: Python SDK tests (local mode, structlog)
