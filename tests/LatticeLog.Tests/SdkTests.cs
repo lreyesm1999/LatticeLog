@@ -127,6 +127,29 @@ public class SdkTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task TypeScript_sdk_spools_offline_and_ships_exactly_once_with_exact_types()
+    {
+        var (node, smoke, note) = TypeScriptSdk.Smoke;
+        if (node is null || smoke is null)
+        {
+            if (note.StartsWith("node not found", StringComparison.Ordinal)) { output.WriteLine(note); return; }
+            Assert.Fail(note);
+        }
+        var folder = TestData.TempDir();
+        var data = TestData.TempDir();
+        Assert.Equal(0, Run(node, [smoke, "offline", folder]).Exit); // local only, no server at all: 300 records
+        await using var server = await Start(data);
+        var (exit, text) = Run(node, [smoke, "ship", folder, server.BaseAddress.ToString().TrimEnd('/'), "sdk-secret"]);
+        Assert.True(exit == 0, text);
+        AssertShipped(data, "ts-orders", pythonTypes: true);
+        // The first process's file (records 1..300) is confirmed and closed: deleted. The newest one stays.
+        Assert.Equal(["latticelog-00000000000000000301.jsonl"],
+            Directory.GetFiles(Path.Combine(folder, "p-1"), "latticelog-*.jsonl").Select(Path.GetFileName));
+        Assert.Equal("""{"committed_through":500}""", File.ReadAllText(Path.Combine(folder, "p-1", "cursor.json")));
+        Assert.False(File.Exists(Path.Combine(folder, "p-1", "LOCK"))); // released at close
+    }
+
+    [Fact]
     public async Task Php_sdk_spools_offline_and_ships_exactly_once_with_exact_types()
     {
         var php = Find("php");

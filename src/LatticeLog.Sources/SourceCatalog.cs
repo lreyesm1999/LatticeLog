@@ -433,7 +433,12 @@ public sealed class SourceCatalog
             ["name"] = s.Name,
             ["kind"] = s.Kind switch
             {
-                SourceKind.Python => s.Producer == "latticelog-rust" ? "rust-local" : "python-local",
+                SourceKind.Python => s.Producer switch
+                {
+                    "latticelog-rust" => "rust-local",
+                    "latticelog-typescript" => "typescript-local",
+                    _ => "python-local",
+                },
                 SourceKind.DotNet => "dotnet-store",
                 _ => "migrated",
             },

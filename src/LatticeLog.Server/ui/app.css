@@ -13,7 +13,7 @@
   --edge: inset 0 1px 0 rgba(255, 255, 255, .6);
   --trace: #98a2b3; --debug: #7a8699; --info: #1f6fe0; --warn: #b86e00; --error: #d92d20; --fatal: #a3178f;
   --trace-bg: #f2f4f7; --debug-bg: #eef1f5; --info-bg: #e8f1fd; --warn-bg: #fff3dc; --error-bg: #fdecea; --fatal-bg: #fbe8f8;
-  --folder: #d99a2b; --python: #2f7de1; --rust: #c2561a; --dotnet: #7c5cf0; --migrated: #0e9f6e;
+  --folder: #d99a2b; --python: #2f7de1; --rust: #c2561a; --typescript: #2b7489; --dotnet: #7c5cf0; --migrated: #0e9f6e;
   --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Roboto, sans-serif;
   --font-display: "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, sans-serif;
   --mono: ui-monospace, "Cascadia Mono", "Cascadia Code", Consolas, "SF Mono", Menlo, monospace;
@@ -34,7 +34,7 @@
     --edge: inset 0 1px 0 rgba(255, 255, 255, .035);
     --trace: #6b7386; --debug: #8d96aa; --info: #62a8ff; --warn: #f4b649; --error: #ff6b61; --fatal: #f07fe0;
     --trace-bg: #1a1e27; --debug-bg: #1c2029; --info-bg: #12233a; --warn-bg: #2f240f; --error-bg: #361715; --fatal-bg: #32142e;
-    --folder: #e8b04a; --python: #62a8ff; --rust: #f0884b; --dotnet: #a48cff; --migrated: #34d399;
+    --folder: #e8b04a; --python: #62a8ff; --rust: #f0884b; --typescript: #4fb3c8; --dotnet: #a48cff; --migrated: #34d399;
   }
 }
 :root[data-theme="dark"] {
@@ -50,7 +50,7 @@
   --edge: inset 0 1px 0 rgba(255, 255, 255, .035);
   --trace: #6b7386; --debug: #8d96aa; --info: #62a8ff; --warn: #f4b649; --error: #ff6b61; --fatal: #f07fe0;
   --trace-bg: #1a1e27; --debug-bg: #1c2029; --info-bg: #12233a; --warn-bg: #2f240f; --error-bg: #361715; --fatal-bg: #32142e;
-  --folder: #e8b04a; --python: #62a8ff; --rust: #f0884b; --dotnet: #a48cff; --migrated: #34d399;
+  --folder: #e8b04a; --python: #62a8ff; --rust: #f0884b; --typescript: #4fb3c8; --dotnet: #a48cff; --migrated: #34d399;
 }
 
 * { box-sizing: border-box; }
@@ -515,6 +515,7 @@ table.ex-list { table-layout: auto; }
 .ic.k-folder, .ic.k-drive, .ic.k-project { color: var(--folder); }
 .ic.k-python-local { color: var(--python); }
 .ic.k-rust-local { color: var(--rust); }
+.ic.k-typescript-local { color: var(--typescript); }
 .ic.k-dotnet-store, .ic.k-store { color: var(--dotnet); }
 .ic.k-migrated { color: var(--migrated); }
 .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--line-strong); }
@@ -534,6 +535,7 @@ table.ex-list { table-layout: auto; }
 .pv-icon .ic { width: 24px; height: 24px; }
 .pv-icon.k-python-local { color: var(--python); }
 .pv-icon.k-rust-local { color: var(--rust); }
+.pv-icon.k-typescript-local { color: var(--typescript); }
 .pv-icon.k-dotnet-store, .pv-icon.k-store { color: var(--dotnet); }
 .pv-icon.k-migrated { color: var(--migrated); }
 .pv-title { flex: 1; min-width: 0; display: flex; flex-direction: column; }

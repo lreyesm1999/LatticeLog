@@ -1,11 +1,15 @@
 # Local sources: logs found by service name, and migration of traditional logs
 
 Status: implemented (alpha). Code: `src/LatticeLog.Sources`, `src/LatticeLog.Mcp`, `src/LatticeLog.Cli/SourceCommands.cs`,
-`sdks/python/latticelog/_local.py`, `sdks/python/latticelog/_structlog.py`, `sdks/rust/src/folder.rs`, `sdks/rust/src/writer.rs`.
-Tests: `tests/LatticeLog.Tests/SourcesTests.cs`, `sdks/python/tests/test_local.py`, `sdks/rust/tests/local.rs`.
+`sdks/python/latticelog/_local.py`, `sdks/python/latticelog/_structlog.py`, `sdks/rust/src/folder.rs`, `sdks/rust/src/writer.rs`, `sdks/typescript/src/folder.ts`, `sdks/typescript/src/logger.ts`.
+Tests: `tests/LatticeLog.Tests/SourcesTests.cs`, `sdks/python/tests/test_local.py`, `sdks/rust/tests/local.rs`,
+`sdks/typescript/test/local.test.mjs`.
 
-The Rust SDK (`latticelog::open`) writes the same layout and the same documents (section 1, *Folder layout*). In
-server mode it also keeps `cursor.json` (`{"committed_through": N}`) in each process folder it ships.
+The Rust SDK (`latticelog::open`) and the TypeScript SDK (`open()` of the npm package `latticelog`) write the same
+layout and the same documents (section 1, *Folder layout*). In server mode they also keep `cursor.json`
+(`{"committed_through": N}`) in each process folder they ship. Node.js has no portable file lock. The TypeScript
+SDK claims `p-N` by creating `LOCK` exclusively with its pid, host and start time. It takes over a `LOCK` only when
+that process is certainly gone (`sdks/typescript/README.md`, *Process folders without an OS lock*).
 
 The developer flow has three parts:
 
@@ -36,8 +40,9 @@ logs/orders-api/
   p-2/ ...
 ```
 
-Manifest `latticelog.source.json` (the Rust SDK adds `"producer":"latticelog-rust"`, and `list_sources` then reports
-the kind `rust-local` instead of `python-local`; everything else is identical):
+Manifest `latticelog.source.json` (the Rust SDK adds `"producer":"latticelog-rust"` and the TypeScript SDK
+`"producer":"latticelog-typescript"`, and `list_sources` then reports the kind `rust-local` or `typescript-local`
+instead of `python-local`; everything else is identical):
 
 ```json
 {"format": "latticelog.source", "version": 1, "service": "orders-api", "environment": "dev",
@@ -132,7 +137,7 @@ Each root is walked breadth-first (depth ≤ 8, ≤ 50,000 folders; hidden folde
 
 | marker | kind | name |
 |---|---|---|
-| `latticelog.source.json` | `python-local` (`rust-local` when the manifest's `producer` is `latticelog-rust`) | the manifest's `service` |
+| `latticelog.source.json` | `python-local` (`rust-local` when the manifest's `producer` is `latticelog-rust`, `typescript-local` when it is `latticelog-typescript`) | the manifest's `service` |
 | `STORE.json` (`"format":"latticelog.store"`) | `dotnet-store` | the manifest's `service` if a `latticelog.source.json` sits next to it, else the folder name |
 
 and its subfolders are not searched further. `[sources]` entries name a folder directly. Migrated sources come from

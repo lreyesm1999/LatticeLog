@@ -85,6 +85,28 @@ jobs:
       - run: cargo clippy --all-features -- -D warnings
       - run: cargo test --features server
 
+  typescript-sdk:
+    # The TypeScript/Node.js SDK on its own: type check and build (tsc), then node:test (local mode, server mode against
+    # a fake ingest server, pino and winston integrations), on the oldest supported Node.js and a current one. The
+    # cross-language tests against the real server run in build-test (SdkTests/SourcesTests build the package and run
+    # sdks/typescript/examples/smoke.mjs with the runner's node; skipped when node is missing).
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: ['20', '24']
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: sdks/typescript
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+
   aot:
     # The single-file Native AOT executable that `latticelog setup` installs: built per OS (a native linker is needed:
     # MSVC on the Windows runner, clang on Linux), then smoke-tested with dotnet removed from PATH and every DOTNET_*

@@ -1,0 +1,67 @@
+{
+  "name": "latticelog",
+  "version": "0.1.0-alpha.1",
+  "description": "LatticeLog SDK for Node.js: typed structured logs in a local folder found by service name, optionally shipped to latticelog-server",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lreyesm1999/LatticeLog.git",
+    "directory": "sdks/typescript"
+  },
+  "keywords": [
+    "logging",
+    "structured-logging",
+    "latticelog",
+    "pino",
+    "winston",
+    "mcp"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./pino": {
+      "types": "./dist/pino.d.ts",
+      "default": "./dist/pino.js"
+    },
+    "./pino-transport": {
+      "types": "./dist/pino-transport.d.ts",
+      "default": "./dist/pino-transport.js"
+    },
+    "./winston": {
+      "types": "./dist/winston.d.ts",
+      "default": "./dist/winston.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepare": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.json && node --test --test-concurrency=1 test/values.test.mjs test/local.test.mjs test/server.test.mjs test/integrations.test.mjs",
+    "bench": "node bench/bench.mjs"
+  },
+  "peerDependencies": {
+    "winston-transport": ">=4.5"
+  },
+  "peerDependenciesMeta": {
+    "winston-transport": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "20.17.10",
+    "pino": "9.5.0",
+    "typescript": "5.7.2",
+    "winston": "3.17.0",
+    "winston-transport": "4.9.0"
+  }
+}

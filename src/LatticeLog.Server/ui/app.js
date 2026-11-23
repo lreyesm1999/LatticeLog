@@ -952,6 +952,7 @@ function icon(name, cls = "") {
 const KINDS = {
   "python-local": { icon: "python", label: "Service (Python)" },
   "rust-local": { icon: "python", label: "Service (Rust)" },
+  "typescript-local": { icon: "python", label: "Service (Node.js)" },
   "dotnet-store": { icon: "dotnet", label: "Service (.NET)" },
   migrated: { icon: "migrated", label: "Migrated log" },
   store: { icon: "dotnet", label: "Source" },
@@ -1384,7 +1385,7 @@ function sourcePreview(box, s) {
       ["To", last ? `${fmtFull(last)} (${ago(last)})` : null],
       ["Service", s.service && s.service !== s.name ? s.service : null],
       ["Environment", s.environment],
-      ["Processes", s.kind === "python-local" || s.kind === "rust-local" ? s.processes : null],
+      ["Processes", ["python-local", "rust-local", "typescript-local"].includes(s.kind) ? s.processes : null],
       ["Retention", s.retention],
       ["Indexed", s.last_indexed ? ago(toMs(s.last_indexed)) : null],
       ["Last error", s.last_error],
