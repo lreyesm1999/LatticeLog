@@ -38,24 +38,33 @@ public static class UpdateCommands
             : ByTag(http, repo, wanted.StartsWith('v') ? wanted : "v" + wanted);
         var current = Program.Version;
         var cmp = SemVer.Compare(release.Version, current);
-        Console.WriteLine($"Installed: {current}. {(wanted is null ? "Latest" : "Requested")} release: {release.Version}{(release.Prerelease ? " (pre-release)" : "")}  {release.PageUrl}");
+        Term.Header("update");
+        Term.Field("Installed", current);
+        Term.Field(wanted is null ? "Latest" : "Requested", Term.Bold(release.Version) + (release.Prerelease ? "  " + Term.Dim("pre-release") : ""));
+        Term.Field("Release", Term.Dim(release.PageUrl));
+        Console.WriteLine();
 
         if (a.Has("check"))
         {
-            Console.WriteLine(cmp > 0 ? "An update is available: run 'llog update'." : "Up to date.");
+            if (cmp > 0) Term.Step("An update is available", "run 'llog update'");
+            else Term.Ok("Up to date");
             return ExitCodes.Ok;
         }
         if (wanted is null && cmp <= 0 && !a.Has("force"))
         {
-            Console.WriteLine("Up to date.");
+            Term.Ok("Up to date", "nothing to install");
             return ExitCodes.Ok;
         }
         if (!release.Assets.TryGetValue(asset, out var assetUrl) || !release.Assets.TryGetValue("SHA256SUMS", out var sumsUrl))
             throw new CliException(ExitCodes.NotFound, $"Release {release.Tag} has no {asset} or SHA256SUMS.");
         if (!a.Has("yes") && !Console.IsInputRedirected)
         {
-            Console.Write($"Install LatticeLog {release.Version} now? The service restarts; data and settings are kept. [Y/n] ");
-            if (Console.ReadLine()?.Trim().ToLowerInvariant() is "n" or "no") { Console.WriteLine("Nothing changed."); return ExitCodes.Ok; }
+            if (!Term.ConfirmYes($"Install {Term.Bold(release.Version)} now? The service restarts; data and settings are kept."))
+            {
+                Term.Ok("Nothing changed");
+                return ExitCodes.Ok;
+            }
+            Console.WriteLine();
         }
 
         var work = Path.Combine(Path.GetTempPath(), "latticelog-update-" + Guid.NewGuid().ToString("N")[..8]);
@@ -63,18 +72,21 @@ public static class UpdateCommands
         try
         {
             var exe = Path.Combine(work, OperatingSystem.IsWindows() ? "latticelog.exe" : "latticelog");
-            Console.WriteLine($"Downloading {asset}...");
-            Download(http, assetUrl, exe);
+            if (!Term.Color) Console.WriteLine($"Downloading {asset}...");
+            var size = Download(http, assetUrl, exe, asset);
+            Term.Ok($"Downloaded {asset}", Term.Size(size));
             var sums = http.GetStringAsync(sumsUrl).GetAwaiter().GetResult();
             var expected = ExpectedHash(sums, asset) ?? throw new CliException(ExitCodes.DataError, $"SHA256SUMS of {release.Tag} has no line for {asset}.");
             var actual = Sha256(exe);
             if (!string.Equals(expected, actual, StringComparison.OrdinalIgnoreCase))
                 throw new CliException(ExitCodes.DataError, $"Checksum mismatch for {asset}: expected {expected}, got {actual}. Nothing was installed.");
-            Console.WriteLine($"Checksum verified (SHA-256 {actual[..16]}...).");
+            Term.Ok("Checksum verified", $"SHA-256 {actual[..16]}{Term.Ellipsis}");
             if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(exe, (UnixFileMode)0b111_101_101);
 
             // The new version installs itself: same install folder as this one, no change to the MCP client entries.
-            var args = new List<string> { "setup", "--yes", "--clients", "none" };
+            // --updating: setup leaves out its own summary and next steps (this command prints its own); older
+            // versions, reached with --version, ignore it.
+            var args = new List<string> { "setup", "--yes", "--updating", "--clients", "none" };
             if (a.Get("install-dir") is { } dir) args.AddRange(["--install-dir", Path.GetFullPath(dir)]);
             else if (InstalledDir() is { } here) args.AddRange(["--install-dir", here]);
             if (a.Get("config-dir") is { } cd) args.AddRange(["--config-dir", Path.GetFullPath(cd)]);
@@ -82,7 +94,13 @@ public static class UpdateCommands
             foreach (var x in args) psi.ArgumentList.Add(x);
             using var p = Process.Start(psi) ?? throw new CliException(ExitCodes.Internal, "Could not start the downloaded executable.");
             p.WaitForExit();
-            if (p.ExitCode == 0) Console.WriteLine($"Updated to LatticeLog {release.Version}. Restart your AI tools to load the new MCP server.");
+            if (p.ExitCode == 0)
+            {
+                Console.WriteLine();
+                Term.Ok(Term.Bold($"Updated to LatticeLog {release.Version}"), $"{current} {Term.Arrow} {release.Version}");
+                Term.Note("Restart your AI tools to load the new MCP server.");
+                Console.WriteLine();
+            }
             return p.ExitCode;
         }
         finally
@@ -149,13 +167,25 @@ public static class UpdateCommands
         return new Release(tag, tag.TrimStart('v'), (string?)r["html_url"] ?? "", (bool?)r["prerelease"] == true, assets);
     }
 
-    private static void Download(HttpClient http, string url, string path)
+    /// <summary>Downloads <paramref name="url"/> to <paramref name="path"/> with a progress bar on a terminal; returns the size.</summary>
+    private static long Download(HttpClient http, string url, string path, string label)
     {
         using var resp = http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult();
         if (!resp.IsSuccessStatusCode) throw new CliException(ExitCodes.Internal, $"Download failed ({(int)resp.StatusCode}): {url}");
         using var src = resp.Content.ReadAsStream();
         using var dst = File.Create(path);
-        src.CopyTo(dst);
+        using var progress = new Term.Progress($"Downloading {label}", resp.Content.Headers.ContentLength);
+        var buffer = new byte[81920];
+        long done = 0;
+        int n;
+        while ((n = src.Read(buffer)) > 0)
+        {
+            dst.Write(buffer, 0, n);
+            done += n;
+            progress.Report(done);
+        }
+        progress.Report(done, force: true);
+        return done;
     }
 
     /// <summary>The hash <c>sha256sum</c> recorded for <paramref name="file"/> in a SHA256SUMS text.</summary>

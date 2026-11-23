@@ -209,9 +209,9 @@ public static class ServiceCommands
     internal static int Register(ServiceRegistration reg, string? method, bool dryRun, bool start, string? configDir, string? exeForSpawn = null)
     {
         var plan = reg.InstallPlan(method);
-        Console.WriteLine((dryRun ? "Would register: " : "Registering: ") + plan);
         if (dryRun)
         {
+            Console.WriteLine("Would register: " + plan);
             foreach (var (path, content, _) in plan.WriteFiles)
             {
                 Console.WriteLine($"--- {path}");
@@ -222,22 +222,25 @@ public static class ServiceCommands
         var existing = reg.Detect();
         if (existing is not null && existing != plan.Method)
         {
-            Console.WriteLine($"Removing the previous registration ({existing}).");
+            Term.Step("Removing the previous registration", existing);
             reg.Apply(reg.UninstallPlan(existing));
         }
+        // What is written and run stays visible (dimmed): registration touches the user's system.
+        var lines = plan.ToString().Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        Term.Step("Registering", lines[0].TrimEnd('.'));
+        foreach (var line in lines.Skip(1)) Term.Note("  " + line);
         reg.Apply(plan);
-        Console.WriteLine($"Registered ({plan.Method}): the service starts at logon, runs as {reg.UserId} and listens on 127.0.0.1 only.");
+        Term.Ok("Service registered", Term.Join(plan.Method, "starts at logon", "runs as " + reg.UserId, "127.0.0.1 only"));
         if (!start) return ExitCodes.Ok;
         if (ServiceClient.Running(configDir) is { } ep)
         {
-            Console.WriteLine($"A service is already running (pid {ep.Pid}); 'latticelog service restart' switches to the registered one.");
+            Term.Warn($"A service is already running (pid {ep.Pid})", "'llog service restart' switches to the registered one");
             return ExitCodes.Ok;
         }
         if (!reg.StartRegistered(plan.Method)) SpawnInstalled(exeForSpawn, configDir);
         var running = ServiceClient.WaitRunning(configDir, TimeSpan.FromSeconds(30));
-        Console.WriteLine(running is null
-            ? $"Registered, but it did not answer within 30 s; see {ServicePaths.LogFile(reg.DataDir)}."
-            : $"Started: pid {running.Pid}, 127.0.0.1:{running.Port}.");
+        if (running is null) Term.Warn("Registered, but it did not answer within 30 s", "see " + ServicePaths.LogFile(reg.DataDir));
+        else Term.Ok("Service running", Term.Join("pid " + running.Pid, $"127.0.0.1:{running.Port}"));
         return ExitCodes.Ok;
     }
 
@@ -268,14 +271,15 @@ public static class ServiceCommands
             Console.WriteLine(method is null ? "Not registered; nothing to remove." : "Would run: " + reg.UninstallPlan(method));
             return ExitCodes.Ok;
         }
-        if (ServiceClient.Stop(configDir, TimeSpan.FromSeconds(30))) Console.WriteLine("Stopped the running service.");
+        if (ServiceClient.Stop(configDir, TimeSpan.FromSeconds(30))) Term.Ok("Stopped the service");
         if (method is null)
         {
-            Console.WriteLine("The service was not registered.");
+            Term.Ok("The service was not registered", "nothing to remove");
             return ExitCodes.Ok;
         }
         reg.Apply(reg.UninstallPlan(method));
-        Console.WriteLine($"Unregistered ({method}). Indexes and migrated sources stay in {reg.DataDir}; your original log files were never changed.");
+        Term.Ok("Service unregistered", method);
+        Term.Note($"Indexes and migrated sources stay in {reg.DataDir}; your original log files were never changed.");
         return ExitCodes.Ok;
     }
 
@@ -331,7 +335,7 @@ public static class ServiceCommands
                 if (File.Exists(link) || Directory.Exists(link)) File.Delete(link);
                 File.CreateSymbolicLink(link, ExeName);
             }
-            Console.WriteLine($"Short command: llog (same as latticelog), in {installDir}.");
+            Term.Ok($"Short command {Term.Accent("llog")}", "same as latticelog");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -357,17 +361,23 @@ public static class ServiceCommands
         var target = Path.Combine(installDir, ExeName);
         var clients = ChooseClients(a);
 
-        Console.WriteLine("LatticeLog setup");
-        Console.WriteLine($"  executable : {target}");
-        Console.WriteLine($"  service    : {(a.Has("no-service") ? "not registered (--no-service)" : "registered per user, starts at logon, 127.0.0.1 only")}");
-        Console.WriteLine($"  MCP clients: {(clients.Count == 0 ? "none" : string.Join(", ", clients))}");
-        Console.WriteLine($"  PATH       : {(a.Has("no-path") ? "unchanged (--no-path)" : installDir)}");
-        if (dryRun) { Console.WriteLine("(dry run: nothing changed)"); return ExitCodes.Ok; }
+        // Run by 'llog update': that command already printed what is installed and prints the outcome.
+        var updating = a.Has("updating");
+        if (!updating)
+        {
+            Term.Header("setup", Program.Version);
+            Term.Field("Executable", target);
+            Term.Field("Service", a.Has("no-service") ? Term.Dim("not registered (--no-service)") : Term.Join("per user", "starts at logon", "127.0.0.1 only"));
+            Term.Field("MCP clients", clients.Count == 0 ? Term.Dim("none") : string.Join(", ", clients));
+            Term.Field("PATH", a.Has("no-path") ? Term.Dim("unchanged (--no-path)") : installDir);
+            Console.WriteLine();
+        }
+        if (dryRun) { Term.Ok("Dry run", "nothing changed"); return ExitCodes.Ok; }
 
         // 1. copy (stop a running service first: on Windows its executable cannot be replaced while it runs)
         if (!PathPolicy.SamePath(Path.GetFullPath(self), target))
         {
-            if (ServiceClient.Stop(configDir, TimeSpan.FromSeconds(30))) Console.WriteLine("Stopped the running service to replace its executable.");
+            if (ServiceClient.Stop(configDir, TimeSpan.FromSeconds(30))) Term.Ok("Stopped the service", "to replace its executable");
             Directory.CreateDirectory(installDir);
             ServiceLauncher.DeleteOldCopies(installDir);
             var tmp = target + ".new";
@@ -375,9 +385,13 @@ public static class ServiceCommands
             if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(tmp, (UnixFileMode)0b111_101_101);
             // An editor may be running 'latticelog.exe mcp' right now: then the old file is moved aside, not overwritten.
             var aside = ServiceLauncher.ReplaceFile(tmp, target);
-            Console.WriteLine($"Installed {target}.");
+            Term.Ok($"Installed {Term.Bold(ExeName)} {Program.Version}", installDir);
             if (aside is not null)
-                Console.WriteLine($"  The previous version is still running (an MCP client, probably): it was moved to {Path.GetFileName(aside)} and is removed by the next setup once it has exited. Restart your AI tools to load the new version.");
+            {
+                Term.Warn("The previous version is still in use", "probably by an MCP client");
+                Term.Note($"Moved to {Path.GetFileName(aside)}; the next setup removes it once it has exited.");
+                Term.Note("Restart your AI tools to load the new version.");
+            }
         }
         WriteShortAlias(installDir);
         // 2. PATH
@@ -397,13 +411,18 @@ public static class ServiceCommands
             try { SourceCommands.Mcp(new Args(argv)); }
             catch (CliException ex) { Console.Error.WriteLine($"{c}: {ex.Message}"); }
         }
+        if (updating) return ExitCodes.Ok;
         Console.WriteLine();
-        Console.WriteLine("Done. Next:");
-        Console.WriteLine("  latticelog roots add <folder>     register the folder your services write logs into");
-        Console.WriteLine("  latticelog service status         sources, last indexed time, disk use, errors");
-        Console.WriteLine("  llog ui                           web console in your browser (llog = latticelog)");
-        if (clients.Count > 0) Console.WriteLine($"  restart {string.Join(", ", clients)} so they load the LatticeLog MCP server");
-        Console.WriteLine("Uninstall: latticelog setup --uninstall [--remove-data]");
+        Term.Ok(Term.Bold("LatticeLog is ready"), Program.Version);
+        if (clients.Count > 0) Term.Note($"Restart {string.Join(", ", clients)} so they load the LatticeLog MCP server.");
+        Term.Commands("Next", [
+            ("llog roots add <folder>", "register the folder your services write logs into"),
+            ("llog service status", "sources, last indexed time, disk use, errors"),
+            ("llog ui", "web console in your browser (llog = latticelog)"),
+        ]);
+        Console.WriteLine();
+        Console.WriteLine("  " + Term.Dim("Uninstall: llog setup --uninstall [--remove-data]"));
+        Console.WriteLine();
         return ExitCodes.Ok;
     }
 
@@ -445,10 +464,13 @@ public static class ServiceCommands
             if (user.Split(sep, StringSplitOptions.RemoveEmptyEntries).Any(p => PathPolicy.SamePath(p.TrimEnd('\\'), dir.TrimEnd('\\'))))
                 return;
             Environment.SetEnvironmentVariable("Path", user.Length == 0 ? dir : user.TrimEnd(sep) + sep + dir, EnvironmentVariableTarget.User);
-            Console.WriteLine($"Added {dir} to your user PATH (new terminals see it).");
+            Term.Ok("Added to your user PATH", "new terminals see it");
         }
         else if (!(Environment.GetEnvironmentVariable("PATH") ?? "").Split(sep).Any(p => PathPolicy.SamePath(p.TrimEnd('/'), dir.TrimEnd('/'))))
-            Console.WriteLine($"Add {dir} to PATH in your shell profile (for example: export PATH=\"{dir}:$PATH\").");
+        {
+            Term.Warn($"{dir} is not on your PATH");
+            Term.Note($"Add it in your shell profile, for example: export PATH=\"{dir}:$PATH\"");
+        }
     }
 
     private static void RemoveFromPath(string dir)
@@ -458,7 +480,7 @@ public static class ServiceCommands
         var parts = user.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries).ToList();
         if (parts.RemoveAll(p => PathPolicy.SamePath(p.TrimEnd('\\'), dir.TrimEnd('\\'))) == 0) return;
         Environment.SetEnvironmentVariable("Path", string.Join(Path.PathSeparator, parts), EnvironmentVariableTarget.User);
-        Console.WriteLine($"Removed {dir} from your user PATH.");
+        Term.Ok("Removed from your user PATH", dir);
     }
 
     private static int SetupUninstall(Args a)
@@ -467,7 +489,9 @@ public static class ServiceCommands
         var installDir = Path.GetFullPath(a.Get("install-dir") ?? DefaultInstallDir);
         var dryRun = a.Has("dry-run");
         var dataDir = ServicePaths.ResolveDataDir(configDir);
-        Console.WriteLine($"Uninstalling LatticeLog from {installDir}{(dryRun ? " (dry run)" : "")}.");
+        Term.Header("uninstall", dryRun ? "dry run" : null);
+        Term.Field("From", installDir);
+        Console.WriteLine();
         if (dryRun)
         {
             Console.WriteLine("  stop the service, remove its registration, remove 'latticelog' from claude-desktop/claude-code/cursor/vscode user configs,");
@@ -484,14 +508,26 @@ public static class ServiceCommands
         if (a.Has("keep-files"))
         {
             // The Windows installer (MSI) removes the files itself, after this command; deleting them here would race it.
-            Console.WriteLine($"Left the files in {installDir} in place (--keep-files).");
+            Term.Ok("Left the files in place", "--keep-files");
         }
         else DeleteInstalledFiles(installDir);
         if (a.Has("remove-data"))
         {
-            if (Directory.Exists(dataDir)) { Directory.Delete(dataDir, recursive: true); Console.WriteLine($"Deleted the data folder {dataDir} (indexes and migrated sources; your original logs were never inside it)."); }
+            if (Directory.Exists(dataDir))
+            {
+                Directory.Delete(dataDir, recursive: true);
+                Term.Ok("Deleted the data folder", dataDir);
+                Term.Note("Indexes and migrated sources; your original logs were never inside it.");
+            }
         }
-        else Console.WriteLine($"Kept the data folder {dataDir} and the config folder {ServicePaths.ResolveConfigDir(configDir)} (--remove-data deletes the data folder).");
+        else
+        {
+            Term.Ok("Kept your data", Term.Join(dataDir, ServicePaths.ResolveConfigDir(configDir)));
+            Term.Note("--remove-data deletes the data folder.");
+        }
+        Console.WriteLine();
+        Term.Ok(Term.Bold("LatticeLog is uninstalled"));
+        Console.WriteLine();
         return ExitCodes.Ok;
     }
 
@@ -505,7 +541,7 @@ public static class ServiceCommands
         foreach (var f in files)
         {
             if (PathPolicy.SamePath(f, self) && OperatingSystem.IsWindows()) { later.Add(f); continue; }
-            try { File.Delete(f); Console.WriteLine($"Deleted {f}."); }
+            try { File.Delete(f); Term.Ok("Deleted", f); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { later.Add(f); }
         }
         if (later.Count > 0)
@@ -515,9 +551,10 @@ public static class ServiceCommands
                 // This executable is running: delete it (and the folder, if left empty) right after this process exits.
                 var cmd = $"/d /c ping -n 3 127.0.0.1 >nul & del /f /q {string.Join(' ', later.Select(f => "\"" + f + "\""))} & rmdir \"{installDir}\" 2>nul";
                 Process.Start(new ProcessStartInfo("cmd.exe", cmd) { UseShellExecute = true, WindowStyle = ProcessWindowStyle.Hidden })?.Dispose();
-                Console.WriteLine($"{string.Join(", ", later)} will be deleted a few seconds after this command exits.");
+                Term.Ok("Scheduled for deletion", string.Join(", ", later.Select(Path.GetFileName)));
+                Term.Note("Removed a few seconds after this command exits.");
             }
-            else Console.WriteLine($"Delete manually: {string.Join(", ", later)}");
+            else Term.Warn("Delete manually", string.Join(", ", later));
         }
     }
 

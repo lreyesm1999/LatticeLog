@@ -124,10 +124,9 @@ kbd { font-size: 11px; color: var(--muted); background: var(--surface-2); border
 }
 .brand { display: flex; align-items: center; gap: 9px; font: 700 15px/1 var(--font-display); letter-spacing: .1px; }
 .logo {
-  width: 28px; height: 28px; padding: 5px; border-radius: 8px; fill: rgba(255, 255, 255, .55);
-  background: linear-gradient(135deg, var(--accent-2), var(--accent)); box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 40%, transparent);
+  width: 28px; height: 28px; border-radius: 8px; fill: none; stroke: #ffffff; stroke-width: 3.6; stroke-linecap: round;
+  background: linear-gradient(135deg, #00bfff, #2563ff 50%, #7a1cff); box-shadow: 0 2px 8px rgba(37, 99, 255, .4);
 }
-.logo .logo-accent { fill: #ffffff; }
 .ic { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
 .source-btn { display: inline-flex; align-items: center; gap: 8px; padding: 6px 10px 6px 8px; font-weight: 600; max-width: 320px; border-radius: 10px; }
 .source-btn .sb-name { overflow: hidden; text-overflow: ellipsis; }

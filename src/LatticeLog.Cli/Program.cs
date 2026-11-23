@@ -57,7 +57,7 @@ public sealed class Args
 
     private static readonly HashSet<string> Flags = ["follow", "no-index", "force", "stdout", "pretty", "help", "preserve-raw", "no-redact", "desc", "explain", "preview", "yes", "dry-run", "no-refresh",
         "no-service", "no-start", "no-project", "no-path", "open", "no-open", "verbose", "uninstall", "remove-data", "keep-files", "clear",
-        "check", "prerelease"];
+        "check", "prerelease", "updating"];
 
     /// <summary>One-letter forms of common flags: <c>llog ui -o</c>, <c>-h</c>, <c>-y</c>.</summary>
     private static readonly Dictionary<char, string> ShortFlags = new() { ['o'] = "open", ['h'] = "help", ['y'] = "yes" };

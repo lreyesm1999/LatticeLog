@@ -27,6 +27,12 @@
     reader now also verifies the `v0.3` golden files;
   - logo, GitHub social preview image and real console screenshots in `docs/assets/`
     (`scripts/render-assets.ps1`, `scripts/screenshots/`);
+  - new visual identity: the `//` mark on a blue-to-violet tile is the icon of the executable, the installer and the
+    console's top bar; a new README banner, and the `//log` wordmark in `docs/assets/wordmark.png` (light backgrounds)
+    and `wordmark-dark.png`;
+  - `llog update`, `llog setup` and `setup --uninstall` print a styled summary on a terminal: the brand mark, aligned
+    fields, ✓/!/› status lines, a download progress bar and a "Next" list. Redirected output and `NO_COLOR` get the same
+    words with no escape codes; on Windows the console code page is switched to UTF-8 only while the command runs;
   - `SUPPORT.md`, a Question issue template, and a first-contribution path in `CONTRIBUTING.md`.
 - **Windows installer (MSI)** with a setup wizard: welcome, license, a *Custom Setup* tree (background service, PATH,
   and the AI tools to connect: Claude Desktop, Claude Code, Cursor, VS Code, preselected when found), install, and a
