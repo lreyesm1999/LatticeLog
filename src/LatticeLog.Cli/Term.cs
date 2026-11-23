@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Runtime.InteropServices;
 using System.Text;
 
 namespace LatticeLog.Cli;
@@ -34,7 +33,7 @@ internal static class Term
     public static void Header(string title, string? note = null)
     {
         Console.WriteLine();
-        Console.WriteLine($"  {Mark} {Bold("LatticeLog")} {Dim("·")} {title}{(note is null ? "" : "  " + Dim(note))}");
+        Console.WriteLine($"  {Mark} {Bold("LatticeLog")} {Dim(Unicode ? "·" : "-")} {title}{(note is null ? "" : "  " + Dim(note))}");
         Console.WriteLine();
     }
 
@@ -138,66 +137,38 @@ internal static class Term
     private static (bool Color, bool Unicode) Detect()
     {
         if (Console.IsOutputRedirected) return (false, false);
-        if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("NO_COLOR"))) return (false, UnicodeOutput());
-        if (Environment.GetEnvironmentVariable("TERM") == "dumb") return (false, false);
-        if (OperatingSystem.IsWindows() && !Windows.EnableVirtualTerminal()) return (false, false);
-        return (true, UnicodeOutput());
+        // The classic Windows console window shows escape codes as text unless the program turns VT processing on, which
+        // takes native calls; this tool makes none, so that window gets the plain output.
+        var modern = !OperatingSystem.IsWindows() || VirtualTerminalHost();
+        var unicode = modern && UnicodeOutput();
+        if (!string.IsNullOrEmpty(Env("NO_COLOR")) || Env("TERM") == "dumb") return (false, unicode);
+        return (modern, unicode);
     }
 
+    private static string? Env(string name) => Environment.GetEnvironmentVariable(name);
+
     /// <summary>
-    /// Whether ✓ and friends can be written. Elsewhere the terminal is UTF-8 in practice. On Windows the console code
-    /// page decides: when it is not UTF-8 yet, switch it for this process (modern terminals draw the marks) and put the
-    /// previous one back on exit, so the shell keeps its own code page.
+    /// Windows hosts that process ANSI escape codes for every program: Windows Terminal, and the terminals built on
+    /// ConPTY that say so (VS Code and IDE terminals set TERM or TERM_PROGRAM, as do mintty and Git Bash), ConEmu, ANSICON.
+    /// </summary>
+    private static bool VirtualTerminalHost() =>
+        Env("WT_SESSION") is not null || Env("TERM") is not null || Env("TERM_PROGRAM") is not null
+        || Env("ConEmuANSI") == "ON" || Env("ANSICON") is not null;
+
+    /// <summary>
+    /// Whether ✓ and friends can be written. Elsewhere the terminal is UTF-8 in practice. On Windows, UTF-16 output makes
+    /// .NET write with WriteConsoleW, which draws any character and leaves the console code page (the shell's) alone.
+    /// Not when stderr is redirected: the encoding applies to it too, and a file would get UTF-16.
     /// </summary>
     private static bool UnicodeOutput()
     {
         if (!OperatingSystem.IsWindows()) return true;
-        var original = Windows.GetConsoleOutputCP();
-        if (original == 65001) return true;
-        if (original == 0) return false;
+        if (Console.IsErrorRedirected) return false;
         try
         {
-            Console.OutputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
-            AppDomain.CurrentDomain.ProcessExit += (_, _) =>
-            {
-                Console.Out.Flush();
-                Windows.SetConsoleOutputCP(original);
-            };
+            Console.OutputEncoding = Encoding.Unicode;
             return true;
         }
         catch (Exception ex) when (ex is IOException or PlatformNotSupportedException) { return false; }
-    }
-
-    private static class Windows
-    {
-        private const int StdOutputHandle = -11;
-        private const uint EnableVirtualTerminalProcessing = 0x0004;
-
-        [DllImport("kernel32.dll")]
-        private static extern nint GetStdHandle(int handle);
-
-        [DllImport("kernel32.dll")]
-        private static extern int GetConsoleMode(nint handle, out uint mode);
-
-        [DllImport("kernel32.dll")]
-        private static extern int SetConsoleMode(nint handle, uint mode);
-
-        [DllImport("kernel32.dll")]
-        public static extern uint GetConsoleOutputCP();
-
-        [DllImport("kernel32.dll")]
-        public static extern int SetConsoleOutputCP(uint codePage);
-
-        /// <summary>Turns on ANSI escape handling for this console; false when it is not a console or refuses.</summary>
-        public static bool EnableVirtualTerminal()
-        {
-            try
-            {
-                var h = GetStdHandle(StdOutputHandle);
-                if (h is 0 or -1 || GetConsoleMode(h, out var mode) == 0) return false;
-                return (mode & EnableVirtualTerminalProcessing) != 0 || SetConsoleMode(h, mode | EnableVirtualTerminalProcessing) != 0;
-            }
-            catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException) { return false; }
-        }
     }
 }

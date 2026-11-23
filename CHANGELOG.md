@@ -32,7 +32,8 @@
     and `wordmark-dark.png`;
   - `llog update`, `llog setup` and `setup --uninstall` print a styled summary on a terminal: the brand mark, aligned
     fields, ✓/!/› status lines, a download progress bar and a "Next" list. Redirected output and `NO_COLOR` get the same
-    words with no escape codes; on Windows the console code page is switched to UTF-8 only while the command runs;
+    words with no escape codes. On Windows, colors in Windows Terminal, VS Code and other modern terminals; the classic
+    console window gets plain output. The console code page is never changed;
   - `SUPPORT.md`, a Question issue template, and a first-contribution path in `CONTRIBUTING.md`.
 - **Windows installer (MSI)** with a setup wizard: welcome, license, a *Custom Setup* tree (background service, PATH,
   and the AI tools to connect: Claude Desktop, Claude Code, Cursor, VS Code, preselected when found), install, and a
