@@ -1,6 +1,6 @@
 # Web console screenshots
 
-Real screenshots of the console (`llog ui`) taken on 2026-11-21 from commit `4b61529` plus this branch, against an
+Real screenshots of the console (`llog ui`) taken on 2026-11-23 from commit `649f7b3` (the new logo), against an
 **isolated** service instance and **demo data only**:
 
 | file | what it shows | data |
