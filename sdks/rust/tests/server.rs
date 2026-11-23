@@ -18,6 +18,8 @@ struct Req {
     gap: bool,
     producer: [u8; 16],
     body: String,
+    /// The HTTP status the server answered.
+    status: u16,
 }
 
 impl Req {
@@ -72,9 +74,10 @@ fn server(script: Arc<Script>) -> (String, Arc<Mutex<Vec<Req>>>) {
             assert_eq!(last - first + 1, u64::from(count), "dense batch");
             let mut body = String::new();
             flate2::read::GzDecoder::new(&env[48..]).read_to_string(&mut body).unwrap();
-            let req = Req { headers, first, count, gap: env[7] & 1 == 1, producer: env[8..24].try_into().unwrap(), body };
+            let mut req = Req { headers, first, count, gap: env[7] & 1 == 1, producer: env[8..24].try_into().unwrap(), body, status: 0 };
             assert_eq!(req.seqs(), (first..=last).collect::<Vec<_>>(), "the body holds exactly the announced records");
             let (status, mut reply) = script(&req, committed);
+            req.status = status;
             if status == 200 && reply.is_empty() {
                 if last > committed && (first <= committed + 1 || req.gap) {
                     committed = last;
@@ -161,6 +164,13 @@ fn latticelog_hex(b: &[u8; 16]) -> String {
 #[test]
 fn retries_after_503_and_splits_after_413() {
     let dir = temp_dir("retry");
+    // The 100 records are on disk before shipping starts, so the first batch holds all of them: written while the
+    // shipper runs, a first batch could be small enough to never meet the 413.
+    let offline = latticelog::open(&dir, Options::new("svc").durability(Durability::Durable)).unwrap();
+    for i in 0..100 {
+        latticelog::info!(offline, "x", i = i);
+    }
+    offline.close();
     let calls = Arc::new(Mutex::new(0u32));
     let c2 = calls.clone();
     let (addr, seen) = server(Arc::new(move |req: &Req, _| {
@@ -179,15 +189,15 @@ fn retries_after_503_and_splits_after_413() {
         ),
     )
     .unwrap();
-    for i in 0..100 {
-        latticelog::info!(log, "x", i = i);
-    }
     assert!(log.flush_shipped(Duration::from_secs(20)), "{:?}", log.stats());
     let s = log.stats();
     assert!(s.ship_retries >= 1);
     log.close();
     let reqs = seen.lock().unwrap().clone();
-    let stored: Vec<u64> = reqs.iter().filter(|r| r.count <= 40).flat_map(Req::seqs).collect();
+    assert_eq!((reqs[0].status, reqs[0].count), (503, 100), "the first batch is refused whole");
+    assert!(reqs.iter().any(|r| r.status == 413), "a batch over 40 records is refused as too large");
+    // Only what the server answered 200 to is stored; a refused batch is sent again.
+    let stored: Vec<u64> = reqs.iter().filter(|r| r.status == 200).flat_map(Req::seqs).collect();
     assert_eq!(stored, (1..=100).collect::<Vec<_>>());
 }
 
