@@ -339,6 +339,15 @@ warning with the exact redirected path and how to apply the change where the ser
     (also the empty ones) and the data folder. `?refresh=1` rescans the roots first. The console builds its folder
     tree from each source's `origin` (`root:`/`toml-root:` folder, `toml:` project file, `migrated` grouped by the
     original file's folder) and falls back to `/v1/namespaces` (a flat list) against a server or an older service.
+  - `/v1/changes` is the console's live updates, as Server-Sent Events (`GET` only).
+    - `hello` carries the current `version`.
+    - After a background pass, `change` carries the new `version`, the `sources` whose description changed and
+      `list_changed`. The description compared is records, bytes, newest event, status, last error and path;
+      `list_changed` means a source or root was added or removed.
+    - A comment every 20 s keeps the connection open.
+    - While at least one listener is connected, the background pass runs every 2 s instead of 5 s.
+    - The console reads the stream with `fetch`, so the token stays in the header, and reconnects with backoff. A
+      version gap or a reconnect refreshes everything once.
   - Every `/v1/*` route except `/v1/health` needs `Authorization: Bearer <token>`.
   - The `Host` header must be `127.0.0.1`, `localhost` or `[::1]` with the service's port, which blocks DNS rebinding.
     No CORS headers are sent.

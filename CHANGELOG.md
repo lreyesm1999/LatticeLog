@@ -47,6 +47,20 @@
     reader now also verifies the `v0.3` golden files;
   - logo, GitHub social preview image and real console screenshots in `docs/assets/`
     (`scripts/render-assets.ps1`, `scripts/screenshots/`);
+  - the web console updates itself: the service pushes a change (Server-Sent Events on `/v1/changes`, same token)
+    after a background pass that found new events, a new source or an error, and every open tab refreshes only what
+    it shows, in place. The Search list refreshes when you are at the top; while you read an event or scroll further
+    down, a "New events · Show" button waits instead. Busy sources refresh at most every 3 s; hidden tabs catch up when
+    shown. While a console is open the service checks every 2 s instead of 5 s. The status reads "Live";
+  - the console opens in Sources, and a reload keeps the tab, folder and source you were on. Clicking the tab you are
+    already on no longer reloads it;
+  - new visual identity: the `//` mark on a blue-to-violet tile is the icon of the executable, the installer and the
+    console's top bar; a new README banner, and the `//log` wordmark in `docs/assets/wordmark.png` (light backgrounds)
+    and `wordmark-dark.png`;
+  - `llog update`, `llog setup` and `setup --uninstall` print a styled summary on a terminal: the brand mark, aligned
+    fields, ✓/!/› status lines, a download progress bar and a "Next" list. Redirected output and `NO_COLOR` get the same
+    words with no escape codes. On Windows, colors in Windows Terminal, VS Code and other modern terminals; the classic
+    console window gets plain output. The console code page is never changed;
   - `SUPPORT.md`, a Question issue template, and a first-contribution path in `CONTRIBUTING.md`.
 - **Windows installer (MSI)** with a setup wizard: welcome, license, a *Custom Setup* tree (background service, PATH,
   and the AI tools to connect: Claude Desktop, Claude Code, Cursor, VS Code, preselected when found), install, and a
