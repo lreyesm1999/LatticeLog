@@ -28,8 +28,19 @@ public static class ServiceLauncher
     /// </summary>
     public static ServiceEndpoint? EnsureRunning(string? configDir, TimeSpan timeout, Action<string>? log = null)
     {
-        if (ServiceClient.Running(configDir) is { } running) return running;
+        var (probe, found) = ServiceClient.Probe(configDir);
+        if (probe == ServiceClient.ProbeResult.Running) return found;
+        if (probe == ServiceClient.ProbeResult.Refused)
+        {
+            // Something answers on that port but not to this token: starting another service could not take its
+            // lock or its port, and waiting would only poll the same refusal for the whole timeout.
+            log?.Invoke($"a LatticeLog service answers on 127.0.0.1:{found!.Port} but refuses the token of the endpoint file this process reads " +
+                        "(it belongs to another service: one started inside an app package, or by an older version). " +
+                        "Stop that service (latticelogw.exe in Task Manager) and run this again.");
+            return null;
+        }
         var reg = Registration(configDir);
+        log?.Invoke($"waiting up to {timeout.TotalSeconds:0} s for the service to answer");
         string? method = null;
         if (RegisteredServiceMatches(configDir))
         {

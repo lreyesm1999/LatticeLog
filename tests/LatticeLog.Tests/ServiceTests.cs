@@ -590,9 +590,13 @@ public class ServiceTests(ITestOutputHelper output)
     }
 }
 
-/// <summary>Fixes from a real Windows install: config edits go through the service, in-use executables, registered task.</summary>
+/// <summary>Fixes from a real Windows install: config edits go through the service, in-use executables, registered task,
+/// and a service started from inside a packaged app (Claude desktop) that other clients could not reach.</summary>
 public class ServiceInstallFixTests
 {
+    private static ServiceHost StartHost(Env env) =>
+        ServiceHost.Start(new ServiceOptions { ConfigDir = env.ConfigDir, Port = 0, MaintenanceInterval = TimeSpan.FromHours(1) });
+
     [Fact]
     public void Config_edits_go_through_the_running_service_and_reach_its_catalog()
     {
@@ -673,6 +677,86 @@ public class ServiceInstallFixTests
         var overridden = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("LATTICELOG_CONFIG_DIR"))
                          || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("LATTICELOG_DATA_DIR"));
         Assert.Equal(!overridden, ServiceLauncher.RegisteredServiceMatches(null));
+    }
+
+    [Fact]
+    public void Endpoint_and_lock_leave_AppData_only_for_the_default_folder_on_Windows()
+    {
+        var root = TestData.TempDir();
+        var data = Path.Combine(root, "Local", "LatticeLog");
+        var profile = Path.Combine(root, "profile");
+        Assert.Equal(Path.Combine(profile, ".latticelog", "service"), ServicePaths.RendezvousDir(data, windows: true, data, profile));
+        Assert.Equal(Path.Combine(profile, ".latticelog", "service"), ServicePaths.RendezvousDir(data + Path.DirectorySeparatorChar, windows: true, data, profile));
+        Assert.Equal(ServicePaths.Dir(data), ServicePaths.RendezvousDir(data, windows: false, data, profile));
+        var custom = Path.Combine(root, "elsewhere");
+        Assert.Equal(ServicePaths.Dir(custom), ServicePaths.RendezvousDir(custom, windows: true, data, profile));
+    }
+
+    [Fact]
+    public void A_client_finds_the_endpoint_file_an_older_version_wrote()
+    {
+        var env = new Env();
+        // Off the default folder both places are one; the fallback matters for %LOCALAPPDATA%\LatticeLog on Windows.
+        Assert.Equal(ServicePaths.LegacyEndpointFile(env.DataDir), ServicePaths.EndpointFile(env.DataDir));
+        using var host = StartHost(env);
+        Assert.Equal(host.Endpoint.Port, ServiceClient.FindEndpoint(env.ConfigDir)!.Port);
+        Assert.Equal(ServiceClient.ProbeResult.Running, ServiceClient.Probe(env.ConfigDir).Result);
+    }
+
+    [Fact]
+    public void Ensure_running_gives_up_at_once_when_the_service_refuses_the_token()
+    {
+        var env = new Env();
+        using var host = StartHost(env);
+        // The endpoint file names the running service's port with another token, as a stale or private copy would.
+        (host.Endpoint with { Token = new string('0', 64) }).Save(ServicePaths.EndpointFile(env.DataDir));
+        Assert.Equal(ServiceClient.ProbeResult.Refused, ServiceClient.Probe(env.ConfigDir).Result);
+        var log = new List<string>();
+        var sw = Stopwatch.StartNew();
+        Assert.Null(ServiceLauncher.EnsureRunning(env.ConfigDir, TimeSpan.FromSeconds(30), log.Add));
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(10), $"took {sw.Elapsed}");
+        Assert.Contains(log, l => l.Contains("refuses the token", StringComparison.Ordinal));
+        Assert.DoesNotContain(log, l => l.StartsWith("started", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_private_package_copy_of_the_config_is_merged_and_set_aside()
+    {
+        var root = TestData.TempDir();
+        var configDir = Path.Combine(root, "Roaming", "LatticeLog");
+        var dataDir = Path.Combine(root, "Local", "LatticeLog");
+        var packages = Path.Combine(root, "Local", "Packages");
+        var cache = Path.Combine(packages, "Claude_test", "LocalCache");
+        var copyDir = Path.Combine(cache, "Roaming", "LatticeLog");
+        Directory.CreateDirectory(configDir);
+        Directory.CreateDirectory(copyDir);
+        File.WriteAllText(Path.Combine(configDir, UserConfig.FileName), new JsonObject { ["roots"] = new JsonArray((JsonNode)@"C:\a") }.ToJsonString());
+        File.WriteAllText(Path.Combine(copyDir, UserConfig.FileName), new JsonObject
+        {
+            ["roots"] = new JsonArray((JsonNode)@"C:\A", (JsonNode)@"D:\b"),
+            ["allow"] = new JsonArray((JsonNode)@"D:\old"),
+            ["retention"] = new JsonObject { ["*"] = new JsonObject { ["max_age"] = "30d" } },
+        }.ToJsonString());
+        var stale = Path.Combine(cache, "Local", "LatticeLog", "service", "service.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(stale)!);
+        File.WriteAllText(stale, "{}");
+        Directory.CreateDirectory(Path.Combine(packages, "Other_app", "LocalCache")); // nothing of ours in it
+
+        var now = new DateTime(2026, 11, 24, 18, 0, 0, DateTimeKind.Utc);
+        var lines = PackageIsolation.AdoptPrivateCopies(configDir, dataDir, packages, configDir, dataDir, now);
+
+        var real = UserConfig.Load(configDir);
+        Assert.Equal([@"C:\a", @"D:\b"], real.Roots); // C:\A is the same folder as C:\a
+        Assert.Equal([@"D:\old"], real.Allow);
+        Assert.Equal("30d", real.Retention["*"].MaxAge);
+        Assert.False(File.Exists(Path.Combine(copyDir, UserConfig.FileName)));
+        Assert.True(File.Exists(Path.Combine(copyDir, UserConfig.FileName + ".adopted-20261124180000")));
+        Assert.False(File.Exists(stale));
+        Assert.Equal(2, lines.Count);
+
+        Assert.Empty(PackageIsolation.AdoptPrivateCopies(configDir, dataDir, packages, configDir, dataDir, now)); // nothing left to adopt
+        // Folders other than the per-user defaults never look at package copies.
+        Assert.Empty(PackageIsolation.AdoptPrivateCopies(Path.Combine(root, "x"), Path.Combine(root, "y"), packages, configDir, dataDir, now));
     }
 }
 
