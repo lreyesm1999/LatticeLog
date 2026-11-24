@@ -296,8 +296,25 @@ One process per user (and data folder) does the work that every MCP client used 
 
 The service listens on `127.0.0.1` only: port 7462 by default, or any free port when that one is taken. When it
 listens, it writes `<data>/service/service.json` with its pid, port and a random 256-bit token. On Unix the file has
-mode 0600; on Windows it inherits the user-only ACL of `%LOCALAPPDATA%`. The file is removed when the service stops. A
-lock file (`service.lock`, held exclusively) allows one service per data folder.
+mode 0600. The file is removed when the service stops. A lock file (`service.lock`, held exclusively) allows one
+service per data folder.
+
+On Windows, for the per-user default data folder, both files live in `%USERPROFILE%\.latticelog\service\` instead,
+which carries the user-only ACL of the profile. A packaged (MSIX) app such as Claude desktop gives the processes it
+starts (MCP servers, terminals) a private copy of the files they create under `%LOCALAPPDATA%` and `%APPDATA%`. A
+service started from such an app would write its endpoint where no other client looks, and a `latticelog` started from a
+terminal would read a stale token. Windows does not redirect the profile folder itself. Clients fall back to
+`<data>/service/service.json`, and the service also holds `<data>/service/service.lock`, so versions up to 0.1.0-alpha.9
+still find each other during an upgrade.
+
+When a service whose writes are not redirected starts on the default folders, it adopts what packaged processes left
+in their private copies (`%LOCALAPPDATA%\Packages\<app>\LocalCache\...\LatticeLog`). Roots, allowlist entries and
+retention settings missing from the real `config.json` are added, and the copy is renamed to
+`config.json.adopted-<time>`. Stale endpoint files in those copies are deleted. Each change is written to the service
+log.
+
+A client whose endpoint file names a port where a service answers but refuses its token gives up at once. Starting
+another service could take neither the lock nor the port. The service logs such refusals at most once a minute.
 
 One port carries two protocols, told apart by the first byte:
 

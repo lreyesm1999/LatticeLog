@@ -2,6 +2,21 @@
 
 ## Unreleased — public repository under the MIT license
 
+- **Windows: a service started by Claude desktop is reachable from a terminal again.** Claude desktop is a packaged
+  (MSIX) app, and Windows gives the processes it starts a private copy of what they create under AppData. A service
+  auto-started by its MCP shim wrote `service.json` (and `config.json` changes) there. A `llog ui` from a terminal then
+  read the real, stale token: the service refused it ten times a second, and the CLI started the scheduled task (which
+  could not take the port) and waited 30 s + 30 s before failing.
+  - The endpoint file and the lock for the default data folder now live in `%USERPROFILE%\.latticelog\service`, which
+    Windows never redirects. Clients fall back to the old place, and the service also holds the old lock, so it
+    still meets 0.1.0-alpha.9 during an upgrade.
+  - A service whose writes are not redirected adopts what such a copy holds on start. Missing roots, allowlist entries
+    and retention go into the real `config.json`, and the copy is renamed to `config.json.adopted-<time>`.
+  - When a service answers but refuses the token, `llog ui`, `service start` and the MCP shim give up at once with a
+    message, instead of starting another service and polling. The service logs refusals at most once a minute
+    (previously one line per attempt). A service started from inside a package logs a warning.
+  - Tests: rendezvous paths, legacy endpoint fallback, fail-fast on a refused token, adoption of a package copy.
+
 - **TypeScript / Node.js SDK** (`sdks/typescript`, npm package `latticelog`, ESM + type declarations, Node.js ≥ 20, no
   runtime dependencies):
   - Local mode writes the same service folders as the Python and Rust SDKs, so the CLI and MCP server find a Node.js

@@ -59,6 +59,13 @@ with `latticelog service status`.
 **`llog ui` does not open.** Run `latticelog service status`. The console URL carries the service token in the
 `#fragment`; it reads every source of your user, so do not share the link.
 
+**`llog ui` waits a minute and closes, or says the service "refuses the token" (Windows).** The service was started by
+an app such as Claude desktop, and Windows kept its endpoint file in that app's private copy of AppData. Since
+the release after 0.1.0-alpha.9, the endpoint file lives in `%USERPROFILE%\.latticelog\service`, where every client finds it. After
+updating, stop the old service once: end `latticelogw.exe` in Task Manager, or run `latticelog service stop` from
+the app's own terminal. Then run `llog ui`, which starts the service through the scheduled task. On its first start
+it moves into your real `config.json` the folders you added from the app.
+
 **The service will not start.** Its log is in `<data>/service/` (`%LOCALAPPDATA%\LatticeLog\service` on Windows,
 `~/.local/share/latticelog/service` on Linux). `latticelog service run --verbose` runs it in the foreground.
 

@@ -77,7 +77,7 @@ public sealed record ServiceEndpoint
     }
 }
 
-/// <summary>Files of the service under the data folder.</summary>
+/// <summary>Files of the service: its log under the data folder, its endpoint and lock where every client finds them.</summary>
 public static class ServicePaths
 {
     public const string DefaultServiceName = "LatticeLog";
@@ -85,9 +85,40 @@ public static class ServicePaths
     public const int DefaultPort = 7462;
 
     public static string Dir(string dataDir) => Path.Combine(dataDir, "service");
-    public static string EndpointFile(string dataDir) => Path.Combine(Dir(dataDir), "service.json");
-    public static string LockFile(string dataDir) => Path.Combine(Dir(dataDir), "service.lock");
     public static string LogFile(string dataDir) => Path.Combine(Dir(dataDir), "service.log");
+
+    /// <summary>
+    /// Where the endpoint file and the lock live. Usually <see cref="Dir"/>. On Windows, for the per-user default data
+    /// folder, <c>%USERPROFILE%\.latticelog\service</c> instead: a packaged (MSIX) app such as Claude desktop gives the
+    /// processes it starts a private copy of what they create under AppData, so a service started by an MCP client
+    /// and a <c>latticelog</c> started from a terminal would each read their own endpoint file (and token). Windows
+    /// never redirects the profile folder itself.
+    /// </summary>
+    public static string RendezvousDir(string dataDir) =>
+        RendezvousDir(dataDir, OperatingSystem.IsWindows(), WindowsDefaultDataDir, Environment.GetFolderPath(Environment.SpecialFolder.UserProfile, Environment.SpecialFolderOption.DoNotVerify));
+
+    internal static string RendezvousDir(string dataDir, bool windows, string defaultDataDir, string profileDir) =>
+        windows && profileDir.Length > 0 && SamePath(dataDir, defaultDataDir)
+            ? Path.Combine(profileDir, ".latticelog", "service")
+            : Dir(dataDir);
+
+    public static string EndpointFile(string dataDir) => Path.Combine(RendezvousDir(dataDir), "service.json");
+    public static string LockFile(string dataDir) => Path.Combine(RendezvousDir(dataDir), "service.lock");
+
+    /// <summary>Where versions up to 0.1.0-alpha.9 kept the endpoint file and the lock (equal to the current ones off the default folder).</summary>
+    public static string LegacyEndpointFile(string dataDir) => Path.Combine(Dir(dataDir), "service.json");
+    public static string LegacyLockFile(string dataDir) => Path.Combine(Dir(dataDir), "service.lock");
+
+    /// <summary>The per-user default data folder on Windows, ignoring overrides (<c>%LOCALAPPDATA%\LatticeLog</c>).</summary>
+    internal static string WindowsDefaultDataDir =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.DoNotVerify), "LatticeLog");
+
+    internal static bool SamePath(string a, string b)
+    {
+        if (a.Length == 0 || b.Length == 0) return false;
+        static string N(string p) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(p));
+        return string.Equals(N(a), N(b), OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+    }
 
     /// <summary>Config folder as the service and its clients agree on it (explicit, else the per-user default).</summary>
     public static string ResolveConfigDir(string? configDir) => Path.GetFullPath(configDir ?? UserConfig.DefaultConfigDir);

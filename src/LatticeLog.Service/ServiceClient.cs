@@ -14,9 +14,31 @@ public sealed class ServiceRefusedException(string error, string message) : IOEx
 /// <summary>Talks to a running service (<see cref="Wire"/>): status, stop, ping, and MCP sessions for the shim.</summary>
 public static class ServiceClient
 {
-    /// <summary>The endpoint file of the service for this config folder, if one is there (it may be stale).</summary>
-    public static ServiceEndpoint? FindEndpoint(string? configDir) =>
-        ServiceEndpoint.TryLoad(ServicePaths.EndpointFile(ServicePaths.ResolveDataDir(configDir)));
+    /// <summary>
+    /// The endpoint file of the service for this config folder, if one is there (it may be stale). Falls back to where
+    /// versions up to 0.1.0-alpha.9 wrote it, so a client finds a service of the previous version during an upgrade.
+    /// </summary>
+    public static ServiceEndpoint? FindEndpoint(string? configDir)
+    {
+        var dataDir = ServicePaths.ResolveDataDir(configDir);
+        return ServiceEndpoint.TryLoad(ServicePaths.EndpointFile(dataDir)) ?? ServiceEndpoint.TryLoad(ServicePaths.LegacyEndpointFile(dataDir));
+    }
+
+    /// <summary>What answers at the endpoint file of this config folder.</summary>
+    public enum ProbeResult { None, Running, Refused }
+
+    /// <summary>
+    /// Pings the service of this config folder: <see cref="ProbeResult.Running"/> (with its endpoint),
+    /// <see cref="ProbeResult.Refused"/> when something answers on that port but rejects the token (the endpoint file
+    /// belongs to another service), or <see cref="ProbeResult.None"/> when nothing usable listens.
+    /// </summary>
+    public static (ProbeResult Result, ServiceEndpoint? Endpoint) Probe(string? configDir)
+    {
+        var ep = FindEndpoint(configDir);
+        if (ep is null) return (ProbeResult.None, null);
+        try { return Request(ep, "ping") is not null ? (ProbeResult.Running, ep) : (ProbeResult.None, ep); }
+        catch (ServiceRefusedException) { return (ProbeResult.Refused, ep); }
+    }
 
     /// <summary>
     /// Opens a connection and performs the handshake. Returns the connected client and the service's reply; throws
@@ -93,13 +115,8 @@ public static class ServiceClient
     }
 
     /// <summary>The endpoint of a service that answers a ping, or null.</summary>
-    public static ServiceEndpoint? Running(string? configDir)
-    {
-        var ep = FindEndpoint(configDir);
-        if (ep is null) return null;
-        try { return Request(ep, "ping") is not null ? ep : null; }
-        catch (ServiceRefusedException) { return null; }
-    }
+    public static ServiceEndpoint? Running(string? configDir) =>
+        Probe(configDir) is (ProbeResult.Running, { } ep) ? ep : null;
 
     /// <summary>Waits until a service answers (after a start) or <paramref name="timeout"/> passes.</summary>
     public static ServiceEndpoint? WaitRunning(string? configDir, TimeSpan timeout)

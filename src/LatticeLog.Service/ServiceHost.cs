@@ -52,7 +52,7 @@ public sealed class ServiceAlreadyRunningException(string message) : IOException
 public sealed class ServiceHost : IDisposable
 {
     private readonly ServiceOptions _options;
-    private readonly FileStream _lock;
+    private readonly IDisposable _lock;
     private readonly TcpListener _listener;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly ConcurrentDictionary<string, SourceStatus> _status = new(StringComparer.Ordinal);
@@ -84,7 +84,7 @@ public sealed class ServiceHost : IDisposable
     public int SessionsServed => Volatile.Read(ref _served);
     internal McpLimits McpLimits => _options.McpLimits ?? new McpLimits { RefreshInterval = _options.QueryRefreshInterval };
 
-    private ServiceHost(ServiceOptions options, string configDir, string dataDir, FileStream lockStream, TcpListener listener, ServiceLog log)
+    private ServiceHost(ServiceOptions options, string configDir, string dataDir, IDisposable lockStream, TcpListener listener, ServiceLog log)
     {
         _options = options;
         ConfigDir = configDir;
@@ -116,13 +116,22 @@ public sealed class ServiceHost : IDisposable
         var configDir = ServicePaths.ResolveConfigDir(o.ConfigDir);
         var dataDir = ServicePaths.ResolveDataDir(configDir);
         Directory.CreateDirectory(ServicePaths.Dir(dataDir));
-        FileStream lockStream;
-        try { lockStream = new FileStream(ServicePaths.LockFile(dataDir), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
-        catch (IOException)
+        Directory.CreateDirectory(ServicePaths.RendezvousDir(dataDir));
+        // The lock where every client looks, plus the one versions up to 0.1.0-alpha.9 took: a service of that version
+        // still running for this folder keeps this one from starting next to it.
+        var lockFiles = new[] { ServicePaths.LockFile(dataDir), ServicePaths.LegacyLockFile(dataDir) }.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var locks = new List<FileStream>();
+        foreach (var lockFile in lockFiles)
         {
-            var ep = ServiceEndpoint.TryLoad(ServicePaths.EndpointFile(dataDir));
-            throw new ServiceAlreadyRunningException($"A LatticeLog service already runs for {dataDir}{(ep is null ? "" : $" (pid {ep.Pid}, port {ep.Port})")}.");
+            try { locks.Add(new FileStream(lockFile, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)); }
+            catch (IOException)
+            {
+                foreach (var l in locks) l.Dispose();
+                var ep = ServiceEndpoint.TryLoad(ServicePaths.EndpointFile(dataDir)) ?? ServiceEndpoint.TryLoad(ServicePaths.LegacyEndpointFile(dataDir));
+                throw new ServiceAlreadyRunningException($"A LatticeLog service already runs for {dataDir}{(ep is null ? "" : $" (pid {ep.Pid}, port {ep.Port})")}.");
+            }
         }
+        var lockStream = new LockSet(locks);
         TcpListener listener;
         try
         {
@@ -139,10 +148,17 @@ public sealed class ServiceHost : IDisposable
         }
         var log = new ServiceLog(ServicePaths.LogFile(dataDir), o.Echo);
         var host = new ServiceHost(o, configDir, dataDir, lockStream, listener, log);
+        var package = PackageIsolation.RedirectedInto(dataDir);
         try
         {
+            // Before the catalog opens: roots a packaged client added while an earlier service ran inside its package.
+            foreach (var line in PackageIsolation.AdoptPrivateCopies(configDir, dataDir, redirected: package is not null)) log.Write(line);
             host.CatalogFor(null); // the per-user catalog: registered roots are indexed before any client connects
-            host.Endpoint.Save(ServicePaths.EndpointFile(dataDir));
+            var endpointFile = ServicePaths.EndpointFile(dataDir);
+            host.Endpoint.Save(endpointFile);
+            var legacy = ServicePaths.LegacyEndpointFile(dataDir);
+            if (!ServicePaths.SamePath(legacy, endpointFile))
+                try { File.Delete(legacy); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* stale either way: clients read the new file first */ }
         }
         catch
         {
@@ -152,7 +168,19 @@ public sealed class ServiceHost : IDisposable
         host._acceptThread.Start();
         host._backgroundThread.Start();
         log.Write($"started: pid {host.Endpoint.Pid}, 127.0.0.1:{host.Port}, config {configDir}, data {dataDir}, version {o.Version}");
+        if (package is not null)
+            log.Write($"warning: started from inside the app package {package}; Windows gives this process a private copy of what it creates under AppData " +
+                      "(config.json changes made now reach only that app). Started through the registered task ('latticelog service install'), the service runs outside it.");
         return host;
+    }
+
+    /// <summary>The locks a service holds while it runs (see <see cref="Start"/>).</summary>
+    private sealed class LockSet(List<FileStream> locks) : IDisposable
+    {
+        public void Dispose()
+        {
+            foreach (var l in locks) l.Dispose();
+        }
     }
 
     private static TcpListener Listen(int port)
@@ -474,6 +502,28 @@ public sealed class ServiceHost : IDisposable
 
     internal bool Authorized(string? token) => Wire.TokenEquals(token, Endpoint.Token);
 
+    private readonly object _refusalGate = new();
+    private int _refusedSinceLog;
+    private DateTime _refusalLoggedUtc = DateTime.MinValue;
+
+    /// <summary>
+    /// One log line per minute at most: a client polling with a stale endpoint file connects ten times a second.
+    /// </summary>
+    private void LogRefusal()
+    {
+        lock (_refusalGate)
+        {
+            _refusedSinceLog++;
+            var now = DateTime.UtcNow;
+            if (now - _refusalLoggedUtc < TimeSpan.FromMinutes(1)) return;
+            Log.Write(_refusedSinceLog == 1
+                ? "refused a connection with a wrong token (a client read another service's endpoint file)"
+                : $"refused {_refusedSinceLog} connection(s) with a wrong token since {_refusalLoggedUtc:HH:mm:ss}Z (a client read another service's endpoint file)");
+            _refusedSinceLog = 0;
+            _refusalLoggedUtc = now;
+        }
+    }
+
     private void ServeLine(NetworkStream stream, byte first)
     {
         var hello = Wire.TryParse(Wire.ReadLine(stream, first: first));
@@ -485,7 +535,7 @@ public sealed class ServiceHost : IDisposable
         }
         if (!Authorized((string?)hello["token"]))
         {
-            Log.Write("refused a connection with a wrong token");
+            LogRefusal();
             Wire.WriteLine(stream, Fail("unauthorized", "wrong or missing token").ToJsonString());
             return;
         }
