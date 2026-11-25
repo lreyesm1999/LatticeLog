@@ -30,8 +30,11 @@ internal static class TestTempDirs
 
     private static string CreateRun()
     {
-        try { Sweep(); } catch (Exception) { } // never fail a test over housekeeping
-        var started = Process.GetCurrentProcess().StartTime.ToUniversalTime();
+        try { Sweep(); }
+        catch (IOException) { /* a leftover folder vanished or is in use: housekeeping never fails a test */ }
+        catch (UnauthorizedAccessException) { /* a leftover folder we may not touch: left for its owner */ }
+        DateTime started;
+        using (var self = Process.GetCurrentProcess()) started = self.StartTime.ToUniversalTime();
         var root = Path.Combine(Base, $"run-{Environment.ProcessId}-{started.ToString(StampFormat, CultureInfo.InvariantCulture)}");
         Directory.CreateDirectory(root);
         // Fallback for runners that bypass the assembly runner below; deleting twice is harmless.
@@ -42,8 +45,7 @@ internal static class TestTempDirs
     /// <summary>Deletes this run's folder, retrying while files are still held open. Never throws.</summary>
     public static void Cleanup()
     {
-        if (!Run.IsValueCreated) return;
-        try { DeleteTree(Run.Value, attempts: 3); } catch (Exception) { }
+        if (Run.IsValueCreated) DeleteTree(Run.Value, attempts: 3); // DeleteTree handles its own I/O errors
     }
 
     /// <summary>Removes run folders whose process has exited, and anything else older than a day.</summary>
@@ -105,8 +107,8 @@ internal static class TestTempDirs
                 Directory.Delete(dir, recursive: true);
                 return;
             }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
+            catch (IOException) { /* a file is still open (an undisposed store): retry, then go file by file */ }
+            catch (UnauthorizedAccessException) { /* read-only or locked file: the piecewise pass clears attributes */ }
             if (i + 1 < attempts) Thread.Sleep(100 * (i + 1));
         }
         DeletePiecewise(dir);
@@ -124,13 +126,13 @@ internal static class TestTempDirs
                     File.SetAttributes(file, FileAttributes.Normal);
                     File.Delete(file);
                 }
-                catch (IOException) { }
-                catch (UnauthorizedAccessException) { }
+                catch (IOException) { /* still open: only this file stays; the next run's sweep retries it */ }
+                catch (UnauthorizedAccessException) { /* not ours to delete: left in place */ }
             }
             Directory.Delete(dir, recursive: false);
         }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
+        catch (IOException) { /* not empty (a file above stayed) or gone meanwhile: the next sweep retries */ }
+        catch (UnauthorizedAccessException) { /* not ours to delete: left in place */ }
     }
 }
 
