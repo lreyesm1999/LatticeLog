@@ -95,6 +95,57 @@ public class EvidenceAndInteropTests
     }
 
     [Fact]
+    public void Context_pack_v2_honours_full_payload_and_token_limits()
+    {
+        var (root, _) = BuildIncidentStore();
+        var ev = new EvidenceService(QueryEngine.Open(root));
+        var doc = ev.ContextPack(new QueryRequest(), new ContextPackOptions
+        {
+            BudgetBytes = 8_000,
+            BudgetTokens = 1_500,
+            MaxEvents = 3,
+            MaxGroups = 1,
+            DetailLevel = ContextDetailLevel.Summary,
+            IncludeEvidence = false,
+        });
+        Assert.True(Encoding.UTF8.GetByteCount(doc.Json) <= 6_000, $"payload was {Encoding.UTF8.GetByteCount(doc.Json)} bytes");
+        using var json = JsonDocument.Parse(doc.Json);
+        var rootNode = json.RootElement;
+        Assert.Equal("2", rootNode.GetProperty("context_version").GetString());
+        Assert.Equal("summary", rootNode.GetProperty("detail_level").GetString());
+        Assert.False(rootNode.TryGetProperty("timeline", out _));
+        Assert.True(rootNode.GetProperty("evidence_refs").GetArrayLength() <= 3);
+        Assert.True(rootNode.GetProperty("groups").GetArrayLength() <= 1);
+        var coverage = rootNode.GetProperty("coverage");
+        Assert.Equal(6_000, coverage.GetProperty("effective_budget_bytes").GetInt32());
+        Assert.Equal("estimated", coverage.GetProperty("token_budget_kind").GetString());
+        Assert.Contains("not an exact", coverage.GetProperty("token_estimator").GetString());
+    }
+
+    [Fact]
+    public void Context_pack_v2_continues_candidate_windows_and_classifies_observed_edges()
+    {
+        var (root, incident) = BuildIncidentStore();
+        var ev = new EvidenceService(QueryEngine.Open(root), new EvidenceOptions { MaxCandidates = 50 });
+        var options = new ContextPackOptions { BudgetBytes = 8_000, MaxEvents = 10 };
+        var first = ev.ContextPack(new QueryRequest(), options);
+        Assert.NotNull(first.ContinuationToken);
+        var second = ev.ContextPack(new QueryRequest { Cursor = first.ContinuationToken }, options);
+        using var a = JsonDocument.Parse(first.Json);
+        using var b = JsonDocument.Parse(second.Json);
+        var refsA = a.RootElement.GetProperty("evidence_refs").EnumerateArray().Select(x => x.GetString()).ToHashSet();
+        var refsB = b.RootElement.GetProperty("evidence_refs").EnumerateArray().Select(x => x.GetString()).ToHashSet();
+        Assert.Empty(refsA.Intersect(refsB));
+
+        var trace = ev.GetTrace(incident);
+        using var traceJson = JsonDocument.Parse(trace.Json);
+        var edge = Assert.Single(traceJson.RootElement.GetProperty("relations").EnumerateArray());
+        Assert.Equal("observed", edge.GetProperty("classification").GetString());
+        Assert.Contains("operation_id", edge.GetProperty("basis").GetString());
+        Assert.NotEmpty(edge.GetProperty("evidence_refs").EnumerateArray());
+    }
+
+    [Fact]
     public void Related_events_use_only_explicit_relations()
     {
         var (root, incident) = BuildIncidentStore();

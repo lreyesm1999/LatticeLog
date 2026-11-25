@@ -213,7 +213,13 @@ public sealed class McpServer
         var where = ("where", "string", "Filter in LatticeLog query language, e.g. \"level >= ERROR AND service = 'api'\".", false);
         var since = ("since", "string", "Lower time bound: RFC 3339 or relative (15m, 2h, 7d).", false);
         var until = ("until", "string", "Upper time bound: RFC 3339 or relative.", false);
-        var budget = ("budget_bytes", "integer", "Maximum size of the evidence timeline in bytes (default 32000).", false);
+        var budget = ("budget_bytes", "integer", "Maximum size of the complete structured evidence payload in bytes (default 32000).", false);
+        var budgetTokens = ("budget_tokens", "integer", "Estimated model-token budget. Uses the documented UTF-8-bytes/4 estimator unless the consumer applies its own tokenizer.", false);
+        var maxEvents = ("max_events", "integer", "Maximum selected evidence events (default 200).", false);
+        var maxGroups = ("max_groups", "integer", "Maximum error groups (default 10).", false);
+        var detail = ("detail_level", "string", "summary, investigation (default), or evidence.", false);
+        var includeEvidence = ("include_evidence", "boolean", "Include compact selected timeline entries (default true; summary never includes a timeline).", false);
+        var continuation = ("continuation_token", "string", "Opaque token from a previous context pack for the next candidate window.", false);
         JsonObject Tool(string name, string desc, JsonObject schema, bool readOnly = true) => new()
         {
             ["name"] = name,
@@ -228,12 +234,13 @@ public sealed class McpServer
                 Schema(source, where, since, until, ("limit", "integer", "Max events (1-200, default 50).", false), ("cursor", "string", "Cursor from a previous call.", false), ("newest_first", "boolean", "Return newest events first.", false))),
             Tool("get_event", "Get one event by stable reference (llog://<store>/e/<seq>) with provenance. A bare sequence number needs 'source'.",
                 Schema(("ref", "string", "Event reference or sequence number.", true), source)),
-            Tool("get_trace", "Timeline of one trace ordered by time across the selected sources, with explicit operation relations and coverage.", Schema(("trace_id", "string", "32 hex characters.", true), source, budget)),
+            Tool("get_trace", "Timeline of one trace ordered by time across the selected sources, with explicit operation relations and coverage.",
+                Schema(("trace_id", "string", "32 hex characters.", true), source, budget, budgetTokens, maxEvents, maxGroups, detail, includeEvidence, continuation)),
             Tool("get_related_events", "Events explicitly related to an event in its source (same trace, operation, parent/child operation, correlation id). Time proximity is not used.",
                 Schema(("ref", "string", "Event reference or sequence number.", true), source, ("limit", "integer", "Max events (default 100).", false))),
             Tool("get_error_groups", "Error/fatal events grouped by deterministic fingerprint with counts and sample refs, per source (grouping, not root cause).", Schema(source, where, since, until, ("top", "integer", "Max groups (default 20).", false))),
             Tool("get_context_pack", "Budgeted evidence pack (errors first, then bounds, warnings, neighbours, samples) with full coverage accounting, merged across sources.",
-                Schema(("trace_id", "string", "Optional trace scope.", false), source, where, since, until, budget)),
+                Schema(("trace_id", "string", "Optional trace scope.", false), source, where, since, until, budget, budgetTokens, maxEvents, maxGroups, detail, includeEvidence, continuation)),
             Tool("get_event_schema", "Declared event contracts: ids, names, versions, field names/types and sensitivity.", Schema(source)),
             Tool("get_overview", "Counts by severity, event and service plus top error groups for a time window.", Schema(source, since, until)));
         if (!_catalog.IsSingleStore)
@@ -268,24 +275,27 @@ public sealed class McpServer
                 "list_sources" => (ListSources(), false, false),
                 "search_events" => Search(a),
                 "get_event" => Tagged(GetEvent(a)),
-                "get_trace" => Merge(a, ev => ev.GetTrace(TraceArg(a, required: true)!.Value, Budget(a, 64_000)), int.MaxValue),
+                "get_trace" => Context(a, "trace", 64_000, requireTrace: true, ct),
                 "get_related_events" => Tagged(GetRelated(a)),
                 "get_error_groups" => Merge(a, ev => ev.ErrorGroups(Scope(a), Math.Clamp(Int(a, "top", 20), 1, 200)), Math.Clamp(Int(a, "top", 20), 1, 200)),
-                "get_context_pack" => Merge(a, ev => ev.ContextPack(ScopeWithTrace(a), Budget(a, 32_000) / Math.Max(1, Selected(a).Count(s => s.HasStore))), int.MaxValue),
+                "get_context_pack" => Context(a, "context_pack", 32_000, requireTrace: false, ct),
                 "get_event_schema" => Merge(a, ev => ev.Schema(), int.MaxValue),
                 "get_overview" => Merge(a, ev => ev.Overview(Scope(a)), 10),
                 "preview_migration" => (Migrator().Preview(Str(a, "path")).ToJsonString(), false, true),
                 "migrate_logs" => (Migrate(a, progressToken, notify, ct), false, false),
                 _ => throw new ArgumentException($"Unknown tool '{name}'."),
             };
-            _bytes += json.Length;
-            return new JsonObject
+            var result = new JsonObject
             {
                 ["content"] = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = json }),
                 ["structuredContent"] = JsonNode.Parse(json),
                 ["isError"] = false,
                 ["_meta"] = new JsonObject { ["partial_results"] = isPartial, ["untrusted_content"] = untrusted },
             };
+            var responseBytes = Encoding.UTF8.GetByteCount(result.ToJsonString());
+            if (_bytes + responseBytes > _limits.MaxResponseBytesPerSession) return ToolError("Session response byte budget exhausted.");
+            _bytes += responseBytes;
+            return result;
         }
         catch (OperationCanceledException)
         {
@@ -406,6 +416,76 @@ public sealed class McpServer
     {
         var (src, seq) = Anchor(a);
         return (Evidence(src).GetRelated(seq, Math.Clamp(Int(a, "limit", 100), 1, 500)), src);
+    }
+
+    private (string Json, bool Partial, bool Untrusted) Context(JsonObject a, string kind, int defaultBudget, bool requireTrace, CancellationToken ct)
+    {
+        if (requireTrace) _ = TraceArg(a, required: true);
+        var sources = Selected(a).Where(s => s.HasStore).ToList();
+        if (sources.Count == 0) throw new ArgumentException("Nothing is indexed yet for the selected sources.");
+        var options = ContextOptions(a, defaultBudget);
+        var key = ContextKey(a, sources, kind, options);
+        var cursors = DecodeMultiCursor((string?)a["continuation_token"], key, sources);
+        var baseScope = ScopeWithTrace(a);
+        var slots = new (SourceInfo Source, EvidenceDocument Evidence, JsonObject Json)?[sources.Count];
+        var next = new Dictionary<string, string>(StringComparer.Ordinal);
+        var perSourceBudget = Math.Max(2_000, options.BudgetBytes / Math.Max(1, sources.Count));
+        var perSourceTokens = options.BudgetTokens is { } bt ? Math.Max(500, bt / Math.Max(1, sources.Count)) : (int?)null;
+        void QuerySource(int index)
+        {
+            var source = sources[index];
+            if (cursors is not null && !cursors.ContainsKey(source.Name)) return;
+            var scope = baseScope with { Cursor = cursors?.GetValueOrDefault(source.Name) };
+            var perSource = options with { BudgetBytes = perSourceBudget, BudgetTokens = perSourceTokens };
+            var evidence = Evidence(source).ContextPack(scope, perSource, kind, ct);
+            slots[index] = (source, evidence, JsonNode.Parse(evidence.Json)!.AsObject());
+        }
+        if (sources.Count == 1) QuerySource(0);
+        else Parallel.For(0, sources.Count, new ParallelOptions { CancellationToken = ct }, QuerySource);
+        var docs = slots.Where(x => x.HasValue).Select(x => x!.Value).ToList();
+        foreach (var d in docs) if (d.Evidence.ContinuationToken is { } cursor) next[d.Source.Name] = cursor;
+        if (docs.Count == 0) throw new ArgumentException("The continuation token has no remaining selected sources.");
+        var merged = EvidenceMerger.Merge(docs.Select(d => (d.Source.Name, d.Json)).ToList(), options.MaxGroups);
+        if (merged["coverage"] is JsonObject coverage)
+        {
+            coverage["budget_bytes"] = options.BudgetBytes;
+            coverage["requested_budget_bytes"] = options.BudgetBytes;
+            var effectiveBudget = options.BudgetTokens is { } tokens ? Math.Min(options.BudgetBytes, tokens * 4) : options.BudgetBytes;
+            coverage["effective_budget_bytes"] = effectiveBudget;
+            coverage["estimated_token_ceiling_utf8_bytes_div_4"] = (effectiveBudget + 3) / 4;
+            if (options.BudgetTokens is { } requestedTokens) coverage["budget_tokens"] = requestedTokens;
+            if (next.Count > 0) coverage["continuation_token"] = EncodeMultiCursor(key, next);
+            else coverage.Remove("continuation_token");
+        }
+        var budget = options.BudgetTokens is { } tokenBudget ? Math.Min(options.BudgetBytes, tokenBudget * 4) : options.BudgetBytes;
+        EvidenceMerger.EnforceBudget(merged, budget);
+        return (merged.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), docs.Any(d => d.Evidence.Partial), true);
+    }
+
+    private ContextPackOptions ContextOptions(JsonObject a, int defaultBudget)
+    {
+        var detail = ((string?)a["detail_level"] ?? "investigation").ToLowerInvariant() switch
+        {
+            "summary" => ContextDetailLevel.Summary,
+            "investigation" => ContextDetailLevel.Investigation,
+            "evidence" => ContextDetailLevel.Evidence,
+            _ => throw new ArgumentException("'detail_level' must be summary, investigation or evidence."),
+        };
+        return new ContextPackOptions
+        {
+            BudgetBytes = Budget(a, defaultBudget),
+            BudgetTokens = a["budget_tokens"] is null ? null : Math.Clamp(Int(a, "budget_tokens", 0), 500, 2_500_000),
+            MaxEvents = Math.Clamp(Int(a, "max_events", 200), 1, 10_000),
+            MaxGroups = Math.Clamp(Int(a, "max_groups", 10), 0, 1_000),
+            DetailLevel = detail,
+            IncludeEvidence = Bool(a, "include_evidence", true),
+        };
+    }
+
+    private static string ContextKey(JsonObject a, IReadOnlyList<SourceInfo> sources, string kind, ContextPackOptions options)
+    {
+        var key = $"{kind}|{(string?)a["trace_id"]}|{(string?)a["where"]}|{(string?)a["since"]}|{(string?)a["until"]}|{options.BudgetBytes}|{options.BudgetTokens}|{options.MaxEvents}|{options.MaxGroups}|{options.DetailLevel}|{options.IncludeEvidence}|{string.Join(",", sources.Select(s => s.Name))}";
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key)))[..16];
     }
 
     /// <summary>
@@ -560,6 +640,14 @@ public sealed class McpServer
         if (n is null) return def;
         try { return n.GetValue<int>(); }
         catch (Exception ex) when (ex is InvalidOperationException or FormatException) { throw new ArgumentException($"'{name}' must be an integer."); }
+    }
+
+    private static bool Bool(JsonObject a, string name, bool def)
+    {
+        var n = a[name];
+        if (n is null) return def;
+        try { return n.GetValue<bool>(); }
+        catch (Exception ex) when (ex is InvalidOperationException or FormatException) { throw new ArgumentException($"'{name}' must be a boolean."); }
     }
 
     private int Budget(JsonObject a, int def) => Math.Clamp(Int(a, "budget_bytes", def), 2_000, _limits.MaxBudgetBytesPerCall);

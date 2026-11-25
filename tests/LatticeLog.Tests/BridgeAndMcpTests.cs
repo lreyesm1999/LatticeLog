@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json.Nodes;
 using LatticeLog.Core;
 using LatticeLog.Extensions.Logging;
@@ -66,5 +67,31 @@ public class BridgeAndMcpTests
         var limited = JsonNode.Parse(server.Handle("""{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"get_event_schema","arguments":{}}}""")!)!["result"]!;
         Assert.True((bool)limited["isError"]!);
         Assert.Contains("limit", limited["content"]![0]!["text"]!.ToString());
+    }
+
+    [Fact]
+    public void Mcp_context_pack_v2_exposes_progressive_budget_controls()
+    {
+        var (root, _) = EvidenceAndInteropTests.BuildIncidentStore();
+        var server = new McpServer(root);
+        var listed = JsonNode.Parse(server.Handle("""{"jsonrpc":"2.0","id":1,"method":"tools/list"}""")!)!["result"]!["tools"]!.AsArray();
+        var tool = listed.Single(t => (string?)t!["name"] == "get_context_pack")!;
+        var properties = tool["inputSchema"]!["properties"]!.AsObject();
+        foreach (var name in new[] { "budget_tokens", "max_events", "max_groups", "detail_level", "include_evidence", "continuation_token" })
+            Assert.True(properties.ContainsKey(name), name);
+
+        var call = """{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_context_pack","arguments":{"budget_bytes":8000,"budget_tokens":1500,"max_events":3,"max_groups":1,"detail_level":"summary","include_evidence":false}}}""";
+        var result = JsonNode.Parse(server.Handle(call)!)!["result"]!;
+        Assert.False((bool)result["isError"]!);
+        var structured = result["structuredContent"]!;
+        Assert.Equal("2", (string?)structured["context_version"]);
+        Assert.Equal("summary", (string?)structured["detail_level"]);
+        Assert.Null(structured["timeline"]);
+        Assert.True(Encoding.UTF8.GetByteCount(structured.ToJsonString()) <= 6_000);
+
+        var tinyCall = """{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_context_pack","arguments":{"budget_bytes":2000}}}""";
+        var tiny = JsonNode.Parse(server.Handle(tinyCall)!)!["result"]!["structuredContent"]!;
+        Assert.True(Encoding.UTF8.GetByteCount(tiny.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true })) <= 2_000);
+        Assert.Equal("no", (string?)tiny["coverage"]!["exhaustive"]);
     }
 }
