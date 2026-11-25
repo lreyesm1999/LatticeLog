@@ -447,19 +447,27 @@ public class ServiceTests(ITestOutputHelper output)
 
         var hello = await Next();
         Assert.Equal("hello", hello.Event);
-        // The first pass with a listener compares against nothing yet, so it may report every source once: wait it out.
-        var version = (long)hello.Data["version"]!;
-        var settle = Task.Delay(TimeSpan.FromSeconds(1), cts.Token);
-        var first = Next();
-        if (await Task.WhenAny(first, settle) == first) version = (long)(await first).Data["version"]!;
+        // The first pass with a listener compares against nothing yet, so it always reports every source once. Wait for
+        // it before appending: a fixed settle time raced with slow CI machines, where that pass came after the append
+        // and was taken for the change while the source still showed 10 events.
+        var first = await Next();
+        Assert.Equal("change", first.Event);
+        Assert.True((long)first.Data["version"]! > (long)hello.Data["version"]!);
+        Assert.Contains(first.Data["sources"]!.AsArray(), s => (string?)s == "orders");
 
         AppendOrders(file, 11, 5);
-        var change = first.IsCompleted ? await Next() : await first;
-        while ((long)change.Data["version"]! <= version) change = await Next();
-        Assert.Equal("change", change.Event);
-        Assert.Contains(change.Data["sources"]!.AsArray(), s => (string?)s == "orders");
-        var sources = JsonNode.Parse(await http.GetStringAsync("v1/sources", cts.Token))!;
-        Assert.Equal(15, (long)sources["sources"]!.AsArray().Single(s => (string?)s!["name"] == "orders")!["records"]!);
+        // The append may be indexed over more than one pass: every change naming "orders" is checked against
+        // /v1/sources until the five new events show. The 30 s token fails the test if no change ever does.
+        long records;
+        do
+        {
+            var change = await Next();
+            Assert.Equal("change", change.Event);
+            if (!change.Data["sources"]!.AsArray().Any(s => (string?)s == "orders")) { records = -1; continue; }
+            var sources = JsonNode.Parse(await http.GetStringAsync("v1/sources", cts.Token))!;
+            records = (long)sources["sources"]!.AsArray().Single(s => (string?)s!["name"] == "orders")!["records"]!;
+        }
+        while (records != 15);
     }
 
     // ------------------------------------------------------------------ registration (plans only, nothing registered)

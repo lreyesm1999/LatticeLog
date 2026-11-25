@@ -2,6 +2,16 @@
 
 ## Unreleased — public repository under the MIT license
 
+- **Tests: the .NET test suite deletes its temporary stores.** Every `TestData.TempDir()` folder stayed in
+  `%TEMP%\latticelog-tests`, about 1 GB per run; one machine had 8,403 folders (49 GB), which filled the disk.
+  - Each test process now writes under one run folder, `latticelog-tests\run-<pid>-<start time>`, and deletes it when
+    the run ends: a small xUnit framework extension deletes it after the last test, before the run is reported
+    (VSTest kills the test host right after that, too soon for a process-exit hook). The delete retries, then skips
+    files that are still open: Windows keeps the segments of an undisposed store locked.
+  - At start, a run sweeps run folders whose process has exited, and any other folder (the old flat layout) older
+    than a day. Folders of a run still going in another terminal or worktree are left alone.
+  - The ingest benchmark also deletes the producer and collector stores it creates in `%TEMP%\latticelog-ingest-bench`.
+
 - **Plain-text logs: lines before a file's first timestamp take the next timestamp instead of the import time.** A
   banner such as `# Run: … | Started: …` at the top of each file was dated at the moment of the import. That pushed the
   source's newest event to "now", and the console's default 24-hour view showed only those banners. Such lines now get

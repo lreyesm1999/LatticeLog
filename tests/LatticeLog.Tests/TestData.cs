@@ -9,9 +9,10 @@ public sealed class TestData(int seed)
 
     public static readonly string[] Words = ["alpha", "beta", "gamma", "inventory", "order", "user", "payment", "stock", "timeout", "retry", "ok"];
 
+    /// <summary>A new empty folder for one test. It is deleted when the test run ends (see <see cref="TestTempDirs"/>).</summary>
     public static string TempDir()
     {
-        var d = Path.Combine(Path.GetTempPath(), "latticelog-tests", Guid.NewGuid().ToString("N"));
+        var d = Path.Combine(TestTempDirs.RunRoot, Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(d);
         return d;
     }
