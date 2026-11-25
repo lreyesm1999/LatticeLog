@@ -211,7 +211,8 @@ public class EvidenceAndInteropTests
         // structlog's console renderer redirected to a file (CRLF): ESC[2m<time>ESC[0m [ESC[31mESC[1merror   ESC[0m] …
         var line = "\u001b[2m2026-10-06T20:00:30.152040Z\u001b[0m [\u001b[31m\u001b[1merror    \u001b[0m] \u001b[1m[bridge] Unclosed AIOKafkaConsumer\r\n";
         var original = Encoding.UTF8.GetBytes(line + "\u001b[2mcontinuation without a time\u001b[0m\n");
-        var records = RawTextImporter.Read(new MemoryStream(original), "bridge.log", 1_000).ToList();
+        using var input = new MemoryStream(original);
+        var records = RawTextImporter.Read(input, "bridge.log", 1_000).ToList();
 
         Assert.Equal(UnixTime.TryParseRfc3339("2026-10-06T20:00:30.152040Z", out var t) ? t : 0, records[0].TimestampUnixNanos);
         Assert.Equal(Severity.Error, records[0].Severity);
@@ -219,17 +220,19 @@ public class EvidenceAndInteropTests
         Assert.Equal(t, records[1].TimestampUnixNanos); // inherits the previous line's time, not the import time
 
         // Shown and searched as the text a person reads; stored and exported byte for byte.
-        var json = JsonDocument.Parse(CanonicalJson.ToFriendlyJson(records[0], "s")).RootElement;
-        Assert.Equal("2026-10-06T20:00:30.152040Z [error    ] [bridge] Unclosed AIOKafkaConsumer", json.GetProperty("body").GetString());
+        using (var json = JsonDocument.Parse(CanonicalJson.ToFriendlyJson(records[0], "s")))
+            Assert.Equal("2026-10-06T20:00:30.152040Z [error    ] [bridge] Unclosed AIOKafkaConsumer", json.RootElement.GetProperty("body").GetString());
         Assert.True(Evaluator.Compile(QueryParser.Parse("text CONTAINS 'Unclosed AIOKafka'"))(records[0]));
         Assert.False(Evaluator.Compile(QueryParser.Parse("text CONTAINS '[0m'"))(records[0]));
-        var outMs = new MemoryStream();
+        using var outMs = new MemoryStream();
         RawTextImporter.Export(records, outMs);
         Assert.Equal(original, outMs.ToArray());
 
         // Bytes that are not UTF-8 keep the lossless $bytes form.
-        var latin1 = RawTextImporter.Read(new MemoryStream(Encoding.Latin1.GetBytes("café\n")), "l.log", 1_000).Single();
-        Assert.Equal(JsonValueKind.Object, JsonDocument.Parse(CanonicalJson.ToFriendlyJson(latin1, "s")).RootElement.GetProperty("body").ValueKind);
+        using var latin1Input = new MemoryStream(Encoding.Latin1.GetBytes("café\n"));
+        var latin1 = RawTextImporter.Read(latin1Input, "l.log", 1_000).Single();
+        using var latin1Json = JsonDocument.Parse(CanonicalJson.ToFriendlyJson(latin1, "s"));
+        Assert.Equal(JsonValueKind.Object, latin1Json.RootElement.GetProperty("body").ValueKind);
     }
 
     [Theory]
