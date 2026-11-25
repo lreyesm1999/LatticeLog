@@ -12,10 +12,22 @@ public static class IngestBench
 {
     public static async Task<int> Run(string[] args)
     {
+        try
+        {
+            return await RunMeasured(args);
+        }
+        finally
+        {
+            foreach (var root in Roots) DeleteRoot(root);
+        }
+    }
+
+    private static async Task<int> RunMeasured(string[] args)
+    {
         int Arg(string name, int fallback) { var i = Array.IndexOf(args, name); return i >= 0 ? int.Parse(args[i + 1], CultureInfo.InvariantCulture) : fallback; }
         var n = Arg("--records", 300_000);
         var batchSize = Arg("--batch", 5_000);
-        var producerRoot = Path.Combine(Path.GetTempPath(), "latticelog-ingest-bench", Guid.NewGuid().ToString("N"));
+        var producerRoot = NewRoot();
         using (var logger = LatticeLogger.CreateLocal(producerRoot, o => { o.Durability = DurabilityMode.Fast; o.FlushOnProcessExit = false; }, new StoreWriterOptions { MinFreeDiskBytes = 0 }))
             for (var i = 0; i < n; i++) BenchEvents.OrderPlaced(logger, i, i % 7, "SKU-" + (i % 500).ToString("D5", CultureInfo.InvariantCulture), 19.99 + i % 13);
         var producer = StoreWriter.ReadStoreFile(producerRoot).StoreId;
@@ -30,7 +42,7 @@ public static class IngestBench
         var runs = new[] { (true, AckLevel.FsyncConfirmed, false), (true, AckLevel.FsyncConfirmed, true), (false, AckLevel.FsyncConfirmed, true), (true, AckLevel.WrittenToOs, true), (false, AckLevel.WrittenToOs, true) };
         foreach (var (gzip, ack, print) in runs)
         {
-            var serverRoot = Path.Combine(Path.GetTempPath(), "latticelog-ingest-bench", Guid.NewGuid().ToString("N"));
+            var serverRoot = NewRoot();
             await using var collector = await LatticeServer.StartAsync(new ServerOptions
             {
                 DataDirectory = serverRoot,
@@ -88,7 +100,7 @@ public static class IngestBench
                     envelopes[p].Add(IngestProtocol.EncodeBatch(id, batch, gzip: true, encoding: encoding));
                 }
             }
-            var serverRoot = Path.Combine(Path.GetTempPath(), "latticelog-ingest-bench", Guid.NewGuid().ToString("N"));
+            var serverRoot = NewRoot();
             await using var collector = await LatticeServer.StartAsync(new ServerOptions
             {
                 DataDirectory = serverRoot,
@@ -150,4 +162,21 @@ public static class IngestBench
     }
 
     private static bool _warmedUp;
+
+    // Every store this benchmark makes (one producer, one collector per configuration) is deleted when it ends.
+    private static readonly List<string> Roots = [];
+
+    private static string NewRoot()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "latticelog-ingest-bench", Guid.NewGuid().ToString("N"));
+        Roots.Add(root);
+        return root;
+    }
+
+    private static void DeleteRoot(string root)
+    {
+        try { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+    }
 }
