@@ -550,20 +550,53 @@ public static class RawTextImporter
     {
         context ??= new ContextSnapshot(ContextKind.Resource, null, [], null);
         var fileCtx = new ContextSnapshot(ContextKind.Custom, "file", [new(AttrFile, fileName)], context);
-        long lastTs = importTimeNanos;
+        long? lastTs = null;
+        // Lines before the first timestamped one (a "# Run: …" banner, the tail of a traceback at the start of an
+        // appended range) have no previous time to inherit: they wait for the next timestamp instead of getting the
+        // import time, which would put them hours or months away from their neighbours. Bounded; past the bound,
+        // or when the input has no timestamp at all, they keep the import time.
+        var leading = new List<LogRecord>();
         foreach (var (bytes, hadNewline) in RawLines.Split(input, maxLineBytes))
         {
             var r = new LogRecord { ObservedUnixNanos = importTimeNanos, Context = fileCtx, Flags = RecordFlags.RawImport };
             r.SetBody(Value.From(bytes));
-            var attrs = new List<LogAttribute>();
-            var (ts, sev, status) = ParsePrefix(bytes);
-            if (ts is { } t) { r.TimestampUnixNanos = t; lastTs = t; }
-            else { r.TimestampUnixNanos = lastTs; attrs.Add(new(AttrParse, status)); }
+            var (ts, sev, _) = ParsePrefix(bytes);
             r.Severity = sev;
-            if (!hadNewline) attrs.Add(new(AttrNoFinalNewline, true));
-            r.Attributes = attrs.ToArray();
-            yield return r;
+            r.Attributes = hadNewline ? [] : [new(AttrNoFinalNewline, true)];
+            if (ts is { } t)
+            {
+                lastTs = t;
+                r.TimestampUnixNanos = t;
+                foreach (var w in leading) { Stamp(w, t, ParseInheritedNext); yield return w; }
+                leading.Clear();
+                yield return r;
+            }
+            else if (lastTs is { } prev)
+            {
+                Stamp(r, prev, ParseInheritedPrevious);
+                yield return r;
+            }
+            else
+            {
+                leading.Add(r);
+                if (leading.Count < MaxLeadingLines) continue;
+                foreach (var w in leading) { Stamp(w, importTimeNanos, ParseImportTime); yield return w; }
+                leading.Clear();
+                lastTs = importTimeNanos;
+            }
         }
+        foreach (var w in leading) { Stamp(w, importTimeNanos, ParseImportTime); yield return w; }
+    }
+
+    public const string ParseInheritedPrevious = "timestamp_not_found_inherited_previous";
+    public const string ParseInheritedNext = "timestamp_not_found_inherited_next";
+    public const string ParseImportTime = "timestamp_not_found_import_time";
+    private const int MaxLeadingLines = 10_000;
+
+    private static void Stamp(LogRecord r, long nanos, string status)
+    {
+        r.TimestampUnixNanos = nanos;
+        r.Attributes = [new(AttrParse, status), .. r.Attributes];
     }
 
     private static (long? Ts, Severity Sev, string Status) ParsePrefix(byte[] line)
@@ -582,7 +615,7 @@ public static class RawTextImporter
         else if (parts.Length > 1 && UnixTime.TryParseRfc3339(parts[0] + "T" + parts[1], out var t2)) ts = t2;
         foreach (var p in parts.Take(4))
             if (SeverityExtensions.TryParse(p.Trim(':'), out var s) && !char.IsDigit(p[0])) { sev = s; break; }
-        return (ts, sev, ts is null ? "timestamp_not_found_inherited_previous" : "ok");
+        return (ts, sev, ts is null ? ParseInheritedPrevious : "ok");
     }
 
     /// <summary>Writes records produced by <see cref="Read"/> back to the exact original bytes.</summary>

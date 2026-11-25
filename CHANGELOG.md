@@ -2,6 +2,13 @@
 
 ## Unreleased — public repository under the MIT license
 
+- **Plain-text logs: lines before a file's first timestamp take the next timestamp instead of the import time.** A
+  banner such as `# Run: … | Started: …` at the top of each file was dated at the moment of the import. That pushed the
+  source's newest event to "now", and the console's default 24-hour view showed only those banners. Such lines now get
+  the time of the first timestamped line after them (`latticelog.parse = timestamp_not_found_inherited_next`, looking
+  ahead at most 10,000 lines). Input with no timestamp at all keeps the import time, now labelled
+  `timestamp_not_found_import_time`. Sources migrated earlier keep their dates until they are migrated again.
+
 - **Plain-text logs coloured by the terminal (ANSI escape codes) read correctly.** Console loggers such as structlog's
   wrap the timestamp and level in codes like `ESC[2m…ESC[0m`, and they stay in the file when the output is redirected.
   The text importer missed the timestamp and level of such lines: every line got the import time and no level. The

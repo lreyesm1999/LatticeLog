@@ -245,6 +245,37 @@ public class EvidenceAndInteropTests
     public void Ansi_escape_sequences_are_stripped(string input, string expected) => Assert.Equal(expected, TerminalText.StripAnsi(input));
 
     [Fact]
+    public void Raw_text_lines_before_the_first_timestamp_take_the_next_one()
+    {
+        var text = "# Run: 20260504_131519 | Started: 2026-05-04T13:15:24Z\r\nbanner line two\r\n" +
+                   "2026-05-04T13:15:29.369039Z [info     ] Bridge server started\r\n" +
+                   "  continuation\r\n" +
+                   "2026-05-04T13:15:30Z [warning  ] slow";
+        var original = Encoding.UTF8.GetBytes(text);
+        using var input = new MemoryStream(original);
+        var records = RawTextImporter.Read(input, "bridge.log", 1_000).ToList();
+        UnixTime.TryParseRfc3339("2026-05-04T13:15:29.369039Z", out var first);
+        UnixTime.TryParseRfc3339("2026-05-04T13:15:30Z", out var last);
+
+        string? Parse(LogRecord r) => r.TryGetAttribute(RawTextImporter.AttrParse, out var v) ? v.AsString() : null;
+        Assert.Equal([first, first, first, first, last], records.Select(r => r.TimestampUnixNanos));
+        Assert.Equal([RawTextImporter.ParseInheritedNext, RawTextImporter.ParseInheritedNext, null, RawTextImporter.ParseInheritedPrevious, null], records.Select(Parse));
+        Assert.Equal([Severity.Unspecified, Severity.Unspecified, Severity.Info, Severity.Unspecified, Severity.Warn], records.Select(r => r.Severity));
+        Assert.True(records[^1].TryGetAttribute(RawTextImporter.AttrNoFinalNewline, out _));
+
+        // Order and bytes are unchanged.
+        using var outMs = new MemoryStream();
+        RawTextImporter.Export(records, outMs);
+        Assert.Equal(original, outMs.ToArray());
+
+        // No timestamp anywhere: the import time, said so.
+        using var none = new MemoryStream(Encoding.UTF8.GetBytes("a\nb\n"));
+        var plain = RawTextImporter.Read(none, "p.log", 1_000).ToList();
+        Assert.All(plain, r => Assert.Equal(1_000, r.TimestampUnixNanos));
+        Assert.All(plain, r => Assert.Equal(RawTextImporter.ParseImportTime, Parse(r)));
+    }
+
+    [Fact]
     public void Structured_jsonl_import_maps_common_keys()
     {
         var lines = """
