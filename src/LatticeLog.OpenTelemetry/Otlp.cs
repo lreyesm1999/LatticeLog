@@ -568,9 +568,13 @@ public static class RawTextImporter
 
     private static (long? Ts, Severity Sev, string Status) ParsePrefix(byte[] line)
     {
+        // Terminal colour codes (ESC[2m…ESC[0m) wrap the timestamp and level in many console loggers; they are skipped
+        // for parsing only — the body keeps the exact bytes. The window is wide enough for the codes plus the prefix.
+        const int Window = 256;
         string text;
-        try { text = new UTF8Encoding(false, true).GetString(line, 0, Math.Min(line.Length, 128)); }
-        catch (DecoderFallbackException) { text = Encoding.Latin1.GetString(line, 0, Math.Min(line.Length, 128)); }
+        try { text = new UTF8Encoding(false, true).GetString(line, 0, Math.Min(line.Length, Window)); }
+        catch (DecoderFallbackException) { text = Encoding.Latin1.GetString(line, 0, Math.Min(line.Length, Window)); }
+        text = TerminalText.StripAnsi(text);
         var parts = text.Split([' ', '\t', '[', ']', '|'], StringSplitOptions.RemoveEmptyEntries);
         long? ts = null;
         var sev = Severity.Unspecified;

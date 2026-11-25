@@ -148,6 +148,8 @@ public static class Evaluator
         switch (v.Kind)
         {
             case ValueKind.String: return match(v.AsString());
+            // Raw-imported lines: search the text a person sees (colour codes removed), not the hex rendering.
+            case ValueKind.Bytes: return TerminalText.TryDecodeLine(v.AsBytes(), out var text) ? match(text) : match(v.ToString());
             case ValueKind.Array when depth < 8: return v.AsArray().Any(x => AnyString(x, match, depth + 1));
             case ValueKind.Map when depth < 8: return v.AsMap().Any(x => AnyString(x.Value, match, depth + 1));
             case ValueKind.Null: return false;

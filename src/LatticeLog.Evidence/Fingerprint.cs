@@ -36,7 +36,7 @@ public static partial class Fingerprint
     {
         if (r.Event?.MessageTemplate is { } t) return t;
         if (r.Exception?.Message is { } em) return Normalize(em);
-        if (r.HasBody && r.Body.Kind == ValueKind.String) return Normalize(r.Body.AsString());
+        if (r.HasBody && TerminalText.MessageOf(r.Body) is { } body) return Normalize(body);
         return "";
     }
 

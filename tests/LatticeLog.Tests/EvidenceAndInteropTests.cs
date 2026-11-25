@@ -4,6 +4,7 @@ using LatticeLog.Evidence;
 using LatticeLog.OpenTelemetry;
 using LatticeLog.Query;
 using LatticeLog.Storage;
+using LatticeLog.Storage.Json;
 
 namespace LatticeLog.Tests;
 
@@ -203,6 +204,45 @@ public class EvidenceAndInteropTests
         RawTextImporter.Export(stored, outMs);
         Assert.Equal(original, outMs.ToArray());
     }
+
+    [Fact]
+    public void Raw_text_import_reads_lines_coloured_with_ansi_codes()
+    {
+        // structlog's console renderer redirected to a file (CRLF): ESC[2m<time>ESC[0m [ESC[31mESC[1merror   ESC[0m] …
+        var line = "\u001b[2m2026-10-06T20:00:30.152040Z\u001b[0m [\u001b[31m\u001b[1merror    \u001b[0m] \u001b[1m[bridge] Unclosed AIOKafkaConsumer\r\n";
+        var original = Encoding.UTF8.GetBytes(line + "\u001b[2mcontinuation without a time\u001b[0m\n");
+        using var input = new MemoryStream(original);
+        var records = RawTextImporter.Read(input, "bridge.log", 1_000).ToList();
+
+        Assert.Equal(UnixTime.TryParseRfc3339("2026-10-06T20:00:30.152040Z", out var t) ? t : 0, records[0].TimestampUnixNanos);
+        Assert.Equal(Severity.Error, records[0].Severity);
+        Assert.False(records[0].TryGetAttribute(RawTextImporter.AttrParse, out _));
+        Assert.Equal(t, records[1].TimestampUnixNanos); // inherits the previous line's time, not the import time
+
+        // Shown and searched as the text a person reads; stored and exported byte for byte.
+        using (var json = JsonDocument.Parse(CanonicalJson.ToFriendlyJson(records[0], "s")))
+            Assert.Equal("2026-10-06T20:00:30.152040Z [error    ] [bridge] Unclosed AIOKafkaConsumer", json.RootElement.GetProperty("body").GetString());
+        Assert.True(Evaluator.Compile(QueryParser.Parse("text CONTAINS 'Unclosed AIOKafka'"))(records[0]));
+        Assert.False(Evaluator.Compile(QueryParser.Parse("text CONTAINS '[0m'"))(records[0]));
+        using var outMs = new MemoryStream();
+        RawTextImporter.Export(records, outMs);
+        Assert.Equal(original, outMs.ToArray());
+
+        // Bytes that are not UTF-8 keep the lossless $bytes form.
+        using var latin1Input = new MemoryStream(Encoding.Latin1.GetBytes("café\n"));
+        var latin1 = RawTextImporter.Read(latin1Input, "l.log", 1_000).Single();
+        using var latin1Json = JsonDocument.Parse(CanonicalJson.ToFriendlyJson(latin1, "s"));
+        Assert.Equal(JsonValueKind.Object, latin1Json.RootElement.GetProperty("body").ValueKind);
+    }
+
+    [Theory]
+    [InlineData("plain", "plain")]
+    [InlineData("\u001b[1;31mred\u001b[0m text", "red text")]
+    [InlineData("\u001b]8;;http://x\u0007link\u001b]8;;\u001b\\ end", "link end")]
+    [InlineData("\u001b(Bcharset", "charset")]
+    [InlineData("\u001b#8\u001b=keypad", "keypad")]
+    [InlineData("cut \u001b[3", "cut ")]
+    public void Ansi_escape_sequences_are_stripped(string input, string expected) => Assert.Equal(expected, TerminalText.StripAnsi(input));
 
     [Fact]
     public void Structured_jsonl_import_maps_common_keys()

@@ -2,6 +2,18 @@
 
 ## Unreleased — public repository under the MIT license
 
+- **Plain-text logs coloured by the terminal (ANSI escape codes) read correctly.** Console loggers such as structlog's
+  wrap the timestamp and level in codes like `ESC[2m…ESC[0m`, and they stay in the file when the output is redirected.
+  The text importer missed the timestamp and level of such lines: every line got the import time and no level. The
+  console showed the body as `{"$bytes":"…"}`, and text search matched nothing.
+  - The importer skips the codes when it reads the timestamp and level. The stored bytes are unchanged, so a raw export
+    still gives back the original file byte for byte.
+  - Friendly JSON (console, MCP, query output) shows a raw line that is valid UTF-8 as text, without colour codes or the
+    CRLF `\r`. Other bytes keep the lossless `$bytes` form.
+  - Text search, MCP messages and error-group fingerprints use the same text.
+  - The console shows `—` for events without a level ("UNSPECIFIED" did not fit the column).
+  - Sources migrated before this fix keep the import time as their timestamp. Delete and migrate them again.
+
 - **Windows: a service started by Claude desktop is reachable from a terminal again.** Claude desktop is a packaged
   (MSIX) app, and Windows gives the processes it starts a private copy of what they create under AppData. A service
   auto-started by its MCP shim wrote `service.json` (and `config.json` changes) there. A `llog ui` from a terminal then

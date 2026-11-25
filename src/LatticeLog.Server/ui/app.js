@@ -543,7 +543,10 @@ function eventRow(e, i) {
     e.exception?.type ? h("span", { class: "exc" }, e.exception.type) : null, text);
   const tr = h("tr", { class: `r-${lvl}`, onclick: () => selectEvent(i) },
     time,
-    h("td", {}, h("span", { class: `pill ${lvl}`, text: e.severity })),
+    // Plain-text logs often carry no level: a dash keeps the narrow column readable ("UNSPECIFIED" does not fit).
+    h("td", {}, e.severity === "UNSPECIFIED"
+      ? h("span", { class: "pill none", title: "No level in the source", text: "—" })
+      : h("span", { class: `pill ${lvl}`, text: e.severity })),
     h("td", { class: "s", title: e.service || "" }, e.service || ""),
     h("td", { class: "e", title: e.event || "" }, e.event || ""),
     msg);

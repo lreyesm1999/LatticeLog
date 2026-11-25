@@ -89,7 +89,11 @@ public static class CanonicalJson
                     break;
                 }
             case ValueKind.Bytes:
-                w.WriteStartObject(); w.WriteBase64String("$bytes", v.AsBytes()); w.WriteEndObject();
+                // Friendly: bytes that are UTF-8 text (raw-imported log lines) read as that text, without terminal
+                // colour codes or a CRLF '\r'. Lossless always keeps the exact bytes.
+                if (style == JsonValueStyle.Friendly && TerminalText.TryDecodeLine(v.AsBytes(), out var text))
+                    w.WriteStringValue(text.Length > maxStringChars ? text[..maxStringChars] + $"…[truncated {text.Length - maxStringChars} chars]" : text);
+                else { w.WriteStartObject(); w.WriteBase64String("$bytes", v.AsBytes()); w.WriteEndObject(); }
                 break;
             case ValueKind.Array:
                 w.WriteStartArray();
