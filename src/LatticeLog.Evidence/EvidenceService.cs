@@ -304,7 +304,8 @@ public sealed class EvidenceService(QueryEngine engine, EvidenceOptions? options
                     w.WriteNumber("bytes_read", res.Stats.BytesRead);
                     w.WriteEndObject();
                 }
-            }, truncated, partial, timeline.Count, totalEvents) with { ContinuationToken = res.NextCursor };
+            }, truncated, partial, timeline.Count, totalEvents) with
+            { ContinuationToken = res.NextCursor };
         }
 
         var doc = Build();

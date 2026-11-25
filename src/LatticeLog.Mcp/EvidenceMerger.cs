@@ -98,7 +98,13 @@ internal static class EvidenceMerger
     {
         static int Severity(JsonNode? n) => ((string?)n?["sev"])?.ToLowerInvariant() switch
         {
-            "fatal" => 6, "error" => 5, "warn" => 4, "info" => 3, "debug" => 2, "trace" => 1, _ => 0,
+            "fatal" => 6,
+            "error" => 5,
+            "warn" => 4,
+            "info" => 3,
+            "debug" => 2,
+            "trace" => 1,
+            _ => 0,
         };
         var best = 0;
         for (var i = 1; i < timeline.Count; i++)
