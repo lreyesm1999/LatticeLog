@@ -291,7 +291,7 @@ public sealed partial class LogMigrator(SourceCatalog catalog)
         {
             case LogFormat.Text:
                 notes.Add("Structure inside the text is not parsed: messages stay as raw text (multi-line entries such as tracebacks become one record per line).");
-                notes.Add("Lines without a leading timestamp get the previous line's time (attribute latticelog.parse).");
+                notes.Add("Lines without a leading timestamp get the previous line's time; lines before a file's first timestamp get the next one (attribute latticelog.parse).");
                 break;
             case LogFormat.LatticeJsonl:
                 notes.Add("Nothing: latticelog.jsonl is lossless. Sequence numbers are reassigned by the new store.");
