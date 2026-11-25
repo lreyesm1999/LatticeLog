@@ -24,6 +24,8 @@ if (affinityArg >= 0)
 if (args.Length > 0 && args[0] == "latency") return FixedRate.Run(args[1..]);
 // End-to-end remote ingestion (P16-T14): dotnet run -c Release --project benchmarks/LatticeLog.Benchmarks -- ingest
 if (args.Length > 0 && args[0] == "ingest") return await IngestBench.Run(args[1..]);
+// Deterministic MCP evidence scenarios (A-G): dotnet run -c Release --project benchmarks/LatticeLog.Benchmarks -- mcp
+if (args.Length > 0 && args[0] == "mcp") return McpBench.Run(args[1..]);
 
 // In-process toolchain: no separate build of a generated project (also avoids depending on the system `dotnet` on PATH).
 var config = DefaultConfig.Instance.AddJob(Job.Default.WithToolchain(InProcessEmitToolchain.Instance).WithWarmupCount(5).WithIterationCount(15));

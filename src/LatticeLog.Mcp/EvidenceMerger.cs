@@ -1,4 +1,6 @@
+using System.Text;
 using System.Text.Json.Nodes;
+using LatticeLog.Evidence;
 using LatticeLog.Storage.Json;
 
 namespace LatticeLog.Mcp;
@@ -11,7 +13,7 @@ namespace LatticeLog.Mcp;
 /// </summary>
 internal static class EvidenceMerger
 {
-    private static readonly string[] TaggedArrays = ["timeline", "groups", "events"];
+    private static readonly string[] TaggedArrays = ["timeline", "groups", "events", "relations"];
 
     public static JsonObject Merge(IReadOnlyList<(string Source, JsonObject Doc)> docs, int top)
     {
@@ -28,7 +30,7 @@ internal static class EvidenceMerger
         merged["coverage"] = MergeCoverage(docs.Select(d => d.Doc["coverage"] as JsonObject).OfType<JsonObject>().ToList());
         if (docs.Any(d => d.Doc["summary"] is JsonObject))
             merged["summary"] = MergeSummary(docs.Select(d => d.Doc["summary"] as JsonObject).OfType<JsonObject>().ToList());
-        foreach (var name in TaggedArrays.Append("relations"))
+        foreach (var name in TaggedArrays.Append("evidence_refs"))
         {
             if (!docs.Any(d => d.Doc[name] is JsonArray)) continue;
             var all = docs.SelectMany(d => (d.Doc[name] as JsonArray ?? []).Select(x => x!.DeepClone())).ToList();
@@ -36,6 +38,7 @@ internal static class EvidenceMerger
             {
                 "timeline" => Retime(all),
                 "groups" => all.OrderByDescending(g => (long?)g!["count"] ?? 0).ThenBy(g => (string?)g!["source"], StringComparer.Ordinal).Take(top).ToList(),
+                "evidence_refs" => all.Distinct(JsonNodeDeepComparer.Instance).ToList(),
                 _ => all,
             };
             merged[name] = new JsonArray(all.ToArray());
@@ -47,6 +50,78 @@ internal static class EvidenceMerger
         if (notes.Count > 0) merged["grouping_scope"] = notes;
         merged["merge"] = "results of several sources: counts are summed, timelines merged by time, groups ranked by count; 'source' tags each item";
         return merged;
+    }
+
+    /// <summary>Enforces the complete structured-payload budget after multiple per-source documents are merged.</summary>
+    public static void EnforceBudget(JsonObject doc, int budgetBytes)
+    {
+        budgetBytes = Math.Clamp(budgetBytes, 2_000, 10_000_000);
+        var options = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
+        int Size() => Encoding.UTF8.GetByteCount(doc.ToJsonString(options));
+        while (Size() > budgetBytes)
+        {
+            if (doc["timeline"] is JsonArray timeline && timeline.Count > 0)
+            {
+                var remove = LowestPriorityIndex(timeline);
+                var reference = (string?)timeline[remove]?["ref"];
+                timeline.RemoveAt(remove);
+                if (reference is not null && doc["evidence_refs"] is JsonArray refs)
+                {
+                    var ri = refs.Select((n, i) => ((string?)n, i)).FirstOrDefault(x => x.Item1 == reference).i;
+                    if (ri >= 0 && ri < refs.Count && (string?)refs[ri] == reference) refs.RemoveAt(ri);
+                }
+                AdjustCoverage(doc);
+                continue;
+            }
+            if (doc["groups"] is JsonArray groups && groups.Count > 0) { groups.RemoveAt(groups.Count - 1); continue; }
+            if (doc["relations"] is JsonArray relations && relations.Count > 0) { relations.RemoveAt(relations.Count - 1); continue; }
+            if (doc["changes"]?["first_fingerprint_occurrences"] is JsonArray changes && changes.Count > 0) { changes.RemoveAt(changes.Count - 1); continue; }
+            if (doc["summary"] is JsonObject summary && summary.Remove("by_event")) continue;
+            if (doc["summary"] is JsonObject summary2 && summary2.Remove("by_service")) continue;
+            if (doc.Remove("changes")) continue;
+            if (doc.Remove("selection")) continue;
+            if (doc.Remove("execution")) continue;
+            if (doc["summary"] is JsonObject summary3 && summary3.Remove("trace_ids")) continue;
+            if (doc["summary"] is JsonObject summary4 && summary4.Remove("distribution_scope")) continue;
+            if (doc["summary"] is JsonObject summary5 && summary5.Remove("ordering_note")) continue;
+            if (doc["evidence_refs"] is JsonArray remainingRefs && remainingRefs.Count > 0)
+            {
+                remainingRefs.RemoveAt(remainingRefs.Count - 1);
+                AdjustCoverage(doc);
+                continue;
+            }
+            break;
+        }
+    }
+
+    private static int LowestPriorityIndex(JsonArray timeline)
+    {
+        static int Severity(JsonNode? n) => ((string?)n?["sev"])?.ToLowerInvariant() switch
+        {
+            "fatal" => 6, "error" => 5, "warn" => 4, "info" => 3, "debug" => 2, "trace" => 1, _ => 0,
+        };
+        var best = 0;
+        for (var i = 1; i < timeline.Count; i++)
+            if (Severity(timeline[i]) <= Severity(timeline[best])) best = i;
+        return best;
+    }
+
+    private static void AdjustCoverage(JsonObject doc)
+    {
+        if (doc["coverage"] is not JsonObject coverage) return;
+        var returned = Math.Max(0, ((int?)coverage["returned_events"] ?? 0) - 1);
+        coverage["returned_events"] = returned;
+        if (coverage["matched_events"] is JsonValue matched && matched.TryGetValue<long>(out var total)) coverage["omitted_events"] = Math.Max(0, total - returned);
+        coverage["truncated"] = true;
+        coverage["exhaustive"] = "no";
+        coverage["sampling"] = EvidenceService.SelectionAlgorithm;
+    }
+
+    private sealed class JsonNodeDeepComparer : IEqualityComparer<JsonNode>
+    {
+        public static readonly JsonNodeDeepComparer Instance = new();
+        public bool Equals(JsonNode? x, JsonNode? y) => JsonNode.DeepEquals(x, y);
+        public int GetHashCode(JsonNode obj) => obj.ToJsonString().GetHashCode(StringComparison.Ordinal);
     }
 
     private static void Tag(JsonObject doc, string source)

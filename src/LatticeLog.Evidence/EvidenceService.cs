@@ -16,8 +16,24 @@ public sealed record EvidenceOptions
     public int MaxStackFrames { get; init; } = 6;
 }
 
+public enum ContextDetailLevel { Summary, Investigation, Evidence }
+
+/// <summary>Context Pack V2 selection and output limits. Token budgets are estimates unless a caller supplies a model-specific tokenizer.</summary>
+public sealed record ContextPackOptions
+{
+    public int BudgetBytes { get; init; } = 32_000;
+    public int? BudgetTokens { get; init; }
+    public int MaxEvents { get; init; } = 200;
+    public int MaxGroups { get; init; } = 10;
+    public ContextDetailLevel DetailLevel { get; init; } = ContextDetailLevel.Investigation;
+    public bool IncludeEvidence { get; init; } = true;
+}
+
 /// <summary>A rendered evidence document plus metadata useful to callers (CLI exit codes, MCP).</summary>
-public sealed record EvidenceDocument(string Kind, string Json, bool Truncated, bool Partial, int ReturnedEvents, long MatchedEvents);
+public sealed record EvidenceDocument(string Kind, string Json, bool Truncated, bool Partial, int ReturnedEvents, long MatchedEvents)
+{
+    public string? ContinuationToken { get; init; }
+}
 
 /// <summary>
 /// Deterministic, verifiable evidence for external readers (P12). LatticeLog only filters, groups and selects
@@ -135,82 +151,189 @@ public sealed class EvidenceService(QueryEngine engine, EvidenceOptions? options
     }
 
     public EvidenceDocument GetTrace(TraceId traceId, int budgetBytes = 64_000)
-        => ContextPack(new QueryRequest { Where = $"trace_id = '{traceId}'" }, budgetBytes, kind: "trace");
+        => ContextPack(new QueryRequest { Where = $"trace_id = '{traceId}'" }, new ContextPackOptions { BudgetBytes = budgetBytes }, kind: "trace");
 
     /// <summary>
-    /// Context Pack v1 (P12-T07..T11). Selection tiers, in order, until the byte budget is used:
+    /// Context Pack selection tiers (retained by V2 for compatibility), in order, until the byte budget is used:
     /// 1) error/fatal records, at most 3 per fingerprint (first, last, middle); 2) first and last record of the scope;
     /// 3) warnings, at most 2 per fingerprint; 4) up to 2 neighbours before/after each selected error in the same trace or
     /// operation; 5) remaining records evenly spaced. Output is ordered by (time, seq). Byte sizes are exact for the
     /// timeline entries; token counts are an approximation (chars/4) and differ between models.
     /// </summary>
     public EvidenceDocument ContextPack(QueryRequest scope, int budgetBytes = 32_000, string kind = "context_pack")
+        => ContextPack(scope, new ContextPackOptions { BudgetBytes = budgetBytes }, kind);
+
+    /// <summary>
+    /// Context Pack V2. The byte budget applies to the complete structured evidence document, not just timeline entries.
+    /// A token budget uses the documented UTF-8-bytes/4 estimator and is never presented as an exact model token count.
+    /// </summary>
+    public EvidenceDocument ContextPack(QueryRequest scope, ContextPackOptions options, string kind = "context_pack", CancellationToken ct = default)
     {
-        budgetBytes = Math.Clamp(budgetBytes, 2_000, 10_000_000);
-        var res = Engine.Execute(scope with { Limit = Math.Min(_o.MaxCandidates, QueryRequest.MaxLimit) });
+        var requestedBudgetBytes = Math.Clamp(options.BudgetBytes, 2_000, 10_000_000);
+        var budgetTokens = options.BudgetTokens is { } bt ? Math.Clamp(bt, 500, 2_500_000) : (int?)null;
+        var effectiveBudgetBytes = budgetTokens is { } tokens ? Math.Min(requestedBudgetBytes, checked(tokens * 4)) : requestedBudgetBytes;
+        var maxEvents = Math.Clamp(options.MaxEvents, 1, 10_000);
+        var maxGroups = Math.Clamp(options.MaxGroups, 0, 1_000);
+        var candidateLimit = Math.Min(_o.MaxCandidates, QueryRequest.MaxLimit);
+        var res = Engine.Execute(scope with { Limit = candidateLimit }, ct);
         var candidates = res.Hits.Select(h => h.Record).OrderBy(r => r.TimestampUnixNanos).ThenBy(r => r.Sequence).ToList();
         var candidatesCapped = res.Truncated;
         var t0 = candidates.Count > 0 ? candidates[0].TimestampUnixNanos : 0;
+        // Reuse an exhaustive candidate window. Only capped windows pay for an aggregate pass to recover exact totals;
+        // common focused investigations therefore scan once, while large scopes remain honest about their coverage.
+        long totalEvents;
+        List<(string Key, long Count)> severityCounts;
+        var aggregatePartial = false;
+        if (!candidatesCapped && scope.Cursor is null)
+        {
+            totalEvents = candidates.Count;
+            severityCounts = candidates.GroupBy(r => r.Severity).OrderByDescending(g => g.Key)
+                .Select(g => (g.Key.ToText(), (long)g.Count())).ToList();
+        }
+        else
+        {
+            var bySeverity = Engine.Aggregate(scope with { Cursor = null }, "level", top: SeverityExtensions.MaxNumber + 1, ct: ct);
+            totalEvents = bySeverity.Total;
+            severityCounts = bySeverity.Groups;
+            aggregatePartial = bySeverity.Partial;
+        }
 
         // Pre-render entries to know their exact size.
         var rendered = new Dictionary<ulong, byte[]>();
         byte[] Entry(LogRecord r) => rendered.TryGetValue(r.Sequence, out var b) ? b : rendered[r.Sequence] = RenderEntry(r, t0, null);
 
         var order = SelectByTiers(candidates);
+        var selectedPriority = new List<LogRecord>();
         var selected = new HashSet<ulong>();
         var used = 0;
-        var budgetForTimeline = (int)(budgetBytes * 0.75); // reserve room for envelope, coverage and summary
+        var budgetForTimeline = (int)(effectiveBudgetBytes * 0.55); // the complete-payload loop below enforces the hard bound
         foreach (var (r, _) in order)
         {
-            if (selected.Contains(r.Sequence)) continue;
+            if (selected.Count >= maxEvents || selected.Contains(r.Sequence)) continue;
             var size = Entry(r).Length + 1;
             if (used + size > budgetForTimeline) continue;
             selected.Add(r.Sequence);
+            selectedPriority.Add(r);
             used += size;
         }
-        var timeline = candidates.Where(r => selected.Contains(r.Sequence)).ToList();
-        var omitted = candidates.Count - timeline.Count;
         var groups = GroupsOf(candidates.Where(r => r.Severity >= Severity.Error));
-        var truncated = omitted > 0 || candidatesCapped;
         var relations = OperationEdges(candidates);
+        var groupLimit = Math.Min(maxGroups, groups.Count);
+        var relationLimit = options.DetailLevel == ContextDetailLevel.Summary ? 0 : Math.Min(100, relations.Count);
+        var compactSummary = false;
+        var includeChanges = true;
+        var includeSelection = true;
+        var includeExecution = true;
 
-        var doc = Render(kind, scope, w =>
+        EvidenceDocument Build()
         {
-            WriteCoverage(w, candidatesCapped ? -1 : candidates.Count, timeline.Count, truncated, res.Partial, res.PartialReason, budgetBytes, used);
-            w.WriteStartObject("summary");
-            if (candidates.Count > 0)
+            var timeline = candidates.Where(r => selected.Contains(r.Sequence)).ToList();
+            used = timeline.Sum(r => Entry(r).Length + 1);
+            var truncated = totalEvents > timeline.Count || candidatesCapped;
+            var partial = res.Partial || aggregatePartial;
+            var partialReason = string.Join("; ", new[] { res.PartialReason, aggregatePartial ? "integrity issue while aggregating exact counts" : null }.Where(x => x is not null));
+            return Render(kind, scope, w =>
             {
-                w.WriteString("first_time", UnixTime.FormatRfc3339(candidates[0].TimestampUnixNanos));
-                w.WriteString("last_time", UnixTime.FormatRfc3339(candidates[^1].TimestampUnixNanos));
-                w.WriteNumber("duration_ms", (candidates[^1].TimestampUnixNanos - candidates[0].TimestampUnixNanos) / 1_000_000.0);
-            }
-            WriteCounts(w, "by_severity", candidates.GroupBy(r => r.Severity).OrderByDescending(g => g.Key).Select(g => (g.Key.ToText(), (long)g.Count())).ToList());
-            WriteCounts(w, "by_service", candidates.GroupBy(r => r.ServiceName ?? "(none)").OrderByDescending(g => g.Count()).Select(g => (g.Key, (long)g.Count())).ToList());
-            WriteCounts(w, "by_event", candidates.GroupBy(r => r.EffectiveEventName ?? "(none)").OrderByDescending(g => g.Count()).Take(20).Select(g => (g.Key, (long)g.Count())).ToList());
-            var traces = candidates.Where(r => !r.TraceId.IsEmpty).Select(r => r.TraceId.ToString()).Distinct().Take(20).ToList();
-            w.WriteStartArray("trace_ids");
-            foreach (var t in traces) w.WriteStringValue(t);
-            w.WriteEndArray();
-            w.WriteString("ordering_note", "Timeline is ordered by producer wall-clock time then sequence. Order across processes is not causal.");
-            w.WriteEndObject();
-            WriteGroups(w, groups.Take(10));
-            if (relations.Count > 0)
-            {
-                w.WriteStartArray("relations");
-                foreach (var (child, parent) in relations.Take(100))
+                WriteContextCoverage(w, totalEvents, timeline.Count, truncated, partial,
+                    partialReason.Length == 0 ? null : partialReason, requestedBudgetBytes, effectiveBudgetBytes, budgetTokens,
+                    used, res.NextCursor, candidates.Count, candidatesCapped);
+                w.WriteString("context_version", "2");
+                w.WriteString("detail_level", options.DetailLevel.ToString().ToLowerInvariant());
+                w.WriteStartObject("summary");
+                if (candidates.Count > 0)
                 {
-                    w.WriteStartObject();
-                    w.WriteString("type", "child_operation_of");
-                    w.WriteString("operation", child);
-                    w.WriteString("parent_operation", parent);
+                    w.WriteString("first_time", UnixTime.FormatRfc3339(candidates[0].TimestampUnixNanos));
+                    w.WriteString("last_time", UnixTime.FormatRfc3339(candidates[^1].TimestampUnixNanos));
+                    w.WriteNumber("duration_ms", (candidates[^1].TimestampUnixNanos - candidates[0].TimestampUnixNanos) / 1_000_000.0);
+                }
+                w.WriteNumber("total_events", totalEvents);
+                WriteCounts(w, "by_severity", severityCounts);
+                if (!compactSummary)
+                {
+                    WriteCounts(w, "by_service", candidates.GroupBy(r => r.ServiceName ?? "(none)").OrderByDescending(g => g.Count()).Take(20).Select(g => (g.Key, (long)g.Count())).ToList());
+                    WriteCounts(w, "by_event", candidates.GroupBy(r => r.EffectiveEventName ?? "(none)").OrderByDescending(g => g.Count()).Take(20).Select(g => (g.Key, (long)g.Count())).ToList());
+                    var traces = candidates.Where(r => !r.TraceId.IsEmpty).Select(r => r.TraceId.ToString()).Distinct().Take(20).ToList();
+                    w.WriteStartArray("trace_ids");
+                    foreach (var t in traces) w.WriteStringValue(t);
+                    w.WriteEndArray();
+                }
+                w.WriteString("distribution_scope", candidatesCapped ? $"severity and total are exact; service/event/trace distributions use the first {candidates.Count} candidates" : "complete candidate window");
+                w.WriteString("ordering_note", "Events are ordered by producer wall-clock time then sequence. Order across processes is not causal.");
+                w.WriteEndObject();
+                if (groupLimit > 0) WriteGroups(w, groups.Take(groupLimit));
+                if (includeChanges) WriteChanges(w, candidates, groups.Take(groupLimit));
+                if (relationLimit > 0)
+                {
+                    w.WriteStartArray("relations");
+                    foreach (var relation in relations.Take(relationLimit)) WriteRelation(w, relation);
+                    w.WriteEndArray();
+                }
+                if (includeSelection)
+                {
+                    w.WriteStartObject("selection");
+                    w.WriteString("algorithm", SelectionAlgorithm);
+                    w.WriteString("criteria", "severity and fingerprint coverage, scope bounds, explicit neighbours, then even temporal coverage");
+                    w.WriteNumber("max_events", maxEvents);
+                    w.WriteNumber("max_groups", maxGroups);
                     w.WriteEndObject();
                 }
+                w.WriteStartArray("evidence_refs");
+                foreach (var r in timeline) w.WriteStringValue(CanonicalJson.ReferenceFor(StoreId, r.Sequence));
                 w.WriteEndArray();
+                if (options.DetailLevel == ContextDetailLevel.Evidence)
+                {
+                    w.WriteStartObject("evidence_retrieval");
+                    w.WriteString("tool", "get_event");
+                    w.WriteString("note", "Resolve any evidence_ref to the original event under the active redaction policy; no new search is required.");
+                    w.WriteEndObject();
+                }
+                if (options.IncludeEvidence && options.DetailLevel != ContextDetailLevel.Summary)
+                {
+                    w.WriteStartArray("timeline");
+                    foreach (var r in timeline) w.WriteRawValue(Entry(r), skipInputValidation: true);
+                    w.WriteEndArray();
+                }
+                if (includeExecution)
+                {
+                    w.WriteStartObject("execution");
+                    w.WriteString("strategy", res.Plan.Split('\n', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "query");
+                    w.WriteNumber("segments_scanned", res.Stats.SegmentsScanned);
+                    w.WriteNumber("blocks_scanned", res.Stats.BlocksScanned);
+                    w.WriteNumber("blocks_pruned", res.Stats.BlocksPruned);
+                    w.WriteNumber("records_decoded", res.Stats.RecordsDecoded);
+                    w.WriteNumber("bytes_read", res.Stats.BytesRead);
+                    w.WriteEndObject();
+                }
+            }, truncated, partial, timeline.Count, totalEvents) with { ContinuationToken = res.NextCursor };
+        }
+
+        var doc = Build();
+        // Enforce the complete structured payload budget. Lowest-priority evidence is removed first; explicit coverage
+        // and exact counts remain. The minimal envelope may exceed an exceptionally small budget and says so.
+        var payloadBytes = Encoding.UTF8.GetByteCount(doc.Json);
+        while (payloadBytes > effectiveBudgetBytes)
+        {
+            if (selectedPriority.Count > 0)
+            {
+                var averageEntryBytes = Math.Max(1, used / selectedPriority.Count);
+                var removeCount = Math.Clamp((int)Math.Ceiling((payloadBytes - effectiveBudgetBytes) / (double)averageEntryBytes), 1, selectedPriority.Count);
+                for (var i = 0; i < removeCount; i++)
+                {
+                    var removed = selectedPriority[^1];
+                    selectedPriority.RemoveAt(selectedPriority.Count - 1);
+                    selected.Remove(removed.Sequence);
+                }
             }
-            w.WriteStartArray("timeline");
-            foreach (var r in timeline) w.WriteRawValue(Entry(r), skipInputValidation: true);
-            w.WriteEndArray();
-        }, truncated, res.Partial, timeline.Count, candidates.Count);
+            else if (groupLimit > 0) groupLimit = 0;
+            else if (relationLimit > 0) relationLimit = 0;
+            else if (!compactSummary) compactSummary = true;
+            else if (includeChanges) includeChanges = false;
+            else if (includeSelection) includeSelection = false;
+            else if (includeExecution) includeExecution = false;
+            else break;
+            doc = Build();
+            payloadBytes = Encoding.UTF8.GetByteCount(doc.Json);
+        }
         return doc;
     }
 
@@ -292,9 +415,14 @@ public sealed class EvidenceService(QueryEngine engine, EvidenceOptions? options
         return result;
     }
 
-    private static List<(string Child, string Parent)> OperationEdges(List<LogRecord> c)
+    private sealed record Relation(string Type, string Classification, string Basis, string Child, string Parent, List<ulong> EvidenceSequences);
+
+    private static List<Relation> OperationEdges(List<LogRecord> c)
         => c.Where(r => r.OperationId is not null && r.ParentOperationId is not null)
-            .Select(r => (r.OperationId!, r.ParentOperationId!)).Distinct().OrderBy(x => x.Item2, StringComparer.Ordinal).ThenBy(x => x.Item1, StringComparer.Ordinal).ToList();
+            .GroupBy(r => (Child: r.OperationId!, Parent: r.ParentOperationId!))
+            .Select(g => new Relation("child_operation_of", "observed", "explicit operation_id and parent_operation_id",
+                g.Key.Child, g.Key.Parent, g.Select(r => r.Sequence).Distinct().Order().ToList()))
+            .OrderBy(x => x.Parent, StringComparer.Ordinal).ThenBy(x => x.Child, StringComparer.Ordinal).ToList();
 
     private sealed record Group(string Fingerprint, string? Event, string? ExceptionType, string Shape, long Count, Severity MaxSeverity, long First, long Last, ulong FirstSeq, ulong LastSeq, List<string> Services, string? SampleMessage);
 
@@ -439,6 +567,42 @@ public sealed class EvidenceService(QueryEngine engine, EvidenceOptions? options
         w.WriteEndObject();
     }
 
+    private static void WriteContextCoverage(Utf8JsonWriter w, long matched, long returned, bool truncated, bool partial,
+        string? partialReason, int requestedBudgetBytes, int effectiveBudgetBytes, int? budgetTokens, int timelineBytes,
+        string? continuationToken, int candidateEvents, bool candidateWindowTruncated)
+    {
+        w.WriteStartObject("coverage");
+        w.WriteNumber("matched_events", matched);
+        w.WriteNumber("returned_events", returned);
+        w.WriteNumber("omitted_events", Math.Max(0, matched - returned));
+        w.WriteNumber("candidate_events", candidateEvents);
+        w.WriteBoolean("candidate_window_truncated", candidateWindowTruncated);
+        w.WriteBoolean("truncated", truncated);
+        w.WriteBoolean("partial_results", partial);
+        if (partialReason is not null) w.WriteString("partial_reason", partialReason);
+        w.WriteString("sampling", truncated ? SelectionAlgorithm : "none");
+        w.WriteString("budget_scope", "complete structured evidence payload");
+        w.WriteNumber("budget_bytes", requestedBudgetBytes); // v1 compatibility alias
+        w.WriteNumber("requested_budget_bytes", requestedBudgetBytes);
+        w.WriteNumber("effective_budget_bytes", effectiveBudgetBytes);
+        w.WriteNumber("timeline_bytes", timelineBytes);
+        w.WriteNumber("approx_tokens_chars_div_4", timelineBytes / 4); // v1 compatibility field
+        if (budgetTokens is { } tokens)
+        {
+            w.WriteNumber("budget_tokens", tokens);
+            w.WriteString("token_budget_kind", "estimated");
+        }
+        w.WriteNumber("estimated_token_ceiling_utf8_bytes_div_4", (effectiveBudgetBytes + 3) / 4);
+        w.WriteString("token_estimator", "ceil(UTF-8 bytes / 4); not an exact model tokenizer");
+        if (continuationToken is not null)
+        {
+            w.WriteString("continuation_token", continuationToken);
+            w.WriteString("continuation_scope", "next candidate window; this pack remains a deterministic evidence selection, not exhaustive pagination");
+        }
+        w.WriteString("exhaustive", truncated || partial ? "no" : "yes");
+        w.WriteEndObject();
+    }
+
     private static void WriteCounts(Utf8JsonWriter w, string name, IEnumerable<(string Key, long Count)> groups)
     {
         w.WriteStartObject(name);
@@ -469,6 +633,45 @@ public sealed class EvidenceService(QueryEngine engine, EvidenceOptions? options
             w.WriteEndObject();
         }
         w.WriteEndArray();
+    }
+
+    private void WriteChanges(Utf8JsonWriter w, List<LogRecord> candidates, IEnumerable<Group> groups)
+    {
+        w.WriteStartObject("changes");
+        var firstError = candidates.FirstOrDefault(r => r.Severity >= Severity.Error);
+        if (firstError is not null)
+        {
+            w.WriteStartObject("first_error_observed");
+            w.WriteString("time", UnixTime.FormatRfc3339(firstError.TimestampUnixNanos));
+            w.WriteString("ref", CanonicalJson.ReferenceFor(StoreId, firstError.Sequence));
+            w.WriteEndObject();
+        }
+        w.WriteStartArray("first_fingerprint_occurrences");
+        foreach (var g in groups)
+        {
+            w.WriteStartObject();
+            w.WriteString("fingerprint", g.Fingerprint);
+            w.WriteString("time", UnixTime.FormatRfc3339(g.First));
+            w.WriteString("ref", CanonicalJson.ReferenceFor(StoreId, g.FirstSeq));
+            w.WriteString("scope", "first occurrence inside the queried candidate window; not proof that the fingerprint is globally new");
+            w.WriteEndObject();
+        }
+        w.WriteEndArray();
+        w.WriteEndObject();
+    }
+
+    private void WriteRelation(Utf8JsonWriter w, Relation relation)
+    {
+        w.WriteStartObject();
+        w.WriteString("type", relation.Type);
+        w.WriteString("classification", relation.Classification);
+        w.WriteString("basis", relation.Basis);
+        w.WriteString("operation", relation.Child);
+        w.WriteString("parent_operation", relation.Parent);
+        w.WriteStartArray("evidence_refs");
+        foreach (var seq in relation.EvidenceSequences) w.WriteStringValue(CanonicalJson.ReferenceFor(StoreId, seq));
+        w.WriteEndArray();
+        w.WriteEndObject();
     }
 
     private void WriteProvenance(Utf8JsonWriter w, QueryHit hit)

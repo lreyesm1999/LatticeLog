@@ -69,7 +69,7 @@ VS Code files use a top-level `"servers"` key instead of `"mcpServers"`; `mcp in
 | `get_trace` | A trace's timeline across sources, with operation relations and coverage |
 | `get_related_events` | Events explicitly related (same trace, operation, parent/child, correlation id); never "nearby in time" |
 | `get_error_groups` | Errors grouped by deterministic fingerprint, with counts and sample refs |
-| `get_context_pack` | A budgeted evidence pack: errors first, then bounds, warnings, neighbours, samples |
+| `get_context_pack` | Context Pack V2: progressive summary/investigation/evidence with a full-payload budget, stable refs and continuation |
 | `get_event_schema` | Declared event contracts: ids, names, field types, sensitivity |
 | `get_overview` | Counts by severity, event and service, plus top error groups |
 | `preview_migration` | What converting a text/JSON log file would keep (read-only) |
@@ -78,6 +78,19 @@ VS Code files use a top-level `"servers"` key instead of `"mcpServers"`; `mcp in
 Every tool takes `source` (a name, a list, or `'*'`). Results carry a `coverage` object (`truncated`,
 `partial_results`, `sampling`…) so an agent can tell "not found" from "not looked at", and they list which fields hold
 text copied from logs, so the client treats them as data and not as instructions.
+
+Context Pack V2 accepts `budget_bytes`, estimated `budget_tokens`, `max_events`, `max_groups`,
+`detail_level` (`summary`, `investigation`, or `evidence`), `include_evidence`, and `continuation_token`. For example,
+start with a compact view and expand only if needed:
+
+```text
+get_context_pack(source="orders-api", since="1h", detail_level="summary",
+                 budget_tokens=1500, max_groups=10, include_evidence=false)
+```
+
+The response labels the token estimate and returns stable `llog://` refs. Pass one to `get_event` for the complete
+event under the active redaction policy; this does not repeat the search. If `coverage.continuation_token` is present,
+pass it back unchanged to inspect the next candidate window.
 
 ## 5. Ask
 

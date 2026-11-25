@@ -28,6 +28,7 @@ not generalize.** Repeating them on stable hardware and on Linux is an open road
 | [Baseline v1](../reports/baseline-v1.md) | Size and selective queries on 8 synthetic workloads (100k records each) | `.llog` (Lattice-S + DEFLATE) smaller than JSONL + zstd-3 on **7 of 8** workloads (−1.4 % to −23.4 %); time/severity index pruning **20–40×** faster than a full scan; a full scan 4–9× faster than JSONL + zstd decode + parse + filter | JSONL + zstd-19 is smaller on **every** workload (but takes 9–16 s per 100k records); the −30 % target was **not** met; `adversarial-random` is +9.2 % |
 | [Loghub-2.0](../reports/loghub2-v1.md) | Size on 14 public datasets | Typed events **−25 %** vs the same content as CSV + zstd-3 (−5 % to −58 %) | **+17 %** vs CSV + zstd-19; byte-exact raw text is **+83 %** vs zstd-3; templates come from Loghub's ground truth, so real-world results will be worse |
 | [Ingest v1](../reports/ingest-v1.md) | Server ingestion throughput | ~**1.15 M records/s** with 4 producers and the binary body (2.0–3.4× the JSONL body) | Loopback on one machine; a real network between machines is untested |
+| [MCP evidence V2](../reports/mcp-optimization-v2.md) | MCP latency, transmitted bytes, estimated tokens and known-evidence recovery across scenarios A–G | Repetitive-error transport **−39 %** and a 2 KB bounded pack **−52 %**, with all evidence checks passing | 10k/100k/1M scale checks expose poor in-segment correlation pruning at 1M; repetitive-error p95 **+6.3 %** at 100k; token counts use UTF-8 bytes/4, not a model tokenizer |
 
 ## Versions and datasets
 
@@ -51,6 +52,7 @@ dotnet run -c Release --project research/LatticeLog.Lab -- baseline --events 100
 dotnet run -c Release --project research/LatticeLog.Lab -- loghub --lines 200000
 dotnet run -c Release --project benchmarks/LatticeLog.Benchmarks -- --filter '*Enabled*'
 dotnet run -c Release --project benchmarks/LatticeLog.Benchmarks -- latency
+dotnet run -c Release --project benchmarks/LatticeLog.Benchmarks -- mcp --events 100000 --iterations 15
 ```
 
 Synthetic sizes should match byte for byte on another machine with the same runtime (DEFLATE and zstd may vary between
