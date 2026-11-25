@@ -341,7 +341,8 @@ table.events { table-layout: fixed; }
   background: var(--debug-bg); color: var(--debug); font-family: var(--mono); border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
 }
 .pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.pill:empty::before { display: none; }
+.pill:empty::before, .pill.none::before { display: none; }
+.events td .pill { max-width: 100%; overflow: hidden; }
 .pill.TRACE { background: var(--trace-bg); color: var(--trace); }
 .pill.DEBUG { background: var(--debug-bg); color: var(--debug); }
 .pill.INFO { background: var(--info-bg); color: var(--info); }

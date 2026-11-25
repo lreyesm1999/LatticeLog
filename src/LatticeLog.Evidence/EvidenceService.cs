@@ -328,7 +328,7 @@ public sealed class EvidenceService(QueryEngine engine, EvidenceOptions? options
     {
         string? m = null;
         if (r.Event?.MessageTemplate is { } t) m = CanonicalJson.RenderTemplate(t, r.Attributes, Friendly());
-        else if (r.HasBody && r.Body.Kind == ValueKind.String) m = r.Body.AsString();
+        else if (r.HasBody) m = TerminalText.MessageOf(r.Body);
         if (m is not null && m.Length > _o.MaxStringChars) m = m[.._o.MaxStringChars] + "…";
         return m;
     }
